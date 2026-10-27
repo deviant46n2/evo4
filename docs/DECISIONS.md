@@ -93,6 +93,18 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Acceptance criteria still to define:** What the context must contain; how it is refreshed/corrected; and observable tests across personal-interest, project/coding, and evolving-state requests.
 - **Related decisions:** D-003, D-004, D-006.
 
+
+## D-008 — The persistent starting context must be updatable
+
+- **Status:** Active
+- **Date:** 2026-10-27
+- **Decision / user-stated requirement:** The persistent starting context must be updatable; it cannot be a static profile maintained manually by the user.
+- **Consequences:** Evo 4 should be able to incorporate useful new information about the user, projects, goals, decisions, and its own capabilities into durable records and refresh the compact starting context as those records change.
+- **Reliability constraint:** Distinguish explicit statements and verified observations from inferred preferences or uncertain interpretations. New information should not automatically become an authoritative fact merely because the model inferred it.
+- **Conflict-handling direction:** Reconcile conflicts rather than blindly overwrite. Honor clear revised decisions while retaining useful history; surface ambiguity when the correct interpretation is uncertain.
+- **Unresolved:** Which updates happen automatically versus require confirmation; how users inspect, correct, or withdraw information; and how to detect stale or conflicting records.
+- **Related decisions:** D-001, D-006, D-007.
+
 ## Decision template
 
 ### D-XXX — Short decision title
