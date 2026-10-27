@@ -223,3 +223,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** This is the one component that is explicitly a "new app," not integration. It must be reliable enough to open and use daily (unlike Omega, which won't open). It also means the runtime manager has its own release/launch path independent of opencode's session lifecycle.
 - **Unresolved:** Stack (Tauri 2 like Omega, or something lighter), GUI vs. CLI vs. both, and how opencode communicates with it (HTTP API, MCP wrapper, or manual).
 - **Related decisions:** D-003, D-011, D-014, D-015, D-016.
+
+
+## D-018 — Runtime management is NOT part of Evo 4; it's a cleaned-up Omega
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** The runtime manager should be a trimmed-down, expanded Omega — remove the media-management features no longer needed, expand the runtime capabilities (adaptive KV cache, custom llama.cpp, etc.). This does NOT need to be part of Evo 4. Evo 4 stays "opencode + memory plugin + mcps" (D-011). Omega cleanup is a separate project.
+- **Consequences:** Evo 4 v1 scope shrinks to: opencode (host) + Nemoxiom memory (permanent, ≥ current) + local fallback (50+ tok/s, routine coding + basic assistant). Runtime management is Omega's responsibility. Evo 4 just needs to work with whatever model Omega serves. The 50 tok/s target (D-014) is still the bar, but achieving it is Omega's job, not Evo 4's.
+- **Unresolved:** Whether Evo 4 needs any integration with Omega (e.g., auto-start a model on session open) or whether they stay fully independent.
+- **Related decisions:** D-003, D-011, D-014, D-015, D-016, D-017.
