@@ -115,9 +115,23 @@ These are starting context, not a substitute for validating requirements during 
 - **Practical limitation:** No model can guarantee that it never internally generates a guess or that every validation method is infallible. The achievable requirement is that guesses are not silently promoted to facts and outputs are not represented as validated unless appropriate checks actually occurred. Validation itself should be reviewable and its limitations visible.
 - **Open questions:** What evidence threshold applies to different output classes; which checks must be automated; when human confirmation is required; and how to keep verification proportionate so a small daily-use tool does not become unusably slow.
 
+
+### 2026-10-27 — Real-time conversation while background work continues
+
+- **User-stated hard requirement:** The user must be able to talk to Evo 4 in real time and have it spawn a subagent to answer regardless of what other work Evo 4 is doing.
+- **User-stated rationale:** Conversation will be a major source of Evo 4's memory; it must not become unavailable or blocked behind long-running tasks.
+- **Product requirement:** Interactive conversation must remain responsive while coding, research, or other background tasks run. A user question must not require waiting for the current task to finish.
+- **Candidate behavior:** A conversational agent can answer, report task status, discuss a new request, and help redirect work while background workers continue independently. Access to shared context should not imply shared mutable execution state.
+- **Engineering implication:** Merely supporting subagents is insufficient if all model/inference capacity can be saturated by background work. Explore reserved or independently schedulable interactive inference capacity, queue priorities, cancellation/interrupt semantics, and graceful degradation. Exact implementation remains undecided and must be evaluated against the user's hardware/cost constraints.
+- **Memory implication:** Conversations are a primary source of durable information: explicit preferences, project decisions, corrections, requirements, and ongoing context. The system should capture candidate memories without blocking the live conversation, while preserving provenance and the evidence/validation standards in D-009.
+- **Open questions:** What latency qualifies as real-time; whether the conversational agent may issue control actions or only recommend them; how to prioritize memory extraction; and how the system behaves when all inference resources are genuinely exhausted.
+- **Scope guard:** This is a hard interaction requirement, not yet a commitment to a broad multi-agent platform. The smallest implementation that keeps chat responsive during one meaningful background task should be investigated first.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
+- [ ] Define responsive conversation during background work: latency target, worker visibility/control, inference-resource isolation, and degraded-mode behavior.
+- [ ] Define how conversation-derived memories are captured and validated without blocking interactive replies.
 - [ ] Define how starting context is updated, corrected, verified, and kept from going stale.
 - [ ] Define acceptance tests across a personal-interest request, a coding/project request, and a task with evolving state.
 - [ ] Identify the smallest daily workflow that demonstrates continuity across request types, plus explicit exclusions.
