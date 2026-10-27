@@ -118,6 +118,20 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Unresolved:** Evidence thresholds by output type; required automated checks; confirmation boundaries; and a proportionate workflow that preserves daily usability.
 - **Related decisions:** D-001, D-003, D-007, D-008.
 
+
+## D-010 — Keep real-time conversation available during background work
+
+- **Status:** Active
+- **Date:** 2026-10-27
+- **User-stated hard requirement:** The user must be able to talk to Evo 4 in real time, with a subagent able to answer regardless of what else Evo 4 is doing.
+- **Rationale:** Conversation is expected to be a major source of persistent memory and must not be blocked by long-running coding or research tasks.
+- **Consequences:** Treat interactive conversation as a first-class workload. Background tasks must not monopolize all response capacity; investigate reserved/independently schedulable inference, prioritization, task-status visibility, and interruption/control semantics.
+- **Architecture caution:** A subagent abstraction alone does not guarantee responsiveness if the underlying model slots, GPU, or inference services are saturated. Define and test a latency/availability target under realistic load.
+- **Memory consequence:** Conversation-derived preferences, decisions, corrections, and requirements should be captured for durable memory without making live interaction wait for background memory processing. Preserve provenance and apply D-009's evidence/validation rules.
+- **Scope guard:** Start by proving that conversation remains responsive during one meaningful background task; do not assume a general multi-agent platform is required.
+- **Unresolved:** Exact latency target; what the conversational agent can control versus merely advise; resource-isolation strategy; and behavior under total inference-capacity exhaustion.
+- **Related decisions:** D-003, D-006, D-007, D-009.
+
 ## Decision template
 
 ### D-XXX — Short decision title
