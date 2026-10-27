@@ -205,3 +205,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** v1 scope = opencode (host) + Nemoxiom memory (permanent, ≥ current) + runtime management (revived) + local fallback (50+ tok/s, routine coding + basic assistant). Everything else is deferred.
 - **Unresolved:** How to revive runtime management — fix Omega, extract its backend into a standalone tool, or solve it fresh. Omega is currently non-functional ("won't open").
 - **Related decisions:** D-003, D-011, D-012, D-013, D-014.
+
+
+## D-016 — Runtime manager: rebuild with expanded capabilities, not just revive Omega
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** Do not simply revive Omega. Rebuild the runtime management layer with expanded capabilities: adaptive KV cache, KV cache arenas, custom llama.cpp builds, and other runtime tuning. This merges Omega's lifecycle management (GGUF discovery, spawn/stop/health) with the Evo 2 / seed<3 benchmarking knowledge (which configs actually hit 50+ tok/s on the 16 GB card).
+- **Consequences:** The runtime manager is a first-class v1 component, not a revived dependency. It must incorporate the user's existing llama.cpp tuning knowledge (Evo 2 sweep-arena flags, seed<3 negative results like KVarN CUDA OOM). It serves D-014's 50 tok/s target directly. This is the one place where "build new" is explicitly authorized over "integrate existing."
+- **Unresolved:** Architecture shape (MCP server, opencode plugin, standalone service, or hybrid), how adaptive KV cache selection works (manual, benchmark-driven, or automatic), and whether custom llama.cpp builds are managed or just supported.
+- **Related decisions:** D-003, D-011, D-014, D-015.
