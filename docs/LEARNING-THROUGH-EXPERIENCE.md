@@ -65,6 +65,14 @@ The user clarified that the central concern is freeing GPU VRAM when needed, rat
 
 Architecture is not chosen yet. Future design should distinguish process shutdown, model unload, and full Evo shutdown, and measure actual VRAM release rather than assuming a process exit or UI status guarantees it. Deterministic services are acceptable to leave running only when their resource costs are tolerable.
 
+## User-confirmed principle: learn from all use of Evo
+
+The user wants Evo to be able to learn from anything they use Evo for, not only from explicitly designated learning sessions or a narrow set of activity types.
+
+Design interpretation (proposal, not an approved implementation): any Evo-mediated activity may provide useful learning signals, including conversations, research, coding, project work, games, planning, and task outcomes. Evo should be able to connect evidence across these domains when a meaningful relationship is supported.
+
+This does not mean treating every utterance as a stable fact or every outcome as proof of a strategy. The system should preserve context and provenance, distinguish statements/hypotheticals/jokes from observed outcomes and repeated preferences, and keep candidate lessons revisable. “Learn from all use” describes the scope of potential learning, not permission to monitor unrelated activity outside Evo or to treat all captured material as equally reliable.
+
 ## Unresolved; do not assume
 
 - What are the boundaries within which adaptation may happen freely?
@@ -72,6 +80,7 @@ Architecture is not chosen yet. Future design should distinguish process shutdow
 - How do we evaluate whether a lesson is correct and generalizes beyond one episode?
 - How should Evo detect regressions, overfitting, false patterns, and harmful drift?
 - What boundaries should govern self-directed research and learning beyond the confirmed need for a user-controlled stop?
+- What should the default capture and learning policy be for sensitive content, accidental disclosures, temporary/hypothetical statements, and information the user later corrects or asks Evo not to use?
 - What exact behavior should the stop/pause control guarantee, including interruption latency, safe cancellation, preservation of task state, residual resource use, and verifiable VRAM release?
 - Which components can operate without a resident model, and what CPU/RAM overhead is acceptable for deterministic services left running?
 - What degree of initiative or autonomy is desired outside the confirmed initial human-approval gate for code self-modification?
