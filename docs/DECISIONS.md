@@ -105,6 +105,19 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Unresolved:** Which updates happen automatically versus require confirmation; how users inspect, correct, or withdraw information; and how to detect stale or conflicting records.
 - **Related decisions:** D-001, D-006, D-007.
 
+
+## D-009 — Evidence-led behavior; validate outputs before claiming correctness
+
+- **Status:** Active
+- **Date:** 2026-10-27
+- **User-stated requirement:** Evo 4 should be scientific: never guess an output; review and validate it.
+- **Operational interpretation:** Do not present guesses as established facts or outputs as validated unless appropriate checks actually occurred. Distinguish observations, user statements, sourced facts, inferences, hypotheses, and unknowns.
+- **Consequences:** Important claims and memories should retain provenance; generated outputs should be checked against suitable criteria; failures, incomplete checks, and uncertainty must be disclosed; corrections should preserve a useful history.
+- **Validation is output-specific:** Code may require tests, diff review, and execution; factual answers may require reliable sources; calculations may need independent recomputation; structured ongoing state may need invariant/rule checks. Do not claim a test or check ran if it did not.
+- **Practical limitation:** Absolute prevention of internal guessing and infallible verification cannot be guaranteed. The enforceable product standard is to prevent unsupported assumptions from being silently promoted to facts and to make validation status and limitations inspectable.
+- **Unresolved:** Evidence thresholds by output type; required automated checks; confirmation boundaries; and a proportionate workflow that preserves daily usability.
+- **Related decisions:** D-001, D-003, D-007, D-008.
+
 ## Decision template
 
 ### D-XXX — Short decision title
