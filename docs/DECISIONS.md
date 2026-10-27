@@ -168,3 +168,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** The default hypothesis is "opencode + opencode-mem (or Nemoxiom-derived memory) + MCPs," not a new application. Any proposal to build new infrastructure must justify itself against a demonstrated gap in that stack. This also means the "replace ChatGPT" bar is about *behavior* (it knows me, it resumes work, it recommends well), not about cloning ChatGPT's web UI.
 - **Unresolved:** Whether the opencode TUI surface is acceptable as the chat surface long-term (vs. a web UI like Odysseus/Open WebUI), and which specific capability gaps in the current stack are the actual blockers.
 - **Related decisions:** D-003, D-004, D-006, D-007.
+
+
+## D-012 — "Already there": Evo 4 is harden + close gaps, not replace
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** The user reports they are "already there" — this assistant is already their first stop when free AI runs out. The current stack (opencode + memory plugin + MCPs) already satisfies the "replace ChatGPT" bar for daily use.
+- **Consequences:** Evo 4 is NOT a greenfield replacement for a working setup. It is (a) hardening what already works so it doesn't break (quota, context loss, stale state), and (b) closing the specific gaps that still frustrate. Scope ceiling tightens: anything that doesn't address a real, current frustration is out of scope.
+- **Unresolved:** Which 2-3 frustrations are the actual blockers worth fixing in v1 vs. leaving alone.
+- **Related decisions:** D-003, D-011.
