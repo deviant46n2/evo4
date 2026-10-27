@@ -195,3 +195,13 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** v1 is judged on these four measurable outcomes, not on context-limit elimination or new platform features. The 50 tok/s target constrains model size/quant and inference config (likely a smaller/faster model than the current 27B IQ4, or better llama.cpp tuning). "Memory as good as current" means the memory layer is a keep, not a rebuild.
 - **Unresolved:** Which model/quant hits 50 tok/s on the 16 GB card (current 27B IQ4 is likely too slow — needs benchmarking), and whether the memory system needs any change to work with a local model instead of an inherited opencode provider.
 - **Related decisions:** D-003, D-013.
+
+
+## D-015 — Non-goals for v1 + runtime management is a v1 priority
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Non-goals (v1):** (1) No web/chat UI — TUI is sufficient as long as permanent memory exists. (2) No benchmarking infrastructure — "not concerned about benchmarking anything yet." (3) No multi-agent swarm cockpit. (4) No computer-use verification (aihands). (5) No context-as-1B (long-term, deferred). (6) No new platform — integration of existing tools preferred (D-011).
+- **New v1 priority:** Runtime management (Omega-style GGUF discovery + llama-server lifecycle + SIGKILL stop + /health polling, plus cyberdeck-style VRAM-fit estimation) is a **key missing feature** from the current workflow. Omega won't open and cyberdeck is abandoned, so this capability must be revived or replaced — it is not optional polish.
+- **Consequences:** v1 scope = opencode (host) + Nemoxiom memory (permanent, ≥ current) + runtime management (revived) + local fallback (50+ tok/s, routine coding + basic assistant). Everything else is deferred.
+- **Unresolved:** How to revive runtime management — fix Omega, extract its backend into a standalone tool, or solve it fresh. Omega is currently non-functional ("won't open").
+- **Related decisions:** D-003, D-011, D-012, D-013, D-014.
