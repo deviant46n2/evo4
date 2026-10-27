@@ -53,6 +53,19 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Revisit when:** The user clarifies priority and a concrete workflow, or archaeology reveals evidence that changes the smallest viable approach.
 - **Related decisions:** D-001, D-002, D-003.
 
+## D-005 — Treat context loss and state-tracking as distinct user problems
+
+- **Status:** Provisional
+- **Date:** 2026-10-27
+- **User-stated problems:** The user is frustrated by loss of context between sessions, finite context windows, and my unreliable tracking of a multi-turn Magic: The Gathering game.
+- **Current interpretation:** Evo 4 should aim for reliable continuity, not simply accumulate a large memory store. The relevant problems may require different mechanisms: durable cross-session memory, context selection/compaction, and explicit state tracking with validation.
+- **Technical constraint:** Memory does not eliminate a model's native context-window limit. The product can instead externalize information and restore relevant context when needed.
+- **Rationale:** These failures directly undermine the desired experience of an assistant that knows the user, retains project understanding, and can reliably continue multi-step work.
+- **Scope guard:** This is a problem statement, not a commitment to implement all three mechanisms in the first release.
+- **Unresolved:** Which failure is most costly in daily use, what workflow best demonstrates it, and what correctness standard is necessary.
+- **Revisit when:** The user prioritizes the first workflow or evidence from prior projects identifies a smaller solution.
+- **Related decisions:** D-003, D-004.
+
 ## Decision template
 
 ### D-XXX — Short decision title
