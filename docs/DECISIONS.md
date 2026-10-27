@@ -78,6 +78,21 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Unresolved:** The concrete first workflow, measurable definition of success, and explicit non-goals.
 - **Related decisions:** D-003, D-004, D-005.
 
+
+## D-007 — Maintain a compact persistent starting context
+
+- **Status:** Active
+- **Date:** 2026-10-27
+- **Decision / user-stated minimum:** At the start of any request, Evo 4 should be oriented by compressed knowledge of itself and its capabilities, plus the basics of the user's projects and interests.
+- **Intended outcome:** Evo 4 can begin a broad range of requests with useful baseline context rather than repeatedly asking the user to reintroduce themselves or re-explain basic project context.
+- **Current product interpretation:** Maintain a compact persistent starting context that serves as a launchpad, then retrieve deeper task-specific records as needed. The compact context is not the entire memory archive.
+- **Candidate information categories:** (1) self-knowledge about purpose, tools, models, capabilities, limitations, and what is currently available/verified; (2) compressed user interests/preferences and project goals/status/decisions; (3) pointers to authoritative detail and request-specific retrieval.
+- **Rationale:** This is the minimum continuity foundation that connects personalized assistance and coding work without loading the entire history into every request.
+- **Trust constraint:** Distinguish configured, currently available, and verified capabilities; do not treat aspirational or stale capability claims as facts. Summaries should point to deeper records and remain correctable.
+- **Scope guard:** This does not prescribe a storage architecture, imply that every record should be loaded for every request, or authorize broad autonomous-agent scope.
+- **Acceptance criteria still to define:** What the context must contain; how it is refreshed/corrected; and observable tests across personal-interest, project/coding, and evolving-state requests.
+- **Related decisions:** D-003, D-004, D-006.
+
 ## Decision template
 
 ### D-XXX — Short decision title
