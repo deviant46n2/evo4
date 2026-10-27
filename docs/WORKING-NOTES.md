@@ -152,6 +152,15 @@ These are design implications derived from the requirements above, not final arc
 - **Performance is a requirement, not a presumed implementation.** Responsive interruption must be tested while meaningful background work is running and under realistic resource contention. A subagent alone is not proof of responsiveness; a separate agent is not mandatory if safe interruption/resumption meets the experience.
 - **Scope discipline:** These implications must be turned into a small number of end-to-end acceptance tests before architecture selection. Avoid building a generic memory platform or agent framework before demonstrating the desired behavior.
 
+
+### 2026-10-27 — Software graveyard review started
+
+- **Decision / process update:** Requirements discovery has reached a sufficient initial threshold to begin software archaeology. Continue refining requirements when evidence exposes a material gap, but do not keep brainstorming indefinitely before inspecting prior work.
+- **Scope of first pass:** Read selected README, philosophy, architecture, thesis, feasibility, experiment, operations, and decision documents from EVO, EVO 3, NEMOXIOM, Cyberdeck, and AIHands. Repository-specific findings and evidence limits are recorded in `docs/ARCHAEOLOGY.md`.
+- **Preliminary lead:** NEMOXIOM appears most directly relevant to persistent continuity, provenance, bounded context, and memory verification; EVO 3 appears most relevant to task lifecycle, resumability, and observability; EVO appears most relevant to separating claims from authoritative evaluation and enforcing boundaries.
+- **Important evidence limit:** This first pass is documentary reconnaissance, not a full code review and not a fresh run of the projects' tests. README/design/experiment claims are not being treated as independently verified capabilities. Omega's expected README/architecture paths returned 404, which is a retrieval/path issue to resolve, not evidence of irrelevance.
+- **Next:** Inspect implementation and tests in NEMOXIOM first, then EVO 3's task lifecycle/resume path and EVO's validation/authority boundaries. Record exactly which behavior is implemented, tested, and independently verified; identify reusable components only after checking their contracts and failure handling.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
@@ -162,8 +171,10 @@ These are design implications derived from the requirements above, not final arc
 - [ ] Identify the smallest daily workflow that demonstrates continuity across request types, plus explicit exclusions.
 - [ ] Decide how the personal-memory and coding-agent use cases relate in the first usable version.
 - [ ] Define explicit non-goals and a scope ceiling before drafting architecture.
-- [ ] Inspect Evo and Evo 3 repository structure, implementation, tests, and history.
-- [ ] Inspect Nemoxiom, Omega, Cyberdeck, and other potentially relevant projects.
-- [ ] Record reusable components separately from ideas that only existed in plans.
+- [ ] Deep-review NEMOXIOM implementation and tests: archive integrity, knowledge admission/provenance, context assembly, recovery, onboarding, and failure handling.
+- [ ] Deep-review EVO 3 task lifecycle: pause/interruption/resume checkpoints, event log, recovery, and test coverage.
+- [ ] Deep-review EVO validation and authority boundaries: which checks are enforced, which are only observed, and how claims are verified.
+- [ ] Resolve Omega repository paths/branch and inspect its actual contents; scan remaining repositories for relevant evidence.
+- [ ] Record reusable components separately from ideas that only existed in plans, with evidence levels and integration cost.
 - [ ] Identify recurring failure modes, scope drift, and verification gaps.
-- [ ] Review the archaeology synthesis with the user before establishing core requirements.
+- [ ] Present the evidence-based archaeology synthesis before selecting an Evo 4 architecture.
