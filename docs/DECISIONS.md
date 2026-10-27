@@ -38,6 +38,21 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Revisit when:** The user explicitly changes the intended outcome or evidence shows the scope boundary prevents the core job from working.
 - **Related decisions:** D-001, D-002.
 
+## D-004 — Product intent: persistent-memory chatbot and coding agent
+
+- **Status:** Provisional
+- **Date:** 2026-10-27
+- **Decision / user-stated intent:** Evo 4 should combine a chatbot with persistent memory and a coding agent.
+- **Examples given by the user:**
+  - Use accumulated knowledge of the user to recommend movies they are likely to enjoy.
+  - Work on code without repeatedly rereading the same files or needlessly rediscovering project context.
+- **Context / problem:** The user wants an assistant that knows them over time and a coding agent that retains useful working knowledge instead of behaving as if every session starts from zero.
+- **Current hypothesis:** Durable, retrievable knowledge may support both use cases, but the memory representation and whether the two use cases share mechanisms are not decided.
+- **Scope guard:** This does not authorize a general AI workstation, broad autonomous agent platform, or every feature explored in earlier projects.
+- **Unresolved:** Which use case sets the minimum viable product, the first concrete daily workflow, what should be remembered, how memory is corrected/forgotten, and how to avoid stale or incorrect project context.
+- **Revisit when:** The user clarifies priority and a concrete workflow, or archaeology reveals evidence that changes the smallest viable approach.
+- **Related decisions:** D-001, D-002, D-003.
+
 ## Decision template
 
 ### D-XXX — Short decision title
