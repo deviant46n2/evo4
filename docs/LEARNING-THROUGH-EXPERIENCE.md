@@ -30,9 +30,18 @@ Design implication to explore (proposal, not yet approved): distinguish ordinary
 
 The user should be able to inspect the evidence and rationale behind learned lessons, steer how they affect behavior, correct mistaken conclusions, and observe whether changes actually improve results. Personality should be able to evolve in response to experience and user direction, without treating an unverified inference as fact.
 
+## User-confirmed principle: evidence-proportional adaptation
+
+The user expects Evo to choose between acting on a lesson immediately and testing it further depending on the evidence. The product should not impose a universal “always test first” or “always trust the latest lesson” rule.
+
+Design interpretation (proposal, not a settled algorithm): adaptation should account for evidence strength, uncertainty, repeatability, plausible alternative explanations, observed effect on outcomes, and the risk or reversibility of the proposed change. A well-supported, low-risk lesson may be applied immediately; an uncertain lesson can remain a hypothesis and be tested; conflicting or weak evidence should not be promoted to reliable knowledge. High-impact changes need stronger safeguards regardless of the system's subjective confidence. Confidence alone is not evidence.
+
+This principle concerns how Evo learns and adapts. It does not override the separately confirmed initial human-in-the-loop boundary for modifying Evo's own code.
+
 ## Unresolved; do not assume
 
 - What are the boundaries within which adaptation may happen freely?
+- How should evidence strength, uncertainty, repeatability, alternative explanations, outcome improvement, and risk be operationalized when deciding whether to apply or test a lesson?
 - How do we evaluate whether a lesson is correct and generalizes beyond one episode?
 - How should Evo detect regressions, overfitting, false patterns, and harmful drift?
 - What degree of initiative or autonomy is desired outside the confirmed initial human-approval gate for code self-modification?
