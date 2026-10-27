@@ -26,6 +26,46 @@ The assistant's personal context, long-term memory, project knowledge, current t
 - **Quality bar:** security and reliability matter. Do not release or recommend public-facing software merely because it works on a happy path; avoid unsupported assurances and explicitly identify unresolved risks.
 - **Development preference:** do substantial research and synthesis for the user; do not require the user to benchmark several competing systems when a careful evidence-based choice can be made. Record design decisions and push note milestones, while clearly labeling them as proposals or confirmed requirements.
 
+## Learning, autonomy, and self-modification (discovery updates, 2026-10-27)
+
+### User-confirmed direction
+
+- Evo should eventually replace both ChatGPT and OpenCode as the user's unified personal AI workspace, with detailed personal context under the user's control.
+- It should begin broadly like ChatGPT but become more capable through use, learning meaningful lessons that change future behavior—not merely accumulating a searchable transcript.
+- Learning should span anything the user does through Evo: conversations, research, coding, project work, games, planning, and task outcomes. Evo should connect domains when evidence supports a meaningful relationship.
+- The user wants Evo to develop an increasingly rich understanding of their preferences, working style, projects, and intent, and to be able to inspect and steer that understanding.
+- The user is comfortable with Evo initiating its own research and learning between interactions.
+- Adaptation should be evidence-proportional: some well-supported, low-risk lessons can be applied immediately; uncertain lessons may need further testing; confidence alone is not evidence.
+- Initially, Evo modifying its own code must be a human-in-the-loop process. This boundary may be revisited later.
+- The user needs a reliable way to reclaim GPU VRAM. Which components must stop depends on the architecture: deterministic services may remain running if their resource costs are acceptable, while GPU-resident models may need unloading. Durable memory and task state should survive model unload/shutdown.
+
+### Design implications (proposals, not finalized architecture)
+
+- Preserve the original experiences and provenance behind learned lessons; distinguish statements, hypotheticals, preferences, observed outcomes, and inferences.
+- Track candidate lessons with evidence, confidence/uncertainty, scope, observed outcomes, and correction/reversal history.
+- Evaluate whether lessons generalize and improve future outcomes, including game strategy and cross-project synthesis.
+- Provide inspectable autonomy controls and a tested resource-release path that can unload GPU models without destroying durable continuity.
+- Keep ordinary learning distinct from code self-modification. Initially, code changes should be proposed and tested in isolation, then await human approval before activation.
+- Do not infer permission for unrestricted self-modification, independent unrelated goal formation, or model-weight changes from the user's interest in autonomy.
+
+### Still open
+
+- Exact boundaries for autonomous research, data access, tool use, and external side effects.
+- How the user inspects, corrects, or disables a learned lesson, and how Evo identifies drift or false patterns.
+- What evidence and safeguards code changes require before approval and activation.
+- Whether learning will eventually include training/changing model weights; no decision has been made.
+- What “pause,” “VRAM release,” and “full shutdown” guarantee in measurable terms.
+- Capture, retention, and deletion policies for sensitive content, accidental disclosures, hypothetical statements, and information the user asks Evo not to use.
+
+## Recent external research (2026-10-27)
+
+A preliminary scan found adjacent projects rather than a verified complete substitute for Evo:
+- **Hermes Agent** is the most relevant candidate to investigate for an agent that advertises learning through experience and reusable skills. Those claims still require task-based validation; they do not prove reliable improvement at chess/MTG or general long-term intelligence.
+- **OpenViking** is a possible structured context/filesystem layer for memories, resources, and skills, not a complete autonomous personal AI.
+- **Hindsight** is a possible memory/reflective-belief component for retaining experiences and revising beliefs, not a complete agent.
+- **OpenJarvis** is relevant to the personal/local assistant direction, but the reviewed material did not establish the same explicit experience-to-skill loop.
+These are research leads, not selected dependencies. No decision has been made to adopt any of them. Compare against Evo-specific tasks, integration costs, security, resource usage, and actual observed behavior before selecting components.
+
 ## Current provisional memory direction
 
 MemSearch is a provisional first coding-session memory component to test, not the whole Evo 4 architecture. See docs/ARCHAEOLOGY.md and docs/MEMORY-ARCHITECTURE.md. Its behavior must be verified in a disposable setup. Do not assume it handles full ChatGPT-history ingestion, cross-source claim provenance, temporal correction semantics, or evidence-sufficiency checks until tested.
