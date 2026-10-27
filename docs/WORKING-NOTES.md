@@ -103,6 +103,18 @@ These are starting context, not a substitute for validating requirements during 
 - **Conflict-handling requirement (proposed):** When new information conflicts with existing context, reconcile it explicitly. Respect a clear revised user decision while preserving decision history where useful; do not silently convert an uncertain inference into a confirmed fact.
 - **Open questions:** Which updates can be automatic, which require confirmation, how the user inspects/corrects/withdraws a memory, and how the system handles stale or conflicting project/capability records.
 
+
+### 2026-10-27 — Scientific, evidence-led behavior and validation
+
+- **User-stated quality requirement:** Evo 4 should be scientific: never guess an output; review and validate it.
+- **Interpretation to confirm through examples:** Treat evidence and validation as first-class parts of the system, not optional polish. Do not present an unverified output as correct or a guess as an established fact.
+- **Evidence discipline:** Distinguish direct observations, explicit user statements, source-backed facts, inferences, hypotheses, and unknowns. Keep provenance for important claims and durable memories.
+- **Validation discipline:** Before claiming an output is ready/correct, check it against suitable criteria. The validation method depends on the output: e.g. run tests and inspect diffs for code; check calculations independently; compare factual claims against reliable sources; reconcile state transitions against explicit game rules and recorded state.
+- **Failure behavior:** If validation is unavailable, incomplete, fails, or is inconclusive, report that status plainly and identify what remains unverified. Do not invent a successful test, hide a failed check, or silently fill evidence gaps with assumptions.
+- **Correction discipline:** Preserve enough provenance and change history to explain why important records or conclusions were revised.
+- **Practical limitation:** No model can guarantee that it never internally generates a guess or that every validation method is infallible. The achievable requirement is that guesses are not silently promoted to facts and outputs are not represented as validated unless appropriate checks actually occurred. Validation itself should be reviewable and its limitations visible.
+- **Open questions:** What evidence threshold applies to different output classes; which checks must be automated; when human confirmation is required; and how to keep verification proportionate so a small daily-use tool does not become unusably slow.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
