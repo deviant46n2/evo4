@@ -137,6 +137,21 @@ These are starting context, not a substitute for validating requirements during 
 - **Architecture flexibility:** A separate always-on conversational worker remains one possible implementation, but is not itself a requirement. Reliable interruption, response, and resumption is the user-facing requirement.
 - **Still open:** Expected response latency; which operations can be safely paused; how to handle non-interruptible actions; and what progress/checkpoint detail is necessary for reliable recovery.
 
+
+### 2026-10-27 — Cross-cutting implications and gaps to preserve
+
+These are design implications derived from the requirements above, not final architecture choices.
+
+- **Conversation is both interface and evidence source.** It must remain usable during long-running work, and it supplies many of the facts, preferences, corrections, and decisions the system should retain. Memory extraction should be asynchronous where possible so it does not stall the conversation.
+- **Do not equate conversation volume with memory quality.** Store durable, useful information with provenance and confidence/status; retain links to source conversation or artifacts where appropriate. Do not automatically treat every utterance, brainstorm, role-play, or tentative idea as a settled preference or decision.
+- **User control is part of memory correctness.** The user needs a practical way to inspect, correct, supersede, and remove remembered information. Record what changed and why for important decisions, while respecting explicit requests to stop using or remove information. Exact controls and deletion semantics remain open.
+- **Distinguish interruption intent.** At minimum, recognize a question/status request, a temporary pause, a change in priority, a request to cancel, and a replacement instruction. If intent is ambiguous and acting could destroy or redirect work, ask rather than guess.
+- **Use durable checkpoints as the resumption authority.** Checkpoints should describe task objective, completed steps, current safe point, artifacts/files touched, pending steps, blockers, and validation state. Resume from verified state, not just a generated summary; revalidate anything made stale by intervening actions.
+- **Keep validation claims auditable.** A result should expose the relevant checks and their outcomes, not just a blanket "verified" label. Track the difference between not checked, attempted, passed, failed, and inconclusive. Validation requirements should scale to the risk and type of output.
+- **Capability self-knowledge must be dynamic.** Separate configured tools/models from currently reachable ones and from capabilities actually tested. Verify changing availability when needed rather than relying on a stale self-description.
+- **Performance is a requirement, not a presumed implementation.** Responsive interruption must be tested while meaningful background work is running and under realistic resource contention. A subagent alone is not proof of responsiveness; a separate agent is not mandatory if safe interruption/resumption meets the experience.
+- **Scope discipline:** These implications must be turned into a small number of end-to-end acceptance tests before architecture selection. Avoid building a generic memory platform or agent framework before demonstrating the desired behavior.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
