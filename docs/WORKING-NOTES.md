@@ -73,12 +73,15 @@ These are starting context, not a substitute for validating requirements during 
 - **Concrete example:** The user points to my unreliable tracking of our Magic: The Gathering game as an example of failing to maintain state across a multi-turn activity.
 - **Problem distinction:** Durable personal/project memory, active-context management, and exact tracking of changing structured state are related but separate requirements.
 - **Constraint:** Do not promise to abolish context windows. The product goal is to reduce how often limits disrupt the user's work and to make continuation more reliable through externalized, retrievable knowledge and explicit state where useful.
-- **Not decided:** Whether any of these mechanisms should be in the first implementation, or what level of correctness and recovery is required.
-- **Next:** Ask which failure should be solved first and what a successful continuation would look like in a real workflow.
+- **User priority clarification:** The user chose **D — all three are inseparable**: persistent personal memory, coding continuity, and reliable state tracking are aspects of one desired continuity experience, not separate products.
+- **Product-level interpretation:** The assistant should maintain continuity across people/preferences, projects/tasks, and evolving activity state. These may still need different underlying representations and validation rules; unified experience does not imply one undifferentiated memory store.
+- **Scope caution:** Treat this as one product goal, not a requirement to implement every use case at full depth in the first release. The next task is to identify the smallest workflow that demonstrates continuity end to end.
+- **Next:** Ask for the user's ideal continuity experience in a concrete situation, then define observable success criteria and exclusions.
 
 ## Current next actions
 
-- [ ] Prioritize between cross-session memory, context-window management, and exact state tracking using a concrete daily workflow.
+- [ ] Define a single end-to-end continuity workflow that connects persistent personal context, project/task continuity, and reliable state tracking.
+- [ ] Write observable acceptance criteria for that workflow and identify what is explicitly out of scope.
 - [ ] Define the smallest daily workflow that makes Evo 4 worth opening.
 - [ ] Decide how the personal-memory and coding-agent use cases relate in the first usable version.
 - [ ] Define explicit non-goals and a scope ceiling before drafting architecture.
