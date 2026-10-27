@@ -38,12 +38,31 @@ Design interpretation (proposal, not a settled algorithm): adaptation should acc
 
 This principle concerns how Evo learns and adapts. It does not override the separately confirmed initial human-in-the-loop boundary for modifying Evo's own code.
 
+## User-confirmed principle: self-directed learning with a user-controlled stop
+
+The user is strongly in favor of Evo learning and researching on its own, without requiring the user to assign every learning task. They specifically want a switch that stops this activity when they need their PC resources.
+
+Confirmed intent:
+- Evo may initiate its own learning and research.
+- The user needs a direct, dependable way to stop that activity when PC resources are needed elsewhere.
+
+Design implications to explore (proposals, not yet approved requirements):
+- Make background autonomy explicitly controllable by the user, with a clear stop/pause control.
+- Stopping should halt resource-consuming work promptly and preserve enough task state to resume later without losing progress or duplicating side effects.
+- Consider separate controls for background work, local model inference, and full shutdown, so pausing autonomous work need not disable ordinary interactive use.
+- Add configurable resource budgets or priority limits so Evo does not routinely make the PC unusable before the user intervenes.
+- Expose current activity, rationale, resource use, and resumable progress so autonomy is inspectable.
+
+The exact semantics of “stop,” whether active external actions must be cancelled or allowed to finish safely, how quickly resource use must fall, and which activities remain available after pausing are unresolved. Do not claim the stop control is reliable until tested under real workloads and interruption scenarios.
+
 ## Unresolved; do not assume
 
 - What are the boundaries within which adaptation may happen freely?
 - How should evidence strength, uncertainty, repeatability, alternative explanations, outcome improvement, and risk be operationalized when deciding whether to apply or test a lesson?
 - How do we evaluate whether a lesson is correct and generalizes beyond one episode?
 - How should Evo detect regressions, overfitting, false patterns, and harmful drift?
+- What boundaries should govern self-directed research and learning beyond the confirmed need for a user-controlled stop?
+- What exact behavior should the stop/pause control guarantee, including interruption latency, safe cancellation, preservation of task state, and residual resource usage?
 - What degree of initiative or autonomy is desired outside the confirmed initial human-approval gate for code self-modification?
 - What evidence and safeguards should be required before a proposed code change is approved or activated?
 - Does “learning” eventually include training or changing model weights, or should we first focus on persistent knowledge, strategies, tools, and policies? No choice has been made.
