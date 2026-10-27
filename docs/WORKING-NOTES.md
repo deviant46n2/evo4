@@ -172,6 +172,14 @@ These are design implications derived from the requirements above, not final arc
 - **Candidate acceptance-test direction:** Given a real past decision such as “which existing project did we decide to build on?”, the system should find the source conversation/artifact, return the exact candidate plus rationale and date, cite its evidence, and say “not enough evidence” if it cannot. Include adversarial tests where the answer is in a different repository, old conversation, branch, or phrased without the eventual project name.
 - **Open question:** Which software was the intended starter? Do not resolve by guessing. Continue archaeology across conversation records, repository histories/branches, and decision artifacts before asking the user to reconstruct more details.
 
+### 2026-10-27 — Retrieval failure analysis and wider search protocol
+
+- **Correction to earlier assistant response:** The assistant previously recommended Odysseus/Open WebUI/LibreChat for a broader AI-workstation question without surfacing AgentMemory, despite the user's October 15 discussion of AgentMemory's UI and memory integration. This is a documented context-selection failure; the precise internal cause is unknown.
+- **New evidence:** EVO 3 commit history explicitly documents AgentMemory integration work, a cockpit memory view, memory write/recall tests, and later a caveat that AgentMemory was not actually wired into the runtime at that revision. See the archaeology index. This validates the value of searching commit history and of recording integration status by revision rather than as a timeless label.
+- **Repository coverage gap:** Account inventory returned 16 owned repositories; the first archaeology queue omitted openhuman-dash, hydria, hydria-fork, minemind, Dashboi, ModCanvas, Astro-Delve, Mediarium, and combatfactorygame. Relevance is unknown until triaged. Do not exclude a repository solely because it was not in the initial shortlist.
+- **Search protocol proposal (not yet implemented):** For any high-value “what did we decide / what was that tool?” question, define a source inventory first; search the conversation timeline and project/repository artifacts; search multiple paraphrases and synonyms; inspect commits/branches and not only default-branch code; build a candidate table with source/date/rationale/counterevidence; explicitly report coverage and omissions; iterate until new searches stop producing materially new candidates or a stated time/source budget is reached.
+- **Evaluation requirement:** Keep separate tests for capture (was the decision recorded at the time?), retrieval (can a later vague prompt find it?), and calibration/coverage (does the assistant disclose what it did not search and avoid claiming completeness?).
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
