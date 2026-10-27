@@ -66,6 +66,18 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Revisit when:** The user prioritizes the first workflow or evidence from prior projects identifies a smaller solution.
 - **Related decisions:** D-003, D-004.
 
+## D-006 — Treat continuity as one unified product goal
+
+- **Status:** Active
+- **Date:** 2026-10-27
+- **Decision:** The user chose option D: persistent personal memory, coding continuity, and reliable ongoing state are inseparable parts of the desired Evo 4 experience.
+- **Context / problem:** The user does not want three disconnected tools or a narrow memory feature that leaves the broader continuity problem unsolved.
+- **Rationale:** The desired assistant should know the user over time, continue coding work without needless rediscovery, and maintain reliable state during multi-turn activities.
+- **Consequences:** Requirements discovery should seek a coherent end-to-end continuity experience. A unified product goal does not dictate one memory schema, one storage system, or a large first release; distinct information types may require distinct handling and validation.
+- **Scope guard:** Find the smallest workflow that demonstrates this continuity before committing to architecture or expanding features.
+- **Unresolved:** The concrete first workflow, measurable definition of success, and explicit non-goals.
+- **Related decisions:** D-003, D-004, D-005.
+
 ## Decision template
 
 ### D-XXX — Short decision title
