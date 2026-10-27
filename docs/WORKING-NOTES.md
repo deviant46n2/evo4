@@ -78,11 +78,28 @@ These are starting context, not a substitute for validating requirements during 
 - **Scope caution:** Treat this as one product goal, not a requirement to implement every use case at full depth in the first release. The next task is to identify the smallest workflow that demonstrates continuity end to end.
 - **Next:** Ask for the user's ideal continuity experience in a concrete situation, then define observable success criteria and exclusions.
 
+
+
+### 2026-10-27 — Persistent starting context / compact orientation
+
+- **User-stated minimum requirement:** At the start of any request, Evo 4 should have a compressed understanding of itself and its capabilities, plus the basics of the user's projects and interests.
+- **Desired effect:** The assistant should already be oriented well enough to begin a broad range of requests without making the user reintroduce themselves, explain their general interests, or re-establish basic project context.
+- **Current product hypothesis:** Use a compact, persistent **starting context** as a launchpad, then retrieve deeper, task-specific records when relevant. The launchpad is not the entire memory and should not try to contain every detail.
+- **Candidate contents (not yet a finalized schema):**
+  1. **Self-knowledge:** Evo 4's identity/purpose, available tools and model connections, known capabilities and limitations, and a distinction between capabilities that are configured, currently available, and actually verified.
+  2. **User/project orientation:** Compressed interests and preferences; active projects and their goals/status; important decisions and constraints; pointers to authoritative detailed records.
+  3. **Request-specific context:** Retrieve the details relevant to the current request instead of indiscriminately loading the full archive.
+- **Trust requirement / design implication:** Self-knowledge must not become aspirational marketing or stale claims. It should represent capability status honestly and have a way to verify dynamic availability. Project summaries should point to deeper sources so compressed context does not become the sole source of truth.
+- **Acceptance-test direction:** In a fresh conversation, Evo 4 should be able to begin a personal-interest request and a project request with appropriate orientation, then retrieve relevant detail without asking the user to repeat basic context. Exact tests and success thresholds remain open.
+- **Scope guard:** This is a minimum continuity foundation, not yet permission to build a fully autonomous agent, ingest everything, or implement every past project idea.
+- **Next discovery step:** Define what the starting context must reliably contain, how it stays current and correctable, and what behavior demonstrates that it is useful across different request types.
+
 ## Current next actions
 
-- [ ] Define a single end-to-end continuity workflow that connects persistent personal context, project/task continuity, and reliable state tracking.
-- [ ] Write observable acceptance criteria for that workflow and identify what is explicitly out of scope.
-- [ ] Define the smallest daily workflow that makes Evo 4 worth opening.
+- [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
+- [ ] Define how starting context is updated, corrected, verified, and kept from going stale.
+- [ ] Define acceptance tests across a personal-interest request, a coding/project request, and a task with evolving state.
+- [ ] Identify the smallest daily workflow that demonstrates continuity across request types, plus explicit exclusions.
 - [ ] Decide how the personal-memory and coding-agent use cases relate in the first usable version.
 - [ ] Define explicit non-goals and a scope ceiling before drafting architecture.
 - [ ] Inspect Evo and Evo 3 repository structure, implementation, tests, and history.
