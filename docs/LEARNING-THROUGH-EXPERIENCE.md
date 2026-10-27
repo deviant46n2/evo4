@@ -20,7 +20,13 @@ A plausible high-level loop is: experience → record evidence and outcome → d
 
 Memory alone does not satisfy the ambition. The system needs some way to turn experiences into reusable strategies and behavioral adaptations, while preserving the episodes that support them. For example, a chess or MTG lesson should be grounded in recorded game state, legal moves, decisions, and outcomes rather than the simplistic assumption that a winning move was always correct or a losing move always wrong. A cross-project inference should be checked against the user's intended connection.
 
-The user wants adaptation to happen freely within user-established boundaries, with the ability to steer it. The precise boundaries, visibility, rollback, and approval rules remain open. This is not yet authorization for arbitrary code modification, unrestricted autonomy, independent goal formation, or model-weight changes.
+The user wants adaptation to happen freely within user-established boundaries, with the ability to steer it. The precise boundaries, visibility, rollback, and approval rules remain open. This is not authorization for unrestricted autonomy, independent goal formation, or model-weight changes.
+
+## User-confirmed boundary: self-modification
+
+The user thinks Evo modifying its own code should initially be a human-in-the-loop procedure. This can be revisited later; it is a starting boundary, not necessarily a permanent prohibition.
+
+Design implication to explore (proposal, not yet approved): distinguish ordinary learning/adaptation from changes to the system's own implementation. Initially, Evo may be able to propose code changes and gather test evidence, but a human should review and approve before those changes are activated. The exact sandboxing, test requirements, approval UX, rollback procedure, and whether any low-risk changes can be exempted remain undecided.
 
 The user should be able to inspect the evidence and rationale behind learned lessons, steer how they affect behavior, correct mistaken conclusions, and observe whether changes actually improve results. Personality should be able to evolve in response to experience and user direction, without treating an unverified inference as fact.
 
@@ -29,10 +35,11 @@ The user should be able to inspect the evidence and rationale behind learned les
 - What are the boundaries within which adaptation may happen freely?
 - How do we evaluate whether a lesson is correct and generalizes beyond one episode?
 - How should Evo detect regressions, overfitting, false patterns, and harmful drift?
-- What degree of initiative or autonomy is desired?
+- What degree of initiative or autonomy is desired outside the confirmed initial human-approval gate for code self-modification?
+- What evidence and safeguards should be required before a proposed code change is approved or activated?
 - Does “learning” eventually include training or changing model weights, or should we first focus on persistent knowledge, strategies, tools, and policies? No choice has been made.
 - The fictional JARVIS/EDITH/Ultron analogy expresses ambition; it is not itself approval for unrestricted self-modification or autonomous goal formation.
 
 ## Next discovery question
 
-Clarify what Evo may change automatically as it adapts (memories, strategies, communication style, workflows/tools, code, or model weights), and what boundaries should apply. Discuss behaviorally before choosing technical mechanisms.
+Clarify which non-code changes Evo may make automatically (for example, strategies, communication style, workflows, and tools), and which changes need review. The initial human-in-the-loop boundary for self-modifying code is confirmed; its concrete safeguards are not.
