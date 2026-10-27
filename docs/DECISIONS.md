@@ -186,3 +186,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** v1 success is measured by "local fallback is usable for basics," not by eliminating context limits. The context-as-1B goal is explicitly deferred to a later phase. This also means VRAM management (Omega/cyberdeck patterns) and inference speed are first-class v1 concerns, not polish.
 - **Unresolved:** What "basics" means concretely (which tasks the local model must handle) and what speed/quality threshold counts as "usable."
 - **Related decisions:** D-003, D-011, D-012.
+
+
+## D-014 — Concrete local-fallback bar: 50+ tok/s + memory as good as current
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** v1 local-fallback success bar: (1) local model sustains 50+ tokens/sec, (2) memory system performs at least as well as the current opencode-mem/Nemoxiom stack, (3) routine coding (bugfixes, small feature implementations) works end-to-end, (4) basic assistant tasks (recommendations, project design chat, quick answers) work on the local model when free AI is unavailable.
+- **Consequences:** v1 is judged on these four measurable outcomes, not on context-limit elimination or new platform features. The 50 tok/s target constrains model size/quant and inference config (likely a smaller/faster model than the current 27B IQ4, or better llama.cpp tuning). "Memory as good as current" means the memory layer is a keep, not a rebuild.
+- **Unresolved:** Which model/quant hits 50 tok/s on the 16 GB card (current 27B IQ4 is likely too slow — needs benchmarking), and whether the memory system needs any change to work with a local model instead of an inherited opencode provider.
+- **Related decisions:** D-003, D-013.
