@@ -55,6 +55,16 @@ Design implications to explore (proposals, not yet approved requirements):
 
 The exact semantics of “stop,” whether active external actions must be cancelled or allowed to finish safely, how quickly resource use must fall, and which activities remain available after pausing are unresolved. Do not claim the stop control is reliable until tested under real workloads and interruption scenarios.
 
+### Clarification: the stop control is primarily about reclaiming VRAM
+
+The user clarified that the central concern is freeing GPU VRAM when needed, rather than indiscriminately stopping every Evo process. The correct behavior depends on the eventual architecture:
+- Deterministic, lightweight services may remain running if their CPU/RAM overhead is acceptable.
+- GPU-resident models or other VRAM-consuming components may need to unload or terminate.
+- A full-off / VRAM-release switch is needed if Evo's normal memory operations depend on a resident model.
+- The system should avoid making durable memory operations unnecessarily dependent on a running GPU model. Persistent memory and task state should survive model unload/shutdown and be available again afterward.
+
+Architecture is not chosen yet. Future design should distinguish process shutdown, model unload, and full Evo shutdown, and measure actual VRAM release rather than assuming a process exit or UI status guarantees it. Deterministic services are acceptable to leave running only when their resource costs are tolerable.
+
 ## Unresolved; do not assume
 
 - What are the boundaries within which adaptation may happen freely?
@@ -62,7 +72,8 @@ The exact semantics of “stop,” whether active external actions must be cance
 - How do we evaluate whether a lesson is correct and generalizes beyond one episode?
 - How should Evo detect regressions, overfitting, false patterns, and harmful drift?
 - What boundaries should govern self-directed research and learning beyond the confirmed need for a user-controlled stop?
-- What exact behavior should the stop/pause control guarantee, including interruption latency, safe cancellation, preservation of task state, and residual resource usage?
+- What exact behavior should the stop/pause control guarantee, including interruption latency, safe cancellation, preservation of task state, residual resource use, and verifiable VRAM release?
+- Which components can operate without a resident model, and what CPU/RAM overhead is acceptable for deterministic services left running?
 - What degree of initiative or autonomy is desired outside the confirmed initial human-approval gate for code self-modification?
 - What evidence and safeguards should be required before a proposed code change is approved or activated?
 - Does “learning” eventually include training or changing model weights, or should we first focus on persistent knowledge, strategies, tools, and policies? No choice has been made.
