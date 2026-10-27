@@ -123,3 +123,33 @@ _To be established from evidence and user discussion._
 ### Questions for the user
 
 _Add only questions whose answers materially affect design direction._
+
+
+## Expanded reconnaissance — 2026-10-27: AgentMemory and omitted project history
+
+### AgentMemory is confirmed in EVO 3 history, but integration status changed over time
+
+- **Direct repository evidence:** [EVO 3 commit 58d0abf](https://github.com/deviant46n2/evo-3/commit/58d0abfa1b0e45d0bec7f190d6684015667a2f65) describes initial AgentMemory MCP wiring and memory-inspection scripts. [Commit 72b2431](https://github.com/deviant46n2/evo-3/commit/72b24319c916605e68e65fba1efe1342b0f48ebb) describes a cockpit memory tab with counts, recent memories, ranked search, and viewer link; it explicitly says the viewer's CSP prevents embedding, so the UI uses a link and server-side health instead.
+- [Commit a727149](https://github.com/deviant46n2/evo-3/commit/a72714987c88b13137ffbb637212d4e98c70ef17) describes driver-side durable memory: revision-scoped records, idempotency ledger, prior-memory recall, best-effort failure behavior, and unit tests against a fake daemon. [Commit 175759b](https://github.com/deviant46n2/evo-3/commit/175759b230497778f754aeb28b919dd96297afbb) adds a live end-to-end proof exercising write, retrieval, contradictory results, and cleanup against the real daemon.
+- **Important contradictory / later-state evidence:** [Commit 9fb5955](https://github.com/deviant46n2/evo-3/commit/9fb5955051ba08df27ef7eb9b2d81ca578456f73) explicitly says AgentMemory was not actually wired into the runtime despite the daemon being healthy. [Commit 87bfdd6](https://github.com/deviant46n2/evo-3/commit/87bfdd68ffa68e3d68ccd58e1bb450bf98528b2a) notes unresolved runtime/memory activation issues at that point. Later [commit 0c12176](https://github.com/deviant46n2/evo-3/commit/0c12176f1bb985c811c75f3e506a0c676a82c7fb) records inventory of live AgentMemory counts and other checks. These commit descriptions are evidence of project history, not a fresh checkout/test run in this session.
+- **Lesson:** Never summarize “AgentMemory integrated” as a timeless binary. The record must be revision- and path-specific: configured, service healthy, MCP reachable, runtime actually invoking it, memory persisted, recall effective, and end-to-end behavior tested are distinct statuses.
+- **Current follow-up:** Inspect the current EVO 3 HEAD, the named commits' diffs/tests, and the exact NEMOXIOM end-of-development timeline. Search commit messages and branches in addition to default-branch code search.
+
+### Broader account inventory and review omissions
+
+A GitHub repository inventory returned 16 repositories owned by the user: Astro-Delve, Dashboi, ModCanvas, cyberdeck, hydria, hydria-fork, aihands, omega, combatfactorygame, openhuman-dash, evo, minemind, Nemoxiom, evo-3, Mediarium, evo4. The current review queue had omitted **openhuman-dash, hydria, hydria-fork, minemind, Dashboi, ModCanvas, Astro-Delve, Mediarium, and combatfactorygame**. This inventory alone does not establish relevance; inspect repository metadata/README/branches and use prior conversation context to triage before deciding a project is irrelevant.
+
+### Recovered conversation-level candidates (not yet proof of the exact forgotten choice)
+
+- **OpenViking:** On 2026-10-14 the user explicitly considered it for persistent memory alongside OpenCode or Pi. Earlier, OpenViking, Mem0, and Letta appeared in memory/context-engine discussions.
+- **AgentMemory:** On 2026-10-15 the user discussed reusing its web UI and memory integration in EVO 3. This is the strongest currently evidenced candidate for a memory foundation, but the exact “abandon NEMOXIOM and use this instead” decision has not yet been found.
+- **Odysseus / Open WebUI / LibreChat:** On 2026-10-27 these were compared as broader self-hosted AI workspace starting points; Odysseus was recommended as a cockpit. This appears to be a later, broader workspace decision and must not be conflated with the earlier memory-foundation choice.
+- **Hindsight:** Part of the 2026-10-27 Odysseus setup/testing plan; exact intended role relative to AgentMemory/OpenViking remains unresolved.
+- **OpenHands:** Previously mentioned as an agent UI to reuse; relevance is primarily agent/interface precedent, not confirmed memory foundation.
+- **OpenCode and Pi:** On 2026-10-14 a clean break from EVO was discussed using one as the coding-agent runtime and OpenViking for memory.
+- **Omega runtime alternatives:** On 2026-10-24 the user considered Local LLM Foundry, Llama GUI, and llama.cpp Server Manager instead of rebuilding runtime management. Adjacent prior-art thread, not necessarily related to NEMOXIOM's abandonment.
+
+### Search coverage failure recorded
+
+A previous attempt searched a small set of exact terms in default-branch indexed files for NEMOXIOM and EVO 3, then treated the absence of results as a weak signal. It did not inspect commit history broadly, all branches, all user-owned repositories, or the conversation interval surrounding the decision. The query set was too narrow and the search boundary was not made visible. Do not call that a comprehensive search.
+
