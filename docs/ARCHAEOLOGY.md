@@ -273,3 +273,21 @@ Evidence boundary: code/docs inspected through public GitHub on 2026-10-27. No c
 **Next check (not done yet):** run the e2e persistence suite + read `nemoxiom/capture.ts` and `archive.ts` to record which guarantees are enforced vs merely assumed.
 
 **Confidence/unknowns:** Suite executed this session on this machine = high confidence for the 448/449 number only. Behavioral claims (hash-chain integrity under concurrent writes etc.) are covered by tests but not separately audited — treat as "covered by tests," not "independently verified."
+
+## Full local+remote landscape sweep (2026-10-27, 5 parallel recon passes)
+
+**Status:** Documented reconnaissance. Test/executed claims marked where actually run.
+
+### Landscape (facts):
+
+**Evo lineage.** evo = self-improvement lab (Python/Docker, governor+evidence DB, paused Sep 23, test-claims 728 passing). Evo 2 = throwaway llama.cpp KV-arena sweep scripts (not a repo). Evo 3 = headless-OpenCode loop, frozen benchmark ruler, cockpit, preflight gate, agentmemory MCP wiring (paused Oct 18; 158-test claim, 5 bench tasks solved). `Evo\ 3` = accidental duplicate state dir whose agentmemory DB is being written TODAY (Oct 27 15:27) — a live service considers it canonical, not junk. Nemoxiom and Neurocosm are TWO COPIES of the same lineage (Neurocosm renamed "Neo" per 2026-10-11 directive; Nemoxiom/GitHub main has newer onboarding-v2 commits). Verified in prior slice: Nemoxiom 448/449 unit.
+
+**Adjacent infra (reusable for Evo 4).** cyberdeck = Rust/Tauri local-LLM fleet manager (VRAM-fit estimator, engine aliases, Sep 12). Omega = Jellyfin/arr control + verified Local-AI runtime lifecycle (GGUF discovery, llama-server SIGKILL/health, Sep 24). Openhuman dash = Python opencode-server-per-project cockpit (Sep 17). aihands = verification-pattern docs only, no tests. minemind༼coop bots = LLM-planner → deterministic-action-bridge pattern, twice over (Python fork + Java Fabric rewrite).
+
+**Non-AI but culture-relevant.** ModCanvas = Tauri2/Rust+React flagship with stride-for-stride TDD, ~30 session handoffs, AGENTS.md rulebook, governance scripts (paused Aug 17, consolidation phase). combatfactorygame = Godot flagship, 59 design docs, test discipline. Hydria = active Hydra fork (blockers open). cosmic-dash, Dashboi, waybarice, Volume3, Mediarium = desktop/media tooling (stale/forks). Astro-Delve = game.
+
+**Cross-cutting observations (assistant-level synthesis, for discussion):**
+1. Recurring engineering pattern: deterministic core + LLM at the decision edge (minemind, fabric bot, Evo 3 harness, Nemoxiom archive). Evo 4 should probably not be an exception.
+2. The user already maintains handoff/decision docs by hand across every serious project — Evo 4's continuity pitch is mechanizing a practice the user already believes in, not teaching a new one.
+3. VRAM constraint recurs in 6+ projects (16 GB card) — the stop/unload switch (LEARNING doc) has deep precedent.
+4. Two live-state wrinkles outside Evo 4 but real: Neurocosm/Nemoxiom duplicate-lineage question, and the Evo\ 3 agentmemory path ambiguity.
