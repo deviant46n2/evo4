@@ -216,3 +216,39 @@ Coverage boundary: this pass used public web search and GitHub repository/README
 ### Additional adjacent discovery: OpenHuman
 
 **OpenHuman — https://github.com/tinyhumansai/openhuman** is an early-beta desktop app plus Rust agent harness, advertised as a lightweight, efficient coding-agent runtime. AgentMemory now lists OpenHuman as a native Memory-trait backend, so this is a concrete integration path worth evaluating if Evo 4 eventually needs both a memory layer and a different agent runtime. It is not itself evidence of a general-purpose personal-chat memory solution, and its early-beta status means stability, platform support, and fit with our existing OpenCode/llama.cpp setup must be tested before considering adoption.
+
+
+## Deep comparison and provisional selection — 2026-10-27
+
+Scope: read current public READMEs/docs and inspect selected implementation files for AgentMemory, MemSearch, and TencentDB Agent Memory. This is still static inspection; none of the three was cloned, executed, or benchmarked in this pass.
+
+### Provisional choice: MemSearch as the first foundation to adopt
+
+Given the user's limited appetite for multi-system benchmarking, choose **MemSearch as the single first candidate to try**, not as a claim that it is universally superior. Its Markdown-first source of truth, progressive retrieval from summary to original transcript, explicit USER.md/PROJECT.md split, and documented OpenCode capture/recovery protocol best balance Evo 4's inspectability, continuity, and implementation burden. Its code/docs describe durable pending-turn handling, settled-turn checks, append/index recovery, and replay of missed capture work. See https://github.com/zilliztech/memsearch and https://github.com/zilliztech/memsearch/blob/main/docs/platforms/opencode/how-it-works.md.
+
+### Comparative evidence
+
+- **AgentMemory — broadest ready-made coding-memory feature set.** Static inspection of `src/state/schema.ts`, `src/index.ts`, `src/functions/actions.ts`, and `src/functions/remember.ts` shows distinct state scopes for sessions/observations, summaries, profiles, graph data, audit, actions/dependencies, checkpoints, capture inbox/events, and other subsystems. `actions.ts` creates actions with status/priority/project, source observation/memory IDs and dependency edges; it records an audit event. `remember.ts` validates inputs, normalizes project attribution, uses source observation IDs, and attempts near-duplicate detection. This is meaningful implementation evidence for structured task state and provenance links, not proof of end-to-end reliability. Architecture depends on iii-engine/iii-sdk and is substantially larger/more coupled than a Markdown journal. Current README's tool/test/benchmark counts are upstream claims and were not reproduced. URLs: https://github.com/rohitg00/agentmemory/blob/main/src/functions/actions.ts ; https://github.com/rohitg00/agentmemory/blob/main/src/functions/remember.ts ; https://github.com/rohitg00/agentmemory/blob/main/src/state/schema.ts.
+- **MemSearch — strongest inspectability/recovery balance.** Markdown is the canonical memory and Milvus is a derived index. The OpenCode integration docs describe reading persisted host session tables, requiring settled assistant/tool turns, storing pending capture before inference, tracking append offsets/hashes, fsync, and recovering partial writes/indexing failures. It uses session anchors to link memory notes to original conversations and has a replay/recovery scan. The Python package does depend on Milvus Lite/PyMilvus and an embedding provider; local/offline behavior and actual model/provider calls still require verification. URLs: https://github.com/zilliztech/memsearch/blob/main/docs/platforms/opencode/how-it-works.md ; https://github.com/zilliztech/memsearch/blob/main/src/memsearch/store.py ; https://github.com/zilliztech/memsearch/blob/main/pyproject.toml.
+- **TencentDB Agent Memory — richest explicit layered context model, heavier operational stack.** README and INSTALL.md describe L0 raw conversation, L1 extracted atoms, L2 scenario/project context, L3 stable profile; also skills, Wiki, CodeGraph, hub/proxy, and access scoping. Recommended install runs Memory Core + Memory Hub + Proxy, configures two LLM groups, and currently marks MongoDB storage experimental while SQLite is default. Strong conceptual fit for cross-domain profile/project memory but more infrastructure than needed for a first single-user trial. URLs: https://github.com/TencentCloud/TencentDB-Agent-Memory ; https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/main/INSTALL.md.
+
+### Why not select AgentMemory first?
+
+AgentMemory's richer action/audit/governance surface is attractive and may ultimately be a better choice if Evo 4's primary unmet need is structured work-state management. However, the user's EVO 3 history records that daemon health/MCP availability did not prove actual runtime integration. AgentMemory is also a large system built on an engine abstraction, increasing the potential debugging surface. This does not mean it is broken; it means the prior integration lesson and the user's limited appetite for extensive benchmarking should count in the choice.
+
+### Non-negotiable limitation
+
+None of these three has been established here as a reliable importer of the user's full ChatGPT history or as a complete personal assistant. MemSearch is primarily coding-agent memory. Its USER.md is a useful profile note, not a complete provenance-aware personal knowledge system. Evo 4 may still need a small, separate continuity contract for cross-source ingestion, source-linked claims, explicit corrections/temporal validity, and task state. Do not fork or rebuild the entire memory engine before trying the selected system.
+
+### Minimal adoption gate (one system, not a 3–5-way benchmark)
+
+1. Install MemSearch into a disposable/test OpenCode profile with a local-compatible configuration.
+2. Capture a real session, restart/interrupt capture, and confirm the pending turn is recovered once without duplicate summary.
+3. Ask for a known past decision and verify retrieval reaches the original transcript.
+4. Correct a profile/project note and confirm the edit persists and is used in a new session.
+5. Measure idle CPU/RAM/disk and confirm whether summarization/embeddings call any external service.
+6. Explicitly test ChatGPT-history ingestion separately. If unsupported, record that as a boundary; do not pretend coding-session capture solves it.
+
+If the first two gates fail, reconsider AgentMemory next. Avoid adding TencentDB unless Evo 4 specifically needs its multi-layer knowledge hub and accepts the service stack.
+
+Evidence boundary: code/docs inspected through public GitHub on 2026-10-27. No code was executed, security audit performed, or benchmarks reproduced.
