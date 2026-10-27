@@ -153,3 +153,62 @@ A GitHub repository inventory returned 16 repositories owned by the user: Astro-
 
 A previous attempt searched a small set of exact terms in default-branch indexed files for NEMOXIOM and EVO 3, then treated the absence of results as a weak signal. It did not inspect commit history broadly, all branches, all user-owned repositories, or the conversation interval surrounding the decision. The query set was too narrow and the search boundary was not made visible. Do not call that a comprehensive search.
 
+## External memory-software landscape rescan (2026-10-27)
+
+This is a first-pass source/README sweep, not a runtime audit. Feature claims below are project documentation unless explicitly noted. The current goal is a single continuity layer across user preferences, conversations, project decisions, coding sessions, active task state, evidence/provenance, corrections, and resumable handoffs.
+
+### Highest-priority candidates
+
+1. **AgentMemory — https://github.com/rohitg00/agentmemory**
+   - Current README now describes a much broader system than the version discussed in EVO 3 on 2026-10-15: native hooks/plugins for many coding agents, one shared store, local file-backed persistence, inspect/edit/export/forget viewer, hybrid BM25/vector/graph retrieval, session history, project profiles, lessons, handoffs, audit, version chains, provenance verification, action tracking (dependencies/frontier/next action), checkpoints, and multi-agent coordination tools. It also supports OpenAI-compatible local endpoints such as llama.cpp and local embeddings.
+   - Repo README currently claims 54 MCP tools, 12 hooks, 4,000+ passing tests, 95.2% retrieval R@5 and zero external DB services; these are upstream claims, not independently reproduced here.
+   - Strongest fit for the *coding-agent continuity* half. Remaining fit questions: how well it stores broad personal/non-coding conversation context; whether all required sources (ChatGPT history, arbitrary documents, repos, branch/commit history) are ingested reliably; whether evidence/source lineage is exposed in useful end-user workflows; whether task/action state remains coherent under corrections and interruptions; and whether its many features are robust in our actual OpenCode/llama.cpp setup.
+   - Important operational caveat: the repository documents separate keyless BM25 mode vs optional local embeddings and optional LLM-backed compression. These are distinct configurations. Verify live runtime/capture/retrieval, not just service health or MCP visibility.
+   - Changelog states recent work on persistent inbox/offline spooling, force-kill recovery, default API auth, bounded provenance/audit/index storage, and release gates. This is promising reliability work but should be checked against the exact version installed.
+   - Evidence: README https://github.com/rohitg00/agentmemory; changelog https://github.com/rohitg00/agentmemory/blob/main/CHANGELOG.md; local model configuration is documented in README.
+
+2. **MemSearch — https://github.com/zilliztech/memsearch**
+   - Newly surfaced, unusually close competitor for coding continuity. Markdown files are the source of truth, with Milvus used as a rebuildable search index. It supports OpenCode, Codex, Claude Code, OpenClaw, and DeepSeek Harness; automatic session capture, progressive retrieval from search to expanded note to transcript, hybrid dense/BM25 retrieval, and optional skills distilled from repeated workflows.
+   - Optional maintenance creates a durable `.memsearch/PROJECT.md` for active threads/decisions/risks/next steps and `.memsearch/USER.md` for preferences/working style/goals. These tasks are off by default. Pending work resume is explicitly advertised for OpenCode.
+   - Stronger than AgentMemory on the simplicity and inspectability of Markdown-first memory and the explicit user/project summary split. Potentially weaker on structured graph/provenance/audit and action lifecycle. Milvus/index and summarization provider configuration add moving parts; validate local/offline defaults and exact model calls.
+   - Evidence: https://github.com/zilliztech/memsearch and https://github.com/zilliztech/memsearch/blob/main/docs/home/configuration.md.
+
+3. **TencentDB Agent Memory — https://github.com/TencentCloud/TencentDB-Agent-Memory**
+   - Newly surfaced, broader “memory hub” design with four reusable assets: raw chat/conversation (L0), extracted facts/preferences/events (L1), project/scenario context (L2), and stable user/team profile (L3). Also builds Wiki and CodeGraph assets from documents and source code, and provides a shared hub/proxy with user/team/agent/visibility access controls.
+   - Conceptually very close to a cross-project continuity layer and potentially a way to combine conversations, profile, skills, docs, and code understanding. It is a larger service stack (Memory Core, Memory Hub, Proxy; current docs require Node >=22.16 and two sets of LLM parameters). MongoDB backend is described as experimental. Not yet established as suitable for one local user, local OpenAI-compatible inference, or arbitrary personal-chat imports.
+   - Evidence: https://github.com/TencentCloud/TencentDB-Agent-Memory and its README/API docs.
+
+4. **OpenViking — https://github.com/volcengine/OpenViking**
+   - Context database with an inspectable virtual filesystem for resources, memories, and skills; directory summaries at multiple levels; scoped retrieval; committed sessions archived as readable/editable Markdown; optional compilation into Wiki, graph, or report.
+   - Strong candidate for transparent organization of *all* context (not only extracted memory facts). It is a context database/framework rather than a ready-to-use unified personal assistant. Need check runtime footprint, local model/provider requirements, capture adapters, and whether temporal conflicts/provenance are first-class.
+   - Evidence: https://github.com/volcengine/OpenViking.
+
+5. **Hindsight — https://github.com/vectorize-io/hindsight**
+   - Memory engine focused on learning/reflecting rather than simple retrieval, with retain/recall/reflect operations, observations, mental models/knowledge pages, memory banks, coding-agent integrations, MCP, and local/OpenAI-compatible LLM provider support. The project reports strong LongMemEval results; upstream benchmark claims should be independently checked and may depend on model/config.
+   - Good candidate for evolving beliefs, relationships, and learning from history. More infrastructure and operational weight than a simple local store; does not by itself provide the full chat/coding cockpit or durable task-execution harness.
+   - Evidence: https://github.com/vectorize-io/hindsight.
+
+### Specialized candidates / components, not complete solutions
+
+- **Graphiti — https://github.com/getzep/graphiti**: temporal context-graph framework with validity windows, raw episodes as provenance, and hybrid semantic/keyword/graph retrieval. Particularly relevant to source-linked history and “what was true when?” It explicitly requires building the surrounding service, ingestion, access control, and operations.
+- **Mem0 — https://github.com/mem0ai/mem0**: broad personalization memory and entity/time-aware retrieval; promising for user preferences, but less obviously a coding-session/task-state system. README states some headline benchmarks are from its managed platform, not identical OSS performance.
+- **Always On Memory Agent — https://github.com/Shubhamsaboo/always-on-memory-agent** (also documented in GoogleCloudPlatform/generative-ai sample): simple MIT reference using SQLite, a file/API inbox, periodic LLM consolidation, query API and Streamlit dashboard, including source-cited answers. It is small and conceptually interesting, but documented as a sample tied to Google ADK/Gemini, not a proven shared cross-agent memory platform; no strong evidence yet for lifecycle/audit/temporal guarantees.
+- **Letta — https://github.com/letta-ai/letta-code**: full stateful agent runtime with memory, but greater runtime/framework commitment. Evaluate as an integrated assistant/agent alternative rather than a drop-in memory database.
+
+### Initial fit matrix (hypotheses, not test results)
+
+| Requirement | AgentMemory | MemSearch | TencentDB Agent Memory | OpenViking | Hindsight | Graphiti |
+|---|---|---|---|---|---|---|
+| Cross-coding-agent capture | Strong documented support | Strong documented support | Proxy/adapters for selected agents | Needs adapter/runtime check | Coding-agent integrations | Must build adapters |
+| Personal profile + project state | Profile/project tools exist; test quality | Explicit USER.md + PROJECT.md | Explicit L3 profile + L2 scenario | Filesystem can organize both | Memory banks/mental models | Build schema/logic |
+| Inspect/edit durable source | Live viewer/version chains | Markdown source of truth | Hub UI/assets; verify raw edit/history | Filesystem/Markdown inspection | UI/API; verify source editing | Graph + source episodes |
+| Provenance/temporal corrections | Audit/version chains/graph verification advertised | Raw journals/transcripts + git-tracked notes | Raw L0 + layered memories; exact temporal semantics need testing | Session archives; temporal conflict handling unclear | Observations/reflect; verify provenance semantics | Strong explicit temporal provenance model |
+| Task state/handoff | Actions, dependencies, frontier, next action, checkpoints | PROJECT.md, pending-work resume, handoff | Task/asset concepts, needs runtime validation | Session commits/context organization | Not a full execution harness | Not a full execution harness |
+| Local model viability | Explicit OpenAI-compatible local endpoint | Provider-specific behavior needs test | LLM config/local endpoint compatibility unresolved | Check docs/runtime | Explicit local OpenAI-compatible providers | LLM/embedder configurable |
+| Ready-to-use personal+coding assistant | Memory component, not whole assistant | Coding memory component | Memory hub, not full assistant | Context DB, not full assistant | Memory component | Framework component |
+
+### Research decision
+
+Do not choose based on README claims, star counts, or one leaderboard. Run the same small acceptance suite against AgentMemory and MemSearch first, then add TencentDB/OpenViking/Hindsight only where the first two fail or where a specific architectural advantage justifies the cost. The test suite should cover: (1) exact prior decision + date + source; (2) conflicting old/new preferences without erasing history; (3) current project/task state and next action after interruption; (4) user fact vs project fact isolation; (5) correction/forgetting; (6) local-only operation and resource use; (7) cross-agent capture and recall; (8) answer cites original evidence rather than only generated summaries.
+
+Coverage boundary: this pass used public web search and GitHub repository/README/documentation inspection on 2026-10-27. It did not clone or execute candidates, independently reproduce benchmark claims, exhaust GitHub search, inspect every issue/PR/branch, or validate the full implementation. Treat this as a ranked shortlist, not proof that no other project exists.
