@@ -37,6 +37,9 @@ These are starting context, not a substitute for validating requirements during 
 - **Scope constraint:** Define the desired user outcome and explicit exclusions before choosing architecture or adding features.
 - **Desired behavior:** Retain useful personal context over time and use it to personalize assistance rather than treating every chat as isolated.
 - **Desired behavior:** In coding work, preserve useful project understanding and decisions so the agent does not keep re-reading the same files or repeating discovery work unnecessarily. The exact failure cases and acceptable trade-offs remain to be clarified.
+- **Newly clarified pain points (user-stated):** Loss of context between sessions; frustration with context-window constraints during long interactions; and unreliable tracking of changing structured state during our Magic: The Gathering game.
+- **Design implication (not an architecture decision):** These are distinct reliability problems: (1) continuity across sessions, (2) selecting and maintaining relevant information under finite active context, and (3) tracking exact evolving state. A generic memory store alone should not be assumed to solve all three.
+- **Technical reality:** Evo 4 cannot remove the underlying model's context-window limit merely by adding memory. It may reduce the practical impact by preserving durable knowledge, retrieving relevant information, and keeping exact state in structured records with validation where appropriate.
 
 ## Session log
 
@@ -63,11 +66,19 @@ These are starting context, not a substitute for validating requirements during 
 - **Current hypothesis:** Durable knowledge may be a shared foundation for both personal memory and coding context, but we have not decided whether they should share the same memory model or how to implement it.
 - **Important boundary:** These are two stated use cases, not permission to expand immediately into a general AI operating system, autonomous multi-agent platform, or all-in-one workstation.
 - **Open questions:** What makes memory genuinely useful and trustworthy? What exact coding-agent behavior is currently wasteful? Which of these should define the first minimum usable version?
-- **Next:** Clarify the most frustrating concrete failure in current coding-agent use, then define the smallest daily workflow that would solve it before reviewing prior projects for relevant evidence.
+
+### 2026-10-27 — Context continuity and state-tracking failures
+
+- **User-stated pain:** Session-to-session context loss and context-window limits are major frustrations.
+- **Concrete example:** The user points to my unreliable tracking of our Magic: The Gathering game as an example of failing to maintain state across a multi-turn activity.
+- **Problem distinction:** Durable personal/project memory, active-context management, and exact tracking of changing structured state are related but separate requirements.
+- **Constraint:** Do not promise to abolish context windows. The product goal is to reduce how often limits disrupt the user's work and to make continuation more reliable through externalized, retrievable knowledge and explicit state where useful.
+- **Not decided:** Whether any of these mechanisms should be in the first implementation, or what level of correctness and recovery is required.
+- **Next:** Ask which failure should be solved first and what a successful continuation would look like in a real workflow.
 
 ## Current next actions
 
-- [ ] Clarify the most frustrating concrete coding-agent failure and the desired behavior instead.
+- [ ] Prioritize between cross-session memory, context-window management, and exact state tracking using a concrete daily workflow.
 - [ ] Define the smallest daily workflow that makes Evo 4 worth opening.
 - [ ] Decide how the personal-memory and coding-agent use cases relate in the first usable version.
 - [ ] Define explicit non-goals and a scope ceiling before drafting architecture.
