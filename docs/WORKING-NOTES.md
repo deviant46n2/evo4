@@ -94,6 +94,15 @@ These are starting context, not a substitute for validating requirements during 
 - **Scope guard:** This is a minimum continuity foundation, not yet permission to build a fully autonomous agent, ingest everything, or implement every past project idea.
 - **Next discovery step:** Define what the starting context must reliably contain, how it stays current and correctable, and what behavior demonstrates that it is useful across different request types.
 
+
+### 2026-10-27 — Starting context must be updatable
+
+- **User-stated requirement:** The persistent starting context must be updatable; it should not be a static profile that the user has to maintain manually.
+- **Design implication:** Evo 4 should be able to incorporate new information about the user's interests, projects, goals, decisions, and its own capabilities into the appropriate durable records, and refresh compressed summaries/pointers accordingly.
+- **Reliability constraint:** Learning new information and committing a fact as authoritative are not always the same action. The system should distinguish explicit user statements and verified observations from inferred preferences or uncertain interpretations.
+- **Conflict-handling requirement (proposed):** When new information conflicts with existing context, reconcile it explicitly. Respect a clear revised user decision while preserving decision history where useful; do not silently convert an uncertain inference into a confirmed fact.
+- **Open questions:** Which updates can be automatic, which require confirmation, how the user inspects/corrects/withdraws a memory, and how the system handles stale or conflicting project/capability records.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
