@@ -127,6 +127,16 @@ These are starting context, not a substitute for validating requirements during 
 - **Open questions:** What latency qualifies as real-time; whether the conversational agent may issue control actions or only recommend them; how to prioritize memory extraction; and how the system behaves when all inference resources are genuinely exhausted.
 - **Scope guard:** This is a hard interaction requirement, not yet a commitment to a broad multi-agent platform. The smallest implementation that keeps chat responsive during one meaningful background task should be investigated first.
 
+
+### 2026-10-27 — Clarification: interruption and safe resumption are acceptable
+
+- **User clarification to D-010:** It is acceptable for the user to interrupt a running task, receive an answer, and then have Evo 4 return to the original work. A permanently separate conversational agent is not necessarily required if interruption/resumption works reliably.
+- **Refined hard requirement:** The user can ask a question or issue an interruption while work is underway; Evo 4 responds promptly, then resumes the original task from a recoverable point without losing progress or silently changing the task.
+- **State correctness requirement:** Resumption must use recorded task state (completed steps, current step/checkpoint, relevant files or artifacts changed, outstanding work, and validation status), not rely solely on the model reconstructing its activity from conversational memory.
+- **Safety/consistency implication:** Before resuming, detect whether the interruption or external changes invalidated assumptions or prior checks. Revalidate affected work where necessary; do not blindly continue from a stale checkpoint.
+- **Architecture flexibility:** A separate always-on conversational worker remains one possible implementation, but is not itself a requirement. Reliable interruption, response, and resumption is the user-facing requirement.
+- **Still open:** Expected response latency; which operations can be safely paused; how to handle non-interruptible actions; and what progress/checkpoint detail is necessary for reliable recovery.
+
 ## Current next actions
 
 - [ ] Specify the minimum persistent starting context: self-knowledge, compressed user/project orientation, and pointers to deeper records.
