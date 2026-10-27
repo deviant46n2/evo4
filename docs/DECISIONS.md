@@ -232,3 +232,11 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** Evo 4 v1 scope shrinks to: opencode (host) + Nemoxiom memory (permanent, ≥ current) + local fallback (50+ tok/s, routine coding + basic assistant). Runtime management is Omega's responsibility. Evo 4 just needs to work with whatever model Omega serves. The 50 tok/s target (D-014) is still the bar, but achieving it is Omega's job, not Evo 4's.
 - **Unresolved:** Whether Evo 4 needs any integration with Omega (e.g., auto-start a model on session open) or whether they stay fully independent.
 - **Related decisions:** D-003, D-011, D-014, D-015, D-016, D-017.
+
+
+## D-019 — Work sequence: Omega first, then local models, then quota fallback
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** The dependency chain is: (1) Omega must work (start/stop local models) → (2) local model setup must be fixed (50+ tok/s) → (3) quota fragility is mitigated (local fallback available). Evo 4 v1 is essentially "harden what exists" and cannot be validated until Omega is functional. Work scope shifts to Omega first.
+- **Consequences:** Evo 4 design is complete enough to pause. Next active project is Omega cleanup (trim media features, expand runtime capabilities). Evo 4 resumes when Omega is functional and local models work.
+- **Related decisions:** D-014, D-018.
