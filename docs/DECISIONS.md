@@ -214,3 +214,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** The runtime manager is a first-class v1 component, not a revived dependency. It must incorporate the user's existing llama.cpp tuning knowledge (Evo 2 sweep-arena flags, seed<3 negative results like KVarN CUDA OOM). It serves D-014's 50 tok/s target directly. This is the one place where "build new" is explicitly authorized over "integrate existing."
 - **Unresolved:** Architecture shape (MCP server, opencode plugin, standalone service, or hybrid), how adaptive KV cache selection works (manual, benchmark-driven, or automatic), and whether custom llama.cpp builds are managed or just supported.
 - **Related decisions:** D-003, D-011, D-014, D-015.
+
+
+## D-017 — Runtime manager is a standalone app, not an opencode plugin
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** The runtime manager is a **standalone application** the user interacts with directly and frequently — for controlling, tweaking, and stopping local runtimes (including freeing VRAM for games). It is not an MCP server or opencode plugin. opencode may talk to it (e.g., to request a model start/stop), but the app has its own UI and lifecycle independent of opencode.
+- **Consequences:** This is the one component that is explicitly a "new app," not integration. It must be reliable enough to open and use daily (unlike Omega, which won't open). It also means the runtime manager has its own release/launch path independent of opencode's session lifecycle.
+- **Unresolved:** Stack (Tauri 2 like Omega, or something lighter), GUI vs. CLI vs. both, and how opencode communicates with it (HTTP API, MCP wrapper, or manual).
+- **Related decisions:** D-003, D-011, D-014, D-015, D-016.
