@@ -132,6 +132,18 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Unresolved:** Exact latency target; what the conversational agent can control versus merely advise; resource-isolation strategy; and behavior under total inference-capacity exhaustion.
 - **Related decisions:** D-003, D-006, D-007, D-009.
 
+
+### D-010 clarification — Interruption with reliable resumption
+
+- **Date:** 2026-10-27
+- **Status:** Active; this clarification narrows the implementation requirement, not the user-facing goal.
+- **User clarification:** It is acceptable to interrupt ongoing work, get an answer, and have Evo 4 return to where it was.
+- **Refined requirement:** Work must be interruptible at safe points; the assistant answers the user, then resumes the original task from a durable checkpoint with progress and task intent intact.
+- **Required state:** At minimum, track completed work, current step/checkpoint, relevant artifacts/changes, remaining work, and validation status.
+- **Correctness constraint:** Check whether the interruption or external changes invalidated prior assumptions or checks; revalidate affected work before proceeding when needed. Do not depend on a vague model-generated recollection of the prior task.
+- **Implementation flexibility:** A permanently separate conversational agent is optional if the interruption/resumption experience is reliable. Subagent support alone is not the requirement.
+- **Unresolved:** Latency target, handling of operations that cannot be paused safely, and the checkpoint granularity needed for robust recovery.
+
 ## Decision template
 
 ### D-XXX — Short decision title
