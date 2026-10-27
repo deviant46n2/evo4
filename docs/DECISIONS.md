@@ -177,3 +177,12 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Consequences:** Evo 4 is NOT a greenfield replacement for a working setup. It is (a) hardening what already works so it doesn't break (quota, context loss, stale state), and (b) closing the specific gaps that still frustrate. Scope ceiling tightens: anything that doesn't address a real, current frustration is out of scope.
 - **Unresolved:** Which 2-3 frustrations are the actual blockers worth fixing in v1 vs. leaving alone.
 - **Related decisions:** D-003, D-011.
+
+
+## D-013 — Near-term priority: local model as usable fallback; context-as-1B is long-term
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated:** Two-tier priority. (1) Near-term: make the local setup (llama.cpp + 27B model) work much faster/better so that when free-tier AI runs out, the user can fall back to the local model for basics. (2) Long-term: context constraints should be software-solved — a 100k-context system should behave like a 1B-context system. The long-term ambition is already captured in docs/MEMORY-ARCHITECTURE.md; do not let it scope-creep into v1.
+- **Consequences:** v1 success is measured by "local fallback is usable for basics," not by eliminating context limits. The context-as-1B goal is explicitly deferred to a later phase. This also means VRAM management (Omega/cyberdeck patterns) and inference speed are first-class v1 concerns, not polish.
+- **Unresolved:** What "basics" means concretely (which tasks the local model must handle) and what speed/quality threshold counts as "usable."
+- **Related decisions:** D-003, D-011, D-012.
