@@ -158,3 +158,13 @@ This is the canonical record of decisions that materially constrain Evo 4. Add a
 - **Trade-offs / consequences:**
 - **Revisit when:**
 - **Related decisions:**
+
+
+## D-011 — Product identity sharpened: replace ChatGPT + coding agent, integration-first
+
+- **Status:** Active (user-stated, 2026-10-27)
+- **Decision / user-stated intent:** Evo 4 must replace ChatGPT for (1) conversational collaboration, (2) movie/game recommendations, (3) project design/decision-making, and (4) coding-agent work. The user is pragmatic about form: "it might just end up being opencode + a memory plugin + some mcps and that would be fine as long as it does what I need."
+- **Context / problem:** D-004/D-006 already named the two use cases; this entry adds the implementation stance — integration of existing, proven tools is acceptable and preferred over a greenfield platform. This is the scope ceiling's first concrete expression: no new platform unless an existing tool demonstrably fails a must-have.
+- **Consequences:** The default hypothesis is "opencode + opencode-mem (or Nemoxiom-derived memory) + MCPs," not a new application. Any proposal to build new infrastructure must justify itself against a demonstrated gap in that stack. This also means the "replace ChatGPT" bar is about *behavior* (it knows me, it resumes work, it recommends well), not about cloning ChatGPT's web UI.
+- **Unresolved:** Whether the opencode TUI surface is acceptable as the chat surface long-term (vs. a web UI like Odysseus/Open WebUI), and which specific capability gaps in the current stack are the actual blockers.
+- **Related decisions:** D-003, D-004, D-006, D-007.
