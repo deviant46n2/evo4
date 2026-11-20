@@ -1,6 +1,7 @@
 [server]
 base_url = "http://127.0.0.1:18997"
 api_key = "no-key"
+# Set this to an ID returned by: evo-exp doctor
 model = "local-model"
 timeout_seconds = 600
 
@@ -13,3 +14,19 @@ repetitions = 3
 
 [system]
 prompt = "You are a precise assistant. Follow the user instructions."
+
+# Record the runtime conditions for every run. Fill in what you know;
+# do not guess. model_file is optional but, if set, its SHA-256 is captured.
+[run]
+model_file = ""
+runtime = "llama.cpp"
+runtime_version = ""
+launch_command = ""
+context_size = 49152
+kv_cache_k = "q4_0"
+kv_cache_v = "q4_0"
+gpu_layers = "all"
+batch_size = 512
+ubatch_size = 128
+flash_attention = ""
+notes = "Record desktop state and unusual background GPU use here."
