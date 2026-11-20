@@ -25,6 +25,9 @@ def build_parser():
     search=ms.add_parser("search"); search.add_argument("query"); search.add_argument("--limit",type=int,default=10)
     ms.add_parser("list")
     archive=ms.add_parser("archive"); archive.add_argument("id")
+    ms.add_parser("candidates",help="List tentative memories awaiting review")
+    accept=ms.add_parser("accept"); accept.add_argument("id")
+    reject=ms.add_parser("reject"); reject.add_argument("id")
     task=sub.add_parser("task",help="Manage persistent tasks")
     ts=task.add_subparsers(dest="task_command",required=True)
     ta=ts.add_parser("add"); ta.add_argument("title"); ta.add_argument("--description",default="")
@@ -114,6 +117,14 @@ def main():
                 for row in store.list_memories(): print(f"{row['id']} [{row['category']}] {row['content']}")
             elif args.memory_command=="archive":
                 print("Archived." if store.archive_memory(args.id) else "Memory not found.")
+            elif args.memory_command=="candidates":
+                for row in store.list_memory_candidates():
+                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['content']}")
+            elif args.memory_command in {"accept","reject"}:
+                outcome=store.review_memory_candidate(args.id,args.memory_command=="accept")
+                if outcome is None: print("Candidate not found or already reviewed.")
+                elif outcome is False: print("Candidate rejected.")
+                else: print(f"Candidate accepted as memory {outcome}.")
         elif args.command=="task":
             if args.task_command=="add":
                 print(f"Created task: {store.add_task(args.title,args.description,args.priority)}")
