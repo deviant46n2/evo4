@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from pathlib import Path
 
 SCHEMA = """
@@ -23,39 +24,45 @@ class ResultsDB:
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.executescript(SCHEMA)
         self.connection.commit()
+        self.lock = threading.RLock()
 
     def create_experiment(self, values):
         keys = list(values)
-        cur = self.connection.execute(
-            f"INSERT INTO experiments ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
-            [values[k] for k in keys])
-        self.connection.commit()
-        return int(cur.lastrowid)
+        with self.lock:
+            cur = self.connection.execute(
+                f"INSERT INTO experiments ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
+                [values[k] for k in keys])
+            self.connection.commit()
+            return int(cur.lastrowid)
 
     def finish_experiment(self, experiment_id, values):
         assignments = ", ".join(f"{key}=?" for key in values)
-        self.connection.execute(f"UPDATE experiments SET {assignments} WHERE id=?",
-                                [*values.values(), experiment_id])
-        self.connection.commit()
+        with self.lock:
+            self.connection.execute(f"UPDATE experiments SET {assignments} WHERE id=?",
+                                    [*values.values(), experiment_id])
+            self.connection.commit()
 
     def add_sample(self, experiment_id, values):
         row = {"experiment_id": experiment_id, **values}
         keys = list(row)
-        self.connection.execute(
-            f"INSERT INTO resource_samples ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
-            [row[k] for k in keys])
-        self.connection.commit()
+        with self.lock:
+            self.connection.execute(
+                f"INSERT INTO resource_samples ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
+                [row[k] for k in keys])
+            self.connection.commit()
 
     def summary(self, limit=20):
-        return self.connection.execute(
-            "SELECT id,started_at,task_id,repetition,status,elapsed_seconds,"
-            "time_to_first_token_seconds,completion_tokens,tokens_per_second,error "
-            "FROM experiments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        with self.lock:
+            return self.connection.execute(
+                "SELECT id,started_at,task_id,repetition,status,elapsed_seconds,"
+                "time_to_first_token_seconds,completion_tokens,tokens_per_second,error "
+                "FROM experiments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
     def close(self):
-        self.connection.close()
+        with self.lock:
+            self.connection.close()
