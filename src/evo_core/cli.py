@@ -10,7 +10,8 @@ def build_parser():
     parser=argparse.ArgumentParser(prog="evo",description="Evo 4 local-first assistant")
     parser.add_argument("--config",default="config.toml",help="TOML configuration file")
     sub=parser.add_subparsers(dest="command",required=True)
-    sub.add_parser("doctor",help="Check the configured model endpoint")
+    doctor=sub.add_parser("doctor",help="Check the configured model endpoint")
+    doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
     for name,help_text in (("chat","Start an interactive conversation"),
                            ("code","Start an approval-gated coding-agent session")):
         command=sub.add_parser(name,help=help_text)
@@ -104,6 +105,20 @@ def main():
             print(f"Endpoint: {config.base_url}\nConfigured model: {config.model}\nAvailable models:")
             for model in models: print(f"  {model}")
             if models and config.model not in models: raise SystemExit(2)
+            if args.test_tools:
+                probe=[{"type":"function","function":{"name":"evo_probe","description":"Return the supplied test value.","parameters":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":False}}}]
+                try:
+                    result=assistant.provider.chat([{"role":"user","content":"Call evo_probe exactly once with value evo-tool-test."}],
+                                                   max_tokens=64,temperature=0.0,tools=probe)
+                    calls=result.get("tool_calls") or []
+                    if calls and calls[0]["function"]["name"]=="evo_probe":
+                        print("Tool calling: supported by this model/server probe.")
+                    else:
+                        print("Tool calling: no function call returned; coding-agent compatibility is unconfirmed.")
+                        raise SystemExit(3)
+                except ProviderError as exc:
+                    print(f"Tool calling probe failed: {exc}",file=sys.stderr)
+                    raise SystemExit(3)
         except ProviderError as exc:
             print(str(exc),file=sys.stderr); raise SystemExit(1)
         finally: assistant.close()
