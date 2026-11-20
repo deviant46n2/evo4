@@ -1,17 +1,15 @@
 import sqlite3
 import threading
 from pathlib import Path
-
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS experiments (
  id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL, finished_at TEXT,
  task_id TEXT NOT NULL, category TEXT NOT NULL, repetition INTEGER NOT NULL,
- model TEXT NOT NULL, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
+ model TEXT NOT NULL, run_label TEXT, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
  prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
  elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
- completion_tokens INTEGER, tokens_per_second REAL,
- evaluation_status TEXT, evaluation_details TEXT
+ completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT, evaluation_details TEXT
 );
 CREATE TABLE IF NOT EXISTS resource_samples (
  id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id INTEGER NOT NULL REFERENCES experiments(id),
@@ -20,7 +18,6 @@ CREATE TABLE IF NOT EXISTS resource_samples (
  gpu_power_w REAL, ram_used_mib REAL
 );
 """
-
 class ResultsDB:
     def __init__(self, path):
         self.path = Path(path)
@@ -32,13 +29,11 @@ class ResultsDB:
         self._migrate()
         self.connection.commit()
         self.lock = threading.RLock()
-
     def _migrate(self):
         columns = {row[1] for row in self.connection.execute("PRAGMA table_info(experiments)")}
-        for name in ("evaluation_status", "evaluation_details"):
+        for name in ("evaluation_status", "evaluation_details", "run_label"):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} TEXT")
-
     def create_experiment(self, values):
         keys = list(values)
         with self.lock:
@@ -47,14 +42,12 @@ class ResultsDB:
                 [values[k] for k in keys])
             self.connection.commit()
             return int(cur.lastrowid)
-
     def finish_experiment(self, experiment_id, values):
         assignments = ", ".join(f"{key}=?" for key in values)
         with self.lock:
             self.connection.execute(f"UPDATE experiments SET {assignments} WHERE id=?",
                                     [*values.values(), experiment_id])
             self.connection.commit()
-
     def add_sample(self, experiment_id, values):
         row = {"experiment_id": experiment_id, **values}
         keys = list(row)
@@ -63,15 +56,26 @@ class ResultsDB:
                 f"INSERT INTO resource_samples ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
                 [row[k] for k in keys])
             self.connection.commit()
-
     def summary(self, limit=20):
         with self.lock:
             return self.connection.execute(
-                "SELECT id,started_at,task_id,category,repetition,model,status,elapsed_seconds,"
+                "SELECT id,started_at,task_id,category,repetition,model,run_label,status,elapsed_seconds,"
                 "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,"
-                "evaluation_status,evaluation_details,error "
-                "FROM experiments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-
+                "evaluation_status,evaluation_details,error FROM experiments "
+                "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    def aggregates(self):
+        with self.lock:
+            return self.connection.execute(
+                "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
+                "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
+                "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN evaluation_status='passed' THEN 1 ELSE 0 END) AS checks_passed, "
+                "SUM(CASE WHEN evaluation_status IN ('passed','failed') THEN 1 ELSE 0 END) AS checks_scored, "
+                "ROUND(AVG(elapsed_seconds),3) AS avg_elapsed_seconds, "
+                "ROUND(AVG(time_to_first_token_seconds),3) AS avg_ttft_seconds, "
+                "ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second "
+                "FROM experiments GROUP BY COALESCE(run_label,model), model, category "
+                "ORDER BY configuration, category").fetchall()
     def close(self):
         with self.lock:
             self.connection.close()
