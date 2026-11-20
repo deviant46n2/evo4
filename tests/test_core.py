@@ -61,7 +61,8 @@ class HarnessTests(unittest.TestCase):
                 "repetition":1,"model":"m","run_label":"baseline","base_url":"local",
                 "config_json":"{}","prompt":"p","status":"running"})
             worker = threading.Thread(target=lambda: db.add_sample(eid, {
-                "sampled_at":"now", "ram_used_mib":123.0}))
+                "sampled_at":"now", "ram_used_mib":123.0, "gpu_memory_used_mib":456.0,
+                "gpu_utilization_percent":70.0}))
             worker.start()
             worker.join()
             db.finish_experiment(eid, {"status":"completed","response":"answer",
@@ -71,6 +72,8 @@ class HarnessTests(unittest.TestCase):
             aggregate = db.aggregates()[0]
             self.assertEqual(aggregate["configuration"], "baseline")
             self.assertEqual(aggregate["checks_passed"], 1)
+            self.assertEqual(aggregate["max_peak_vram_mib"], 456.0)
+            self.assertEqual(aggregate["max_sampled_ram_mib"], 123.0)
             self.assertEqual(db.connection.execute("SELECT count(*) FROM resource_samples").fetchone()[0], 1)
             db.close()
 
