@@ -60,4 +60,6 @@ class ResourceMonitor:
     def stop(self):
         self.stop_event.set()
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=max(2.0, self.interval + 1))
+            # nvidia-smi itself has a 3-second timeout; wait long enough for it to exit
+            # before the caller closes the shared SQLite connection.
+            self.thread.join(timeout=max(4.0, self.interval + 3.5))
