@@ -12,6 +12,9 @@ def build_parser():
     sub.add_parser("doctor",help="Check the configured model endpoint")
     chat=sub.add_parser("chat",help="Start an interactive conversation")
     chat.add_argument("--conversation",help="Resume an existing conversation ID")
+    code=sub.add_parser("code",help="Start an approval-gated coding-agent session")
+    code.add_argument("--conversation",help="Resume an existing conversation ID")
+    code.add_argument("--workspace",help="Project root (overrides [workspace].root)")
     mem=sub.add_parser("memory",help="Manage persistent memories")
     ms=mem.add_subparsers(dest="memory_command",required=True)
     add=ms.add_parser("add"); add.add_argument("content"); add.add_argument("--category",default="general")
@@ -51,7 +54,7 @@ def main():
             print(str(exc),file=sys.stderr); raise SystemExit(1)
         finally: assistant.close()
         return
-    if args.command=="chat":
+    if args.command in {"chat","code"}:
         assistant=EvoAssistant(config)
         try:
             cid=args.conversation or assistant.new_conversation()
