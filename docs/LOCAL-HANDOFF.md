@@ -20,6 +20,7 @@ Set `[server].model` to the exact ID exposed by the running llama.cpp server. Ke
 ```bash
 python -m unittest discover -s tests -v
 evo doctor
+evo doctor --test-tools
 evo chat
 evo code --workspace .
 evo memory add "Evo is a local-first assistant project" --category project --source user
@@ -27,6 +28,7 @@ evo memory search "local-first assistant"
 evo task add "Run first local validation" --priority 1
 evo task list
 evo research add "Example source note" --url "https://example.org" --content "Replace this with actual sourced notes."
+evo backup backups/initial.sqlite3
 evo-exp hardware
 evo-exp doctor
 evo-exp run --tasks tasks/smoke.jsonl --repetitions 1
