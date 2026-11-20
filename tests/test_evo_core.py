@@ -52,6 +52,24 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual([m["role"] for m in messages],["user","assistant","user","assistant"])
             assistant.close()
 
+    def test_automatic_memory_candidates_require_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            provider=StubProvider()
+            assistant=EvoAssistant(config,EvoStore(config.database),provider)
+            cid=assistant.new_conversation()
+            assistant.turn(cid,"I prefer concise technical explanations with evidence.")
+            candidates=assistant.store.list_memory_candidates()
+            self.assertEqual(len(candidates),1)
+            self.assertEqual(candidates[0]["category"],"preferences")
+            self.assertEqual(assistant.store.list_memories(),[])
+            memory_id=assistant.store.review_memory_candidate(candidates[0]["id"],True)
+            self.assertIsInstance(memory_id,str)
+            self.assertEqual(len(assistant.store.search_memories("concise technical evidence")),1)
+            assistant.turn(cid,"Remember that Evo must prioritize local inference performance.")
+            self.assertEqual(len(assistant.store.list_memories()),1)
+            assistant.close()
+
     def test_tasks_persist_and_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
