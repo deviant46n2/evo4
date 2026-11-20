@@ -252,6 +252,11 @@ class EvoStore:
             self.db.commit()
         return lesson_id
 
+    def list_lessons(self, limit=50):
+        with self.lock:
+            return self.db.execute("SELECT * FROM lessons WHERE status='active' ORDER BY created_at DESC LIMIT ?",
+                                   (max(1,limit),)).fetchall()
+
     def search_lessons(self, query, limit=5, category=None):
         terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
         terms=[term for term in terms if len(term)>1][:12]
