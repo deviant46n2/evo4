@@ -25,7 +25,7 @@ class EvoAssistant:
         if lessons:
             lesson_lines = [f"- [{lesson['category']}; confidence={lesson['confidence']:.2f}; source={lesson['source']}] Trigger: {lesson['trigger_text']} | Lesson: {lesson['lesson']}"
                             for lesson in lessons]
-            lesson_block = "\\n\\nRelevant lessons from prior feedback and outcomes:\\n" + "\\n".join(lesson_lines)
+            lesson_block = "\n\nRelevant lessons from prior feedback and outcomes:\n" + "\n".join(lesson_lines)
         messages = [{"role":"system","content":self.config.system_prompt + memory_block + lesson_block}]
         messages.extend({"role":row["role"],"content":row["content"]} for row in history
                         if row["role"] in {"user","assistant"})
