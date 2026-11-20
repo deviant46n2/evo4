@@ -24,6 +24,16 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 ws.write_file("../outside.txt","bad")
 
+    def test_sensitive_local_config_is_not_exposed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws=Workspace(tmp)
+            (Path(tmp)/"config.toml").write_text('api_key = "secret"',encoding="utf-8")
+            (Path(tmp)/".env").write_text("TOKEN=secret",encoding="utf-8")
+            self.assertNotIn("config.toml",ws.list_files())
+            self.assertNotIn(".env",ws.list_files())
+            with self.assertRaises(WorkspaceError):
+                ws.read_file("config.toml")
+
     def test_commands_require_explicit_allowlist(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws=Workspace(tmp)
