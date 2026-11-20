@@ -183,6 +183,32 @@ class EvoStore:
             self.db.commit()
             return cur.rowcount == 1
 
+    def add_research_document(self, title, content, url=None, source_type="manual", metadata=None):
+        if not title.strip() or not content.strip():
+            raise ValueError("Research title and content are required")
+        document_id, now = str(uuid.uuid4()), utc_now()
+        with self.lock:
+            self.db.execute("""INSERT INTO research_documents(id,title,url,content,source_type,captured_at,metadata_json)
+                               VALUES(?,?,?,?,?,?,?)""",
+                            (document_id,title.strip(),url,content,source_type,now,
+                             json.dumps(metadata or {},ensure_ascii=False)))
+            self.db.commit()
+        return document_id
+
+    def search_research(self, query, limit=10):
+        terms = [term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
+        terms = [term for term in terms if len(term)>1][:12]
+        if not terms:
+            return []
+        clauses = " OR ".join("(title LIKE ? OR content LIKE ?)" for _ in terms)
+        params = []
+        for term in terms:
+            params.extend((f"%{term}%",f"%{term}%"))
+        params.append(max(1,limit))
+        with self.lock:
+            return self.db.execute(f"SELECT * FROM research_documents WHERE {clauses} ORDER BY captured_at DESC LIMIT ?",
+                                   params).fetchall()
+
     def close(self):
         with self.lock:
             self.db.close()
