@@ -43,6 +43,12 @@ class WorkspaceTests(unittest.TestCase):
             self.assertNotIn(".env",ws.list_files())
             with self.assertRaises(WorkspaceError):
                 ws.read_file("config.toml")
+            (Path(tmp)/".git").mkdir()
+            (Path(tmp)/".git"/"config").write_text("[remote]",encoding="utf-8")
+            with self.assertRaises(WorkspaceError):
+                ws.read_file(".git/config")
+            with self.assertRaises(WorkspaceError):
+                ws.write_file(".git/config","overwrite",overwrite=True)
 
     def test_commands_require_explicit_allowlist(self):
         with tempfile.TemporaryDirectory() as tmp:
