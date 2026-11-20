@@ -83,6 +83,16 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(len(assistant.store.search_lessons("coding tests")),1)
             assistant.close()
 
+    def test_database_backup_preserves_memories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source=EvoStore(Path(tmp)/"source.db")
+            source.add_memory("Backup integrity matters for persistent assistant data")
+            destination=source.backup(Path(tmp)/"backup"/"evo.db")
+            backup=EvoStore(destination)
+            self.assertEqual(len(backup.list_memories()),1)
+            backup.close()
+            source.close()
+
     def test_tasks_persist_and_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
