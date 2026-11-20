@@ -70,6 +70,19 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(len(assistant.store.list_memories()),2)
             assistant.close()
 
+    def test_lessons_are_retrieved_into_future_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            provider=StubProvider()
+            assistant=EvoAssistant(config,EvoStore(config.database),provider)
+            cid=assistant.new_conversation()
+            assistant.store.add_lesson("Always run the repository tests before claiming a coding task is complete.",
+                                       trigger_text="coding tests",category="coding",source="user",confidence=1.0)
+            messages=assistant._build_messages(cid,"coding tests")
+            self.assertIn("Always run the repository tests",messages[0]["content"])
+            self.assertEqual(len(assistant.store.search_lessons("coding tests")),1)
+            assistant.close()
+
     def test_tasks_persist_and_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
