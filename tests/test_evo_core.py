@@ -67,7 +67,7 @@ class EvoCoreTests(unittest.TestCase):
             self.assertIsInstance(memory_id,str)
             self.assertEqual(len(assistant.store.search_memories("concise technical evidence")),1)
             assistant.turn(cid,"Remember that Evo must prioritize local inference performance.")
-            self.assertEqual(len(assistant.store.list_memories()),1)
+            self.assertEqual(len(assistant.store.list_memories()),2)
             assistant.close()
 
     def test_tasks_persist_and_transition(self):
