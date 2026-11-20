@@ -13,7 +13,7 @@ class ToolSSEHandler(BaseHTTPRequestHandler):
           {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":"\\"a.py\\"}"}}]}}]},
           {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
         ]
-        body="".join("data: "+json.dumps(e)+"\\n\\n" for e in events)+"data: [DONE]\\n\\n"
+        body="".join("data: "+json.dumps(e)+"\n\n" for e in events)+"data: [DONE]\n\n"
         raw=body.encode()
         self.send_response(200); self.send_header("Content-Type","text/event-stream")
         self.send_header("Content-Length",str(len(raw))); self.end_headers(); self.wfile.write(raw)
