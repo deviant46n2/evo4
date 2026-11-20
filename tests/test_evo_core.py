@@ -95,6 +95,19 @@ class EvoCoreTests(unittest.TestCase):
             backup.close()
             source.close()
 
+    def test_saved_research_is_retrieved_into_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            assistant=EvoAssistant(config,EvoStore(config.database),StubProvider())
+            cid=assistant.new_conversation()
+            assistant.store.add_research_document("SQLite WAL concurrency",
+                "Write-ahead logging allows readers and a writer to proceed concurrently.",
+                "https://sqlite.org/wal.html","web")
+            messages=assistant._build_messages(cid,"How does SQLite WAL concurrency work?")
+            self.assertIn("SQLite WAL concurrency",messages[0]["content"])
+            self.assertIn("https://sqlite.org/wal.html",messages[0]["content"])
+            assistant.close()
+
     def test_tasks_persist_and_transition(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
