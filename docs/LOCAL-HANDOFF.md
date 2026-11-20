@@ -21,6 +21,7 @@ Set `[server].model` to the exact ID exposed by the running llama.cpp server. Ke
 python -m unittest discover -s tests -v
 evo doctor
 evo chat
+evo code --workspace .
 evo memory add "Evo is a local-first assistant project" --category project --source user
 evo memory search "local-first assistant"
 evo task add "Run first local validation" --priority 1
@@ -32,6 +33,8 @@ evo-exp run --tasks tasks/smoke.jsonl --repetitions 1
 ```
 
 The example research note above is a CLI usage example, not a real research claim.
+
+For coding mode, the default configuration allowlists `python -m unittest` and `pytest`. The model can inspect files automatically; each file write and command requires an interactive approval. Add other safe command prefixes to `[workspace].allowed_commands` only when needed. Tool-call support must be verified against the selected llama.cpp build and model.
 
 ## OpenCode independent review prompt
 
