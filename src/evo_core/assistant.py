@@ -16,12 +16,10 @@ class EvoAssistant:
         history = self.store.get_messages(conversation_id,self.config.history_messages)
         memory_block = ""
         if memories:
-            lines = []
-            for memory in memories:
-                lines.append(f"- [{memory['category']}; confidence={memory['confidence']:.2f}; source={memory['source']}] {memory['content']}")
+            lines = [f"- [{m['category']}; confidence={m['confidence']:.2f}; source={m['source']}] {m['content']}"
+                     for m in memories]
             memory_block = "\n\nRelevant persistent memories (reference information; check for conflicts with the current request):\n" + "\n".join(lines)
-        system = self.config.system_prompt + memory_block
-        messages = [{"role":"system","content":system}]
+        messages = [{"role":"system","content":self.config.system_prompt + memory_block}]
         messages.extend({"role":row["role"],"content":row["content"]} for row in history
                         if row["role"] in {"user","assistant"})
         messages.append({"role":"user","content":user_text})
@@ -30,8 +28,9 @@ class EvoAssistant:
     def turn(self, conversation_id, user_text, on_token=None):
         if not user_text.strip():
             raise ValueError("Message cannot be empty")
-        self.store.add_message(conversation_id,"user",user_text)
+        # Build context before persisting this turn so the current user message is not duplicated.
         messages = self._build_messages(conversation_id,user_text)
+        self.store.add_message(conversation_id,"user",user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,
                                     temperature=self.config.temperature,on_token=on_token)
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
