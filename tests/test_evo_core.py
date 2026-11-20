@@ -72,7 +72,7 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(config.max_tokens,1234)
             self.assertEqual(config.memory_limit,4)
             self.assertEqual(config.database,Path("state.db"))
-            path.write_text('[workspace]\\nroot="project"\\nallowed_commands=[["python","-m","unittest"]]\\n',encoding="utf-8")
+            path.write_text('[workspace]\nroot="project"\nallowed_commands=[["python","-m","unittest"]]\n',encoding="utf-8")
             config=load_config(path)
             self.assertEqual(config.workspace_root,Path("project"))
             self.assertEqual(config.allowed_commands,(("python","-m","unittest"),))
