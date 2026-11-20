@@ -15,6 +15,7 @@ The repository contains two independently usable applications:
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
 - Supports explicit memory creation, search, listing, and archival.
+- Stores user corrections and lessons with trigger phrases, provenance, category, and confidence; relevant lessons are retrieved into future conversations.
 - Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
 - Persists lightweight tasks with priority and status.
 - Uses only the Python standard library at runtime.
@@ -66,6 +67,8 @@ evo memory candidates
 evo memory accept CANDIDATE_ID
 evo memory reject CANDIDATE_ID
 evo memory archive MEMORY_ID
+evo learn add "Run tests before claiming success" --trigger "coding tests" --category coding
+evo learn search "coding tests"
 evo research add "Paper notes" --url "https://example.org/paper" --content "Sourced notes go here."
 evo research search "retrieval performance"
 evo task add "Investigate llama.cpp context performance" --priority 2
