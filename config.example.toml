@@ -21,6 +21,11 @@ history_messages = 16
 [system]
 prompt = "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference."
 
+# Coding-agent project access. Writes and command execution still require approval.
+[workspace]
+root = "."
+allowed_commands = [["python", "-m", "unittest"], ["pytest"]]
+
 # Record the runtime conditions for every experiment. Fill in what you know;
 # do not guess. model_file is optional but, if set, its SHA-256 is captured.
 [run]
