@@ -6,10 +6,8 @@ from .client import stream_chat_completion
 from .db import ResultsDB
 from .evaluation import evaluate_task
 from .monitor import ResourceMonitor
-
 def load_tasks(path):
-    tasks = []
-    seen_ids = set()
+    tasks, seen_ids = [], set()
     with Path(path).open(encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):
             if not line.strip() or line.lstrip().startswith("#"):
@@ -27,14 +25,12 @@ def load_tasks(path):
             seen_ids.add(task["id"])
             tasks.append(task)
     return tasks
-
 def _file_sha256(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
 def build_run_manifest(config):
     metadata = dict(config.run_metadata)
     model_file = metadata.get("model_file")
@@ -48,7 +44,6 @@ def build_run_manifest(config):
         "max_tokens": config.max_tokens, "temperature": config.temperature,
         "timeout_seconds": config.timeout_seconds, "system_prompt": config.system_prompt,
         "runtime_manifest": metadata}
-
 def run_tasks(config, tasks_path, repetitions=None):
     tasks = load_tasks(tasks_path)
     if not tasks:
@@ -57,17 +52,17 @@ def run_tasks(config, tasks_path, repetitions=None):
     if count < 1:
         raise ValueError("Repetitions must be at least one")
     manifest = build_run_manifest(config)
+    run_label = str(config.run_metadata.get("label") or config.model)
     db = ResultsDB(config.database)
     ids = []
     try:
         for repetition in range(1, count + 1):
             for task in tasks:
-                started = datetime.now(timezone.utc).isoformat()
-                eid = db.create_experiment({"started_at": started, "task_id": task["id"],
-                    "category": str(task.get("category", "uncategorized")), "repetition": repetition,
-                    "model": config.model, "base_url": config.base_url,
-                    "config_json": json.dumps(manifest, sort_keys=True), "prompt": task["prompt"],
-                    "status": "running"})
+                eid = db.create_experiment({"started_at": datetime.now(timezone.utc).isoformat(),
+                    "task_id": task["id"], "category": str(task.get("category", "uncategorized")),
+                    "repetition": repetition, "model": config.model, "run_label": run_label,
+                    "base_url": config.base_url, "config_json": json.dumps(manifest, sort_keys=True),
+                    "prompt": task["prompt"], "status": "running"})
                 ids.append(eid)
                 monitor = ResourceMonitor(config.sample_interval_seconds,
                     lambda sample, experiment_id=eid: db.add_sample(experiment_id, sample))
@@ -82,10 +77,8 @@ def run_tasks(config, tasks_path, repetitions=None):
                         "response": result["response"], "status": "completed",
                         "elapsed_seconds": result["elapsed_seconds"],
                         "time_to_first_token_seconds": result["time_to_first_token_seconds"],
-                        "prompt_tokens": result["prompt_tokens"],
-                        "completion_tokens": result["completion_tokens"],
-                        "tokens_per_second": result["tokens_per_second"],
-                        "evaluation_status": evaluation_status,
+                        "prompt_tokens": result["prompt_tokens"], "completion_tokens": result["completion_tokens"],
+                        "tokens_per_second": result["tokens_per_second"], "evaluation_status": evaluation_status,
                         "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None})
                 except Exception as exc:
                     db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
