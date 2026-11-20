@@ -18,7 +18,7 @@ class Workspace:
         self.root=Path(root).expanduser().resolve()
         if not self.root.is_dir():
             raise WorkspaceError(f"Workspace root is not a directory: {self.root}")
-        self.allowed_commands=[tuple(item) for item in allowed_commands]
+        self.allowed_commands=[tuple(item) for item in allowed_commands if item]
         self.max_read_bytes=max_read_bytes
 
     def resolve(self,relative_path):
