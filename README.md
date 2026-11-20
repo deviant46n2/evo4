@@ -14,7 +14,8 @@ The repository contains two independently usable applications:
 - Retrieves relevant persistent memories into the model context.
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
-- Supports explicit memory creation, search, listing, and archival. Automatic memory extraction is intentionally not enabled yet: incorrect automatic facts must not silently become trusted memory.
+- Supports explicit memory creation, search, listing, and archival.
+- Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
 - Persists lightweight tasks with priority and status.
 - Uses only the Python standard library at runtime.
 - Includes an approval-gated coding-agent loop with streamed tool calls for file listing, reading, searching, writing, and running explicitly allowlisted commands.
@@ -61,6 +62,9 @@ evo conversations
 evo memory add "The user prefers concise, evidence-based explanations" --category preferences --source user
 evo memory search "explanation preferences"
 evo memory list
+evo memory candidates
+evo memory accept CANDIDATE_ID
+evo memory reject CANDIDATE_ID
 evo memory archive MEMORY_ID
 evo research add "Paper notes" --url "https://example.org/paper" --content "Sourced notes go here."
 evo research search "retrieval performance"
