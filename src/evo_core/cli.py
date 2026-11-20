@@ -48,6 +48,8 @@ def build_parser():
     ra.add_argument("--url"); ra.add_argument("--source-type",default="manual")
     rq=rs.add_parser("search"); rq.add_argument("query"); rq.add_argument("--limit",type=int,default=10)
     sub.add_parser("conversations",help="List recent conversations")
+    backup=sub.add_parser("backup",help="Create a consistent SQLite backup of Evo and lab data")
+    backup.add_argument("destination")
     return parser
 
 def _interactive(args,config):
@@ -128,7 +130,9 @@ def main():
         return
     store=EvoStore(config.database)
     try:
-        if args.command=="memory":
+        if args.command=="backup":
+            print(f"Backup written to {store.backup(args.destination)}")
+        elif args.command=="memory":
             if args.memory_command=="add":
                 mid=store.add_memory(args.content,args.category,args.tag,args.source,args.confidence)
                 print(f"Saved memory: {mid}")
