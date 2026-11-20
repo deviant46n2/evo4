@@ -42,3 +42,24 @@ The harness does not automatically grade outputs. For coding and reasoning compa
 ## Baseline discipline
 
 Preserve the known-working Qwen3.8-27B Q3_K_M setup as the control. Do not replace or mutate its working launch configuration for experiments. A Q4 quant is a separate candidate, not a replacement baseline. Compare candidates under matched prompts, context limits, runtime build and generation settings where feasible.
+
+
+## Runtime manifest
+
+The optional `[run]` table in config.toml is copied into each experiment's configuration snapshot. Record the values that actually apply:
+
+- `label`: human-readable configuration name, unique enough to distinguish quant/runtime variants.
+- `model_file`: local model file path. If set, the harness validates that it exists and computes SHA-256 once per benchmark invocation.
+- `runtime`, `runtime_version`, `launch_command`: runtime identity and exact launch invocation.
+- `context_size`, `kv_cache_k`, `kv_cache_v`, `gpu_layers`, `batch_size`, `ubatch_size`, `flash_attention`: inference settings.
+- `notes`: desktop/background conditions or other relevant observations.
+
+The harness does not inspect your running process to infer these values. Fill them from the actual launch command and runtime output. Blank or unknown values should remain blank.
+
+## Deterministic task checks
+
+A JSONL task may optionally include `expected_exact` or `expected_contains`. These checks are intentionally simple and transparent:
+- `expected_exact` compares the trimmed response to the expected string.
+- `expected_contains` accepts a string or list of strings and checks case-insensitive substring presence.
+
+Tasks without either field are recorded as unscored. These checks are not a substitute for code tests, semantic evaluation or human review. Do not turn subjective tasks into brittle substring tests.
