@@ -7,6 +7,7 @@ from pathlib import Path
 from evo_experiments.client import list_models, stream_chat_completion
 from evo_experiments.config import load_config
 from evo_experiments.db import ResultsDB
+from evo_experiments.evaluation import evaluate_task
 from evo_experiments.runner import build_run_manifest, load_tasks
 
 class FakeHandler(BaseHTTPRequestHandler):
@@ -67,8 +68,10 @@ class HarnessTests(unittest.TestCase):
                 "sampled_at":"now", "ram_used_mib":123.0}))
             worker.start()
             worker.join()
-            db.finish_experiment(eid, {"status":"completed","response":"answer"})
+            db.finish_experiment(eid, {"status":"completed","response":"answer",
+                "evaluation_status":"passed","evaluation_details":"{}"})
             self.assertEqual(db.summary()[0]["status"], "completed")
+            self.assertEqual(db.summary()[0]["evaluation_status"], "passed")
             self.assertEqual(db.connection.execute("SELECT count(*) FROM resource_samples").fetchone()[0], 1)
             db.close()
 
@@ -80,6 +83,14 @@ class HarnessTests(unittest.TestCase):
             path.write_text('{"id":"dup","prompt":"a"}\n{"id":"dup","prompt":"b"}\n', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "duplicate task id"):
                 load_tasks(path)
+
+    def test_explicit_task_evaluation(self):
+        status, details = evaluate_task({"expected_contains":["9.6","seconds"]}, "It takes 9.6 seconds.")
+        self.assertEqual(status, "passed")
+        self.assertEqual(details["passed"], 2)
+        status, _ = evaluate_task({"expected_exact":"yes"}, "no")
+        self.assertEqual(status, "failed")
+        self.assertEqual(evaluate_task({"id":"freeform"}, "anything"), (None, None))
 
     def test_openai_compatible_server_diagnostic_and_stream(self):
         server = ThreadingHTTPServer(("127.0.0.1",0), FakeHandler)
