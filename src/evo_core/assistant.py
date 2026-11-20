@@ -28,12 +28,12 @@ class EvoAssistant:
 
     def _capture_memory_candidate(self, conversation_id, user_text):
         patterns = [
-            (r"^(?:i prefer|i like|i love|i dislike|i hate|i avoid)\\s+(.+)$","preferences",0.75),
-            (r"^(?:my goal is|i want to|i plan to|i intend to)\\s+(.+)$","goals",0.65),
-            (r"^my project is\\s+(.+)$","projects",0.8),
-            (r"^(?:i use|i work with|my setup is)\\s+(.+)$","environment",0.7),
+            (r"^(?:i prefer|i like|i love|i dislike|i hate|i avoid)\s+(.+)$","preferences",0.75),
+            (r"^(?:my goal is|i want to|i plan to|i intend to)\s+(.+)$","goals",0.65),
+            (r"^my project is\s+(.+)$","projects",0.8),
+            (r"^(?:i use|i work with|my setup is)\s+(.+)$","environment",0.7),
         ]
-        explicit = re.match(r"^remember that\\s+(.+)$",user_text.strip(),re.IGNORECASE)
+        explicit = re.match(r"^remember that\s+(.+)$",user_text.strip(),re.IGNORECASE)
         if explicit and len(explicit.group(1).strip()) >= 8:
             return self.store.add_memory(explicit.group(1).strip(),category="explicit",source="explicit-user",confidence=1.0)
         for pattern,category,confidence in patterns:
