@@ -1,7 +1,7 @@
 [server]
 base_url = "http://127.0.0.1:18997"
 api_key = "no-key"
-# Set this to an ID returned by: evo-exp doctor
+# Set this to an ID returned by: evo doctor
 model = "local-model"
 timeout_seconds = 600
 
@@ -12,10 +12,16 @@ max_tokens = 256
 temperature = 0.0
 repetitions = 3
 
-[system]
-prompt = "You are a precise assistant. Follow the user instructions."
+[assistant]
+max_tokens = 2048
+temperature = 0.2
+memory_limit = 8
+history_messages = 16
 
-# Record the runtime conditions for every run. Fill in what you know;
+[system]
+prompt = "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference."
+
+# Record the runtime conditions for every experiment. Fill in what you know;
 # do not guess. model_file is optional but, if set, its SHA-256 is captured.
 [run]
 label = "qwen3.8-27b-baseline"
