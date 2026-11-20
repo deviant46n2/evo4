@@ -22,11 +22,11 @@ The experiment harness remains independently usable. It runs repeatable tasks, r
 
 ## Persistence
 
-SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time.
+SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time. A SQLite online-backup operation creates a consistent copy of both assistant and lab state.
 
 FTS5 is used for memory retrieval when available. A lexical LIKE fallback keeps the assistant usable when FTS5 is unavailable. Retrieval is not semantic and does not imply perfect recall.
 
-A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
+A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts. Saved research documents are also retrieved lexically and injected as source material, with URLs and capture timestamps. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
 
 ## Provider boundary
 
