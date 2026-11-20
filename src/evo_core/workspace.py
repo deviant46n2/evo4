@@ -42,7 +42,7 @@ class Workspace:
         for path in base.rglob("*"):
             if any(part in IGNORED_DIRS for part in path.relative_to(self.root).parts):
                 continue
-            if path.is_file() and not _is_sensitive(path) and fnmatch.fnmatch(path.name,pattern):
+            if not path.is_symlink() and path.is_file() and not _is_sensitive(path) and fnmatch.fnmatch(path.name,pattern):
                 results.append(path.relative_to(self.root).as_posix())
                 if len(results)>=max(1,limit):
                     break
