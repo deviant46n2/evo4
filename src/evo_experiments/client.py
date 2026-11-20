@@ -1,0 +1,55 @@
+import json
+import time
+import urllib.error
+import urllib.request
+
+class ModelRequestError(RuntimeError):
+    pass
+
+def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
+                           max_tokens, temperature, timeout):
+    payload = {"model": model, "messages": [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt}],
+        "stream": True, "stream_options": {"include_usage": True},
+        "max_tokens": max_tokens, "temperature": temperature}
+    request = urllib.request.Request(f"{base_url}/v1/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST")
+    started = time.perf_counter()
+    first_content_at, usage, pieces = None, {}, []
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            for raw in response:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("usage"):
+                    usage = event["usage"]
+                choices = event.get("choices") or []
+                if choices:
+                    content = (choices[0].get("delta") or {}).get("content")
+                    if isinstance(content, str) and content:
+                        if first_content_at is None:
+                            first_content_at = time.perf_counter()
+                        pieces.append(content)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ModelRequestError(str(exc)) from exc
+    finished = time.perf_counter()
+    elapsed = finished - started
+    completion_tokens, prompt_tokens = usage.get("completion_tokens"), usage.get("prompt_tokens")
+    generation_window = finished - first_content_at if first_content_at else None
+    rate = (float(completion_tokens) / generation_window
+            if completion_tokens is not None and generation_window and generation_window > 0 else None)
+    return {"response": "".join(pieces), "elapsed_seconds": elapsed,
+        "time_to_first_token_seconds": first_content_at - started if first_content_at else None,
+        "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+        "tokens_per_second": rate}
