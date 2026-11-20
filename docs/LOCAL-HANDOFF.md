@@ -25,6 +25,9 @@ evo chat
 evo code --workspace .
 evo memory add "Evo is a local-first assistant project" --category project --source user
 evo memory search "local-first assistant"
+evo memory candidates
+evo learn add "Run tests before claiming success" --trigger "coding tests" --category coding
+evo learn search "coding tests"
 evo task add "Run first local validation" --priority 1
 evo task list
 evo research add "Example source note" --url "https://example.org" --content "Replace this with actual sourced notes."
