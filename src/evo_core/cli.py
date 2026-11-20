@@ -26,6 +26,11 @@ def build_parser():
     ta.add_argument("--priority",type=int,default=3)
     tl=ts.add_parser("list"); tl.add_argument("--status")
     td=ts.add_parser("status"); td.add_argument("id"); td.add_argument("value",choices=["open","in_progress","blocked","done","cancelled"])
+    research=sub.add_parser("research",help="Store and search sourced research notes")
+    rs=research.add_subparsers(dest="research_command",required=True)
+    ra=rs.add_parser("add"); ra.add_argument("title"); ra.add_argument("--content",required=True)
+    ra.add_argument("--url"); ra.add_argument("--source-type",default="manual")
+    rq=rs.add_parser("search"); rq.add_argument("query"); rq.add_argument("--limit",type=int,default=10)
     sub.add_parser("conversations",help="List recent conversations")
     return parser
 
@@ -88,6 +93,14 @@ def main():
                     print(f"{row['id']} [{row['status']} p{row['priority']}] {row['title']}")
             elif args.task_command=="status":
                 print("Updated." if store.update_task_status(args.id,args.value) else "Task not found.")
+        elif args.command=="research":
+            if args.research_command=="add":
+                doc_id=store.add_research_document(args.title,args.content,args.url,args.source_type)
+                print(f"Saved research document: {doc_id}")
+            elif args.research_command=="search":
+                for row in store.search_research(args.query,args.limit):
+                    print(f"{row['id']} [{row['source_type']}] {row['title']} | {row['url'] or 'no URL'}")
+                    print(row['content'][:1000])
         elif args.command=="conversations":
             for row in store.list_conversations():
                 print(f"{row['id']} [{row['updated_at']}] {row['title']}")
