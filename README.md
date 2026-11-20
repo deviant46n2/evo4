@@ -11,7 +11,7 @@ The repository contains two independently usable applications:
 
 - Streams conversations through an OpenAI-compatible endpoint (initial target: llama.cpp).
 - Persists conversations and messages in SQLite; resume a conversation by ID.
-- Retrieves relevant persistent memories into the model context.
+- Retrieves relevant persistent memories, user lessons, and saved research notes into the model context.
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
 - Supports explicit memory creation, search, listing, and archival.
@@ -100,11 +100,11 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
 - SQLite is the initial durable store. Conversation state, user memories, task state, research captures, agent runs, and tool events have distinct tables.
 - Provider access is behind an OpenAI-compatible adapter; model/runtime changes should not require replacing the assistant.
 - The lab remains usable to evaluate Evo components from the outside.
-- No autonomous code execution or self-modification is enabled in this version.
+- No unapproved code execution, background autonomous operation, or self-modification is enabled in this version.
 
 ## Important limitations
 
-This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, coding-agent loop, automatic memory extraction/consolidation, background task execution, model scheduling/unloading, or a graphical UI. Memory retrieval is lexical rather than semantic. The current assistant sends recent conversation history and selected memories/lessons; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting. Tool calling and autonomous actions are not enabled.
+This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, semantic memory retrieval, robust automatic memory consolidation or contradiction resolution, background task execution, model scheduling/unloading, or a graphical UI. Memory and research retrieval are lexical. Automatic memory capture is a small heuristic that creates tentative candidates; it is not general language understanding. The current assistant sends recent conversation history and selected memories/lessons/research; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting.
 
 The coding agent depends on OpenAI-compatible streamed tool-call support. Some llama.cpp builds/models may not support the expected tool-call format; this must be tested on the actual endpoint. The agent is bounded by a tool-round limit and is not a background autonomous worker. The streaming client targets common OpenAI-compatible SSE behavior; server-specific quirks must be tested on the actual endpoint. A successful CI run cannot validate the target machine, model, CUDA stack, or real-world response quality.
 
