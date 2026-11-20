@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS experiments (
  model TEXT NOT NULL, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
  prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
  elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
- completion_tokens INTEGER, tokens_per_second REAL
+ completion_tokens INTEGER, tokens_per_second REAL,
+ evaluation_status TEXT, evaluation_details TEXT
 );
 CREATE TABLE IF NOT EXISTS resource_samples (
  id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id INTEGER NOT NULL REFERENCES experiments(id),
@@ -28,8 +29,15 @@ class ResultsDB:
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.executescript(SCHEMA)
+        self._migrate()
         self.connection.commit()
         self.lock = threading.RLock()
+
+    def _migrate(self):
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(experiments)")}
+        for name in ("evaluation_status", "evaluation_details"):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} TEXT")
 
     def create_experiment(self, values):
         keys = list(values)
@@ -60,7 +68,8 @@ class ResultsDB:
         with self.lock:
             return self.connection.execute(
                 "SELECT id,started_at,task_id,category,repetition,model,status,elapsed_seconds,"
-                "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,error "
+                "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,"
+                "evaluation_status,evaluation_details,error "
                 "FROM experiments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
     def close(self):
