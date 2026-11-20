@@ -14,6 +14,8 @@ class EvoConfig:
     system_prompt: str
     memory_limit: int
     history_messages: int
+    workspace_root: Path = Path(".")
+    allowed_commands: tuple = ()
 
 def load_config(path: str | Path = "config.toml") -> EvoConfig:
     source = Path(path)
@@ -25,6 +27,8 @@ def load_config(path: str | Path = "config.toml") -> EvoConfig:
     experiment = raw.get("experiment", {})
     system = raw.get("system", {})
     assistant = raw.get("assistant", {})
+    workspace = raw.get("workspace", {})
+    allowed_commands = tuple(tuple(str(part) for part in command) for command in workspace.get("allowed_commands", []) if command)
     return EvoConfig(
         base_url=str(server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
         api_key=str(server.get("api_key", "no-key")),
@@ -36,4 +40,6 @@ def load_config(path: str | Path = "config.toml") -> EvoConfig:
         system_prompt=str(system.get("prompt", "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference.")),
         memory_limit=max(1, int(assistant.get("memory_limit", 8))),
         history_messages=max(2, int(assistant.get("history_messages", 16))),
+        workspace_root=Path(workspace.get("root", ".")),
+        allowed_commands=allowed_commands,
     )
