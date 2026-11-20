@@ -87,6 +87,8 @@ class EvoCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source=EvoStore(Path(tmp)/"source.db")
             source.add_memory("Backup integrity matters for persistent assistant data")
+            with self.assertRaises(ValueError):
+                source.backup(Path(tmp)/"source.db")
             destination=source.backup(Path(tmp)/"backup"/"evo.db")
             backup=EvoStore(destination)
             self.assertEqual(len(backup.list_memories()),1)
