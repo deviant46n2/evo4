@@ -14,16 +14,17 @@ Keep comparisons reproducible and prevent noisy measurements from being mistaken
 6. Warm up the model consistently before collecting comparison runs.
 7. Do not run two model benchmarks concurrently on the single GPU.
 
-The current MVP stores only a subset of this manifest in each row. Until richer manifest capture is implemented, keep the missing runtime/model details in a versioned run-notes file alongside the experiment ID range.
+The current MVP stores a manually supplied runtime manifest with each experiment. It does not introspect the running llama.cpp process, so verify every value against the actual launch command and server configuration.
 
 ## Recommended first sequence
 
 1. Capture idle GPU/RAM telemetry with `evo-exp hardware`.
-2. Run the smoke suite once to verify endpoint compatibility.
-3. Run the fixed suite three times with no configuration changes.
-4. Inspect failures, response bodies, timing fields and resource samples.
-5. Repeat only after changing one major variable.
-6. Preserve failed and incomplete runs; do not delete inconvenient results.
+2. Run `evo-exp doctor` and verify the exposed model ID.
+3. Run the smoke suite once to verify endpoint compatibility.
+4. Run the fixed suite three times with no configuration changes.
+5. Inspect per-run results and `evo-exp summary`, including VRAM/RAM samples.
+6. Repeat only after changing one major variable.
+7. Preserve failed and incomplete runs; do not delete inconvenient results.
 
 ## Interpretation
 
