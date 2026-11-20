@@ -59,8 +59,8 @@ class ResultsDB:
     def summary(self, limit=20):
         with self.lock:
             return self.connection.execute(
-                "SELECT id,started_at,task_id,repetition,status,elapsed_seconds,"
-                "time_to_first_token_seconds,completion_tokens,tokens_per_second,error "
+                "SELECT id,started_at,task_id,category,repetition,model,status,elapsed_seconds,"
+                "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,error "
                 "FROM experiments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
     def close(self):
