@@ -1,3 +1,4 @@
+import re
 from .provider import OpenAICompatibleProvider
 from .store import EvoStore
 
@@ -25,12 +26,31 @@ class EvoAssistant:
         messages.append({"role":"user","content":user_text})
         return messages
 
+    def _capture_memory_candidate(self, conversation_id, user_text):
+        patterns = [
+            (r"^(?:i prefer|i like|i love|i dislike|i hate|i avoid)\\s+(.+)$","preferences",0.75),
+            (r"^(?:my goal is|i want to|i plan to|i intend to)\\s+(.+)$","goals",0.65),
+            (r"^my project is\\s+(.+)$","projects",0.8),
+            (r"^(?:i use|i work with|my setup is)\\s+(.+)$","environment",0.7),
+        ]
+        explicit = re.match(r"^remember that\\s+(.+)$",user_text.strip(),re.IGNORECASE)
+        if explicit and len(explicit.group(1).strip()) >= 8:
+            return self.store.add_memory(explicit.group(1).strip(),category="explicit",source="explicit-user",confidence=1.0)
+        for pattern,category,confidence in patterns:
+            match = re.match(pattern,user_text.strip(),re.IGNORECASE)
+            if match:
+                content = match.group(1).strip()
+                if len(content) >= 16 and not content.lower().startswith(("to know","to understand","to ask")):
+                    return self.store.propose_memory(content,category,source="conversation:user",conversation_id=conversation_id,confidence=confidence)
+        return None
+
     def turn(self, conversation_id, user_text, on_token=None):
         if not user_text.strip():
             raise ValueError("Message cannot be empty")
         # Build context before persisting this turn so the current user message is not duplicated.
         messages = self._build_messages(conversation_id,user_text)
         self.store.add_message(conversation_id,"user",user_text)
+        self._capture_memory_candidate(conversation_id,user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,
                                     temperature=self.config.temperature,on_token=on_token)
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
