@@ -209,6 +209,30 @@ class EvoStore:
             return self.db.execute(f"SELECT * FROM research_documents WHERE {clauses} ORDER BY captured_at DESC LIMIT ?",
                                    params).fetchall()
 
+    def start_agent_run(self, kind, metadata=None):
+        run_id, now = str(uuid.uuid4()), utc_now()
+        with self.lock:
+            self.db.execute("INSERT INTO agent_runs(id,kind,status,started_at,metadata_json) VALUES(?,?,?,?,?)",
+                            (run_id,kind,"running",now,json.dumps(metadata or {},ensure_ascii=False)))
+            self.db.commit()
+        return run_id
+
+    def finish_agent_run(self, run_id, status, summary=""):
+        if status not in {"completed","failed","cancelled"}:
+            raise ValueError("Invalid agent run status")
+        with self.lock:
+            self.db.execute("UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=?",
+                            (status,utc_now(),summary,run_id))
+            self.db.commit()
+
+    def record_tool_event(self, run_id, tool_name, arguments, output_summary, status):
+        with self.lock:
+            self.db.execute("""INSERT INTO tool_events(run_id,tool_name,input_json,output_summary,status,created_at)
+                               VALUES(?,?,?,?,?,?)""",
+                            (run_id,tool_name,json.dumps(arguments,ensure_ascii=False),
+                             str(output_summary)[:4000],status,utc_now()))
+            self.db.commit()
+
     def close(self):
         with self.lock:
             self.db.close()
