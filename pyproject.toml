@@ -1,14 +1,18 @@
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
 [project]
-name = "evo4-experiments"
-version = "0.1.0"
-description = "Local inference experiment harness"
+name = "evo4"
+version = "0.2.0"
+description = "Local-first Evo assistant and persistent experiment lab"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+
 [project.scripts]
+evo = "evo_core.cli:main"
 evo-exp = "evo_experiments.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
