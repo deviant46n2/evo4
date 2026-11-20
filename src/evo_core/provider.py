@@ -26,9 +26,12 @@ class OpenAICompatibleProvider:
         except urllib.error.HTTPError as exc:
             raise ProviderError(f"Model-list HTTP {exc.code}: {exc.read().decode(errors='replace')[:1000]}") from exc
 
-    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None):
+    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
                    "stream_options":{"include_usage":True},"max_tokens":max_tokens,"temperature":temperature}
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         request = urllib.request.Request(self.base_url + "/v1/chat/completions",
             data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type":"application/json","Authorization":f"Bearer {self.api_key}"},
@@ -37,6 +40,7 @@ class OpenAICompatibleProvider:
         first_token = None
         usage = {}
         pieces = []
+        tool_call_parts = {}
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 for raw in response:
@@ -56,6 +60,14 @@ class OpenAICompatibleProvider:
                     if not choices:
                         continue
                     delta = choices[0].get("delta") or {}
+                    for call in delta.get("tool_calls") or []:
+                        index = call.get("index",0)
+                        part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
+                        if call.get("id"): part["id"] = call["id"]
+                        if call.get("type"): part["type"] = call["type"]
+                        function = call.get("function") or {}
+                        if function.get("name"): part["function"]["name"] += function["name"]
+                        if function.get("arguments"): part["function"]["arguments"] += function["arguments"]
                     content = delta.get("content")
                     if isinstance(content,list):
                         content = "".join(part.get("text","") for part in content if isinstance(part,dict))
@@ -73,7 +85,16 @@ class OpenAICompatibleProvider:
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")
         generation_time = finished-first_token if first_token else None
-        return {"content":"".join(pieces),"elapsed_seconds":elapsed,
+        parsed_calls = []
+        for index in sorted(tool_call_parts):
+            call = tool_call_parts[index]
+            try:
+                arguments = json.loads(call["function"]["arguments"] or "{}")
+            except json.JSONDecodeError as exc:
+                raise ProviderError(f"Model returned invalid tool-call JSON: {exc}") from exc
+            parsed_calls.append({"id":call["id"],"type":"function",
+                                 "function":{"name":call["function"]["name"],"arguments":arguments}})
+        return {"content":"".join(pieces),"tool_calls":parsed_calls,"elapsed_seconds":elapsed,
                 "ttft_seconds":first_token-started if first_token else None,
                 "prompt_tokens":usage.get("prompt_tokens"),"completion_tokens":completion_tokens,
                 "tokens_per_second":(completion_tokens/generation_time if completion_tokens and generation_time and generation_time>0 else None)}
