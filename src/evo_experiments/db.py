@@ -73,8 +73,17 @@ class ResultsDB:
                 "SUM(CASE WHEN evaluation_status IN ('passed','failed') THEN 1 ELSE 0 END) AS checks_scored, "
                 "ROUND(AVG(elapsed_seconds),3) AS avg_elapsed_seconds, "
                 "ROUND(AVG(time_to_first_token_seconds),3) AS avg_ttft_seconds, "
-                "ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second "
-                "FROM experiments GROUP BY COALESCE(run_label,model), model, category "
+                "ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second, "
+                "ROUND(AVG(samples.peak_vram_mib),1) AS avg_peak_vram_mib, "
+                "MAX(samples.peak_vram_mib) AS max_peak_vram_mib, "
+                "ROUND(AVG(samples.avg_gpu_utilization),1) AS avg_gpu_utilization_percent, "
+                "MAX(samples.peak_ram_mib) AS max_sampled_ram_mib "
+                "FROM experiments LEFT JOIN ("
+                "SELECT experiment_id, MAX(gpu_memory_used_mib) AS peak_vram_mib, "
+                "AVG(gpu_utilization_percent) AS avg_gpu_utilization, "
+                "MAX(ram_used_mib) AS peak_ram_mib FROM resource_samples GROUP BY experiment_id"
+                ") AS samples ON samples.experiment_id=experiments.id "
+                "GROUP BY COALESCE(run_label,model), model, category "
                 "ORDER BY configuration, category").fetchall()
     def close(self):
         with self.lock:
