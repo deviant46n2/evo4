@@ -9,13 +9,15 @@ The first MVP is a small experiment harness, deliberately separate from the even
 ### Current capabilities
 
 - Calls an OpenAI-compatible local chat-completions endpoint, initially intended for llama.cpp.
+- `evo-exp doctor` checks the server's model-list endpoint and warns if the configured model ID is not exposed.
 - Runs repeatable JSONL task suites with configurable repetitions.
-- Records prompts, responses, model/server identity, configuration snapshot, run status and timing.
-- Captures time to first streamed content and token counts when the server supplies usage metadata.
+- Records prompts, responses, model/server identity, runtime manifest, run status and timing.
+- Captures an optional model-file SHA-256 when `[run].model_file` is configured.
 - Samples NVIDIA GPU utilization, VRAM, temperature and power through nvidia-smi.
 - Samples system RAM from /proc/meminfo.
 - Stores experiment records and timestamped resource samples in SQLite.
-- Includes unit tests that do not require a GPU or running model server.
+- Reports results as JSON Lines or CSV.
+- Includes unit tests for configuration, manifest hashing, SQLite concurrency, task validation and a local fake OpenAI-compatible streaming server.
 - Uses only the Python standard library at runtime.
 
 ### Explicit limitations
@@ -25,7 +27,7 @@ The first MVP is a small experiment harness, deliberately separate from the even
 - Token throughput is calculated only when the server returns completion-token usage metadata. Missing usage remains null, never guessed.
 - GPU sampling is periodic and can miss brief peaks.
 - It does not isolate background desktop activity or automatically score answer quality.
-- It does not yet capture exact model file hashes, full llama.cpp launch flags, context/KV settings, CPU utilization or disk I/O. Those belong in the next iteration after local validation.
+- It does not yet capture CPU utilization, disk I/O, per-process VRAM, or automatically parse the llama.cpp launch command. Fill in the runtime manifest manually for now.
 - Streaming usage metadata and accepted request fields vary by server version; compatibility must be checked on the target runtime.
 
 ## Requirements and install
@@ -33,7 +35,7 @@ The first MVP is a small experiment harness, deliberately separate from the even
 - Linux recommended (RAM sampling uses /proc/meminfo).
 - Python 3.11 or newer.
 - nvidia-smi for NVIDIA telemetry (optional).
-- A running local server exposing /v1/chat/completions with streaming support.
+- A running local server exposing /v1/models and /v1/chat/completions with streaming support.
 
 From the repository root:
 
@@ -44,21 +46,24 @@ python -m pip install -e .
 cp config.example.toml config.toml
 ```
 
-Edit config.toml to match the actual server URL and model name. The example uses port 18997 from the previously documented Qwen profile; verify that it is currently listening before running. Machine-specific config and generated results are git-ignored.
+Edit config.toml. Run `evo-exp doctor` to see the model IDs exposed by the server, then set `[server].model` to the exact ID. Fill in the `[run]` section with the actual model file, runtime version, launch command and settings. Do not guess missing values. If `model_file` is nonempty, the harness computes its SHA-256 once at the start of each benchmark invocation. Machine-specific config and generated results are git-ignored.
 
 ## Commands
 
 ```bash
 evo-exp hardware
+evo-exp doctor
 evo-exp init-db
 evo-exp run --tasks tasks/smoke.jsonl --repetitions 3
 evo-exp report --limit 20
+evo-exp report --limit 100 --csv > results.csv
 ```
 
 Without installing the console command:
 
 ```bash
 PYTHONPATH=src python -m evo_experiments.cli hardware
+PYTHONPATH=src python -m evo_experiments.cli doctor
 PYTHONPATH=src python -m evo_experiments.cli init-db
 PYTHONPATH=src python -m evo_experiments.cli run
 PYTHONPATH=src python -m evo_experiments.cli report
@@ -75,14 +80,15 @@ Failed requests are retained for diagnosis. Do not delete failed rows when compa
 
 ## Validation status
 
-**Code has been added to GitHub but has not been executed on the target CachyOS machine.** Do not treat the harness or its measurements as validated yet.
+**Code has been added to GitHub but has not been executed on the target CachyOS machine.** GitHub Actions validates the standard-library tests, including a simulated local streaming server, but not your actual llama.cpp build, model or driver.
 
 First validation sequence:
 1. Install in a fresh virtual environment.
 2. Run `python -m unittest discover -s tests -v`.
 3. Run `evo-exp hardware` and inspect GPU/RAM values.
-4. Confirm the local server accepts streaming chat completions.
-5. Run the smoke suite once and inspect the database.
-6. Repeat with fixed settings to estimate run-to-run variance.
+4. Run `evo-exp doctor` and confirm the expected model ID appears.
+5. Fill in the actual runtime manifest.
+6. Run the smoke suite once and inspect the database.
+7. Repeat with fixed settings to estimate run-to-run variance.
 
 The research and design rationale lives in the [research archive](https://github.com/deviant46n2/airesearchandtesting) and its [research-derived implementation plan](https://github.com/deviant46n2/airesearchandtesting/blob/main/design/09-research-derived-implementation-plan.md).
