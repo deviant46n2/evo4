@@ -21,10 +21,10 @@ class OpenAICompatibleProvider:
             with urllib.request.urlopen(request, timeout=min(self.timeout,10)) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             return [item.get("id") for item in payload.get("data",[]) if item.get("id")]
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            raise ProviderError(f"Model-list request failed: {exc}") from exc
         except urllib.error.HTTPError as exc:
             raise ProviderError(f"Model-list HTTP {exc.code}: {exc.read().decode(errors='replace')[:1000]}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            raise ProviderError(f"Model-list request failed: {exc}") from exc
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
@@ -41,12 +41,16 @@ class OpenAICompatibleProvider:
         usage = {}
         pieces = []
         tool_call_parts = {}
+        content_type = ""
+        saw_event = False
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                content_type = response.headers.get("Content-Type","")
                 for raw in response:
                     line = raw.decode("utf-8",errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
+                    saw_event = True
                     data = line[5:].strip()
                     if data == "[DONE]":
                         break
@@ -81,6 +85,8 @@ class OpenAICompatibleProvider:
             raise ProviderError(f"Chat completion HTTP {exc.code}: {exc.read().decode(errors='replace')[:2000]}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise ProviderError(f"Chat completion request failed: {exc}") from exc
+        if not saw_event:
+            raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
         finished = time.perf_counter()
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")

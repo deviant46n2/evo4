@@ -35,12 +35,15 @@ def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
         method="POST")
     started = time.perf_counter()
     first_content_at, usage, pieces = None, {}, []
+    content_type, saw_event = "", False
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
+            content_type = response.headers.get("Content-Type", "")
             for raw in response:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line.startswith("data:"):
                     continue
+                saw_event = True
                 data = line[5:].strip()
                 if data == "[DONE]":
                     break
@@ -66,6 +69,8 @@ def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
         raise ModelRequestError(f"HTTP {exc.code} from chat completions: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ModelRequestError(str(exc)) from exc
+    if not saw_event:
+        raise ModelRequestError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
     finished = time.perf_counter()
     elapsed = finished - started
     completion_tokens, prompt_tokens = usage.get("completion_tokens"), usage.get("prompt_tokens")

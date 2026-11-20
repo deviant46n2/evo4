@@ -79,7 +79,9 @@ def run_tasks(config, tasks_path, repetitions=None):
                         "time_to_first_token_seconds": result["time_to_first_token_seconds"],
                         "prompt_tokens": result["prompt_tokens"], "completion_tokens": result["completion_tokens"],
                         "tokens_per_second": result["tokens_per_second"], "evaluation_status": evaluation_status,
-                        "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None})
+                        "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None,
+                        "evaluation_passed": evaluation_details["passed"] if evaluation_details else None,
+                        "evaluation_total": evaluation_details["total"] if evaluation_details else None})
                 except Exception as exc:
                     db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
                         "status": "failed", "error": f"{type(exc).__name__}: {exc}"})

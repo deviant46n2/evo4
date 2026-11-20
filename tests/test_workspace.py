@@ -16,6 +16,16 @@ class WorkspaceTests(unittest.TestCase):
             ws.write_file("src/example.py","replacement",overwrite=True)
             self.assertEqual(ws.read_file("src/example.py"),"replacement")
 
+    def test_workspace_root_under_ignored_directory_name_still_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"build"/"project"; root.mkdir(parents=True)
+            (root/"ok.txt").write_text("hello",encoding="utf-8")
+            ws=Workspace(root)
+            self.assertIn("ok.txt",ws.list_files())
+            self.assertEqual(ws.read_file("ok.txt"),"hello")
+            ws.write_file("new.txt","x")
+            self.assertEqual(ws.read_file("new.txt"),"x")
+
     def test_paths_cannot_escape_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws=Workspace(tmp)
@@ -37,12 +47,12 @@ class WorkspaceTests(unittest.TestCase):
     def test_sensitive_local_config_is_not_exposed(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws=Workspace(tmp)
-            (Path(tmp)/"config.toml").write_text('api_key = "secret"',encoding="utf-8")
-            (Path(tmp)/".env").write_text("TOKEN=secret",encoding="utf-8")
-            self.assertNotIn("config.toml",ws.list_files())
-            self.assertNotIn(".env",ws.list_files())
-            with self.assertRaises(WorkspaceError):
-                ws.read_file("config.toml")
+            for name in (".env",".env.development",".env.staging","id_ecdsa",
+                         "config.toml","config.local.toml","secrets.yaml"):
+                (Path(tmp)/name).write_text("TOKEN=secret",encoding="utf-8")
+                self.assertNotIn(name,ws.list_files())
+                with self.assertRaises(WorkspaceError):
+                    ws.read_file(name)
             (Path(tmp)/".git").mkdir()
             (Path(tmp)/".git"/"config").write_text("[remote]",encoding="utf-8")
             with self.assertRaises(WorkspaceError):

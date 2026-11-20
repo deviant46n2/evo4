@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -9,7 +10,8 @@ CREATE TABLE IF NOT EXISTS experiments (
  model TEXT NOT NULL, run_label TEXT, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
  prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
  elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
- completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT, evaluation_details TEXT
+ completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT, evaluation_details TEXT,
+ evaluation_passed INTEGER, evaluation_total INTEGER
 );
 CREATE TABLE IF NOT EXISTS resource_samples (
  id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id INTEGER NOT NULL REFERENCES experiments(id),
@@ -31,9 +33,24 @@ class ResultsDB:
         self.lock = threading.RLock()
     def _migrate(self):
         columns = {row[1] for row in self.connection.execute("PRAGMA table_info(experiments)")}
-        for name in ("evaluation_status", "evaluation_details", "run_label"):
+        for name, column_type in (("evaluation_status", "TEXT"), ("evaluation_details", "TEXT"),
+                                  ("evaluation_passed", "INTEGER"), ("evaluation_total", "INTEGER"),
+                                  ("run_label", "TEXT")):
             if name not in columns:
-                self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} TEXT")
+                self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} {column_type}")
+        legacy = self.connection.execute(
+            "SELECT id,evaluation_details FROM experiments "
+            "WHERE evaluation_details IS NOT NULL AND evaluation_passed IS NULL").fetchall()
+        for row in legacy:
+            try:
+                details = json.loads(row["evaluation_details"])
+                passed, total = details.get("passed"), details.get("total")
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                continue
+            if isinstance(passed, int) and isinstance(total, int):
+                self.connection.execute(
+                    "UPDATE experiments SET evaluation_passed=?,evaluation_total=? WHERE id=?",
+                    (passed, total, row["id"]))
     def create_experiment(self, values):
         keys = list(values)
         with self.lock:
@@ -61,7 +78,7 @@ class ResultsDB:
             return self.connection.execute(
                 "SELECT id,started_at,task_id,category,repetition,model,run_label,status,elapsed_seconds,"
                 "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,"
-                "evaluation_status,evaluation_details,error FROM experiments "
+                "evaluation_status,evaluation_details,evaluation_passed,evaluation_total,error FROM experiments "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     def aggregates(self):
         with self.lock:
@@ -69,8 +86,8 @@ class ResultsDB:
                 "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
                 "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
                 "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
-                "SUM(CASE WHEN evaluation_status='passed' THEN 1 ELSE 0 END) AS checks_passed, "
-                "SUM(CASE WHEN evaluation_status IN ('passed','failed') THEN 1 ELSE 0 END) AS checks_scored, "
+                "SUM(COALESCE(evaluation_passed,0)) AS checks_passed, "
+                "SUM(COALESCE(evaluation_total,0)) AS checks_scored, "
                 "ROUND(AVG(elapsed_seconds),3) AS avg_elapsed_seconds, "
                 "ROUND(AVG(time_to_first_token_seconds),3) AS avg_ttft_seconds, "
                 "ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second, "
@@ -85,6 +102,14 @@ class ResultsDB:
                 ") AS samples ON samples.experiment_id=experiments.id "
                 "GROUP BY COALESCE(run_label,model), model, category "
                 "ORDER BY configuration, category").fetchall()
+    def count_failed(self, ids):
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self.lock:
+            return int(self.connection.execute(
+                f"SELECT COUNT(*) FROM experiments WHERE status='failed' AND id IN ({placeholders})",
+                list(ids)).fetchone()[0])
     def close(self):
         with self.lock:
             self.connection.close()

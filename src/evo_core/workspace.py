@@ -4,10 +4,13 @@ import subprocess
 import time
 
 IGNORED_DIRS={".git",".venv","venv","__pycache__","node_modules",".mypy_cache",".pytest_cache","dist","build"}
-SENSITIVE_NAMES={".env",".env.local",".env.production",".npmrc",".pypirc","config.toml","id_rsa","id_ed25519","credentials","secrets.json"}
+SENSITIVE_NAMES={".env",".env.local",".env.production",".npmrc",".pypirc","config.toml","config.local.toml",
+                 "id_rsa","id_dsa","id_ecdsa","id_ed25519","credentials","credentials.json","credentials.yaml",
+                 "secrets.json","secrets.yaml","secrets.yml"}
 
 def _is_excluded(path):
     return any(part in IGNORED_DIRS or part in SENSITIVE_NAMES or
+               part == ".env" or part.startswith(".env.") or
                part.endswith((".pem",".key",".p12",".pfx")) for part in path.parts)
 
 class WorkspaceError(RuntimeError):
@@ -42,7 +45,7 @@ class Workspace:
         for path in base.rglob("*"):
             if any(part in IGNORED_DIRS for part in path.relative_to(self.root).parts):
                 continue
-            if not path.is_symlink() and path.is_file() and not _is_excluded(path) and fnmatch.fnmatch(path.name,pattern):
+            if not path.is_symlink() and path.is_file() and not _is_excluded(path.relative_to(self.root)) and fnmatch.fnmatch(path.name,pattern):
                 results.append(path.relative_to(self.root).as_posix())
                 if len(results)>=max(1,limit):
                     break
@@ -52,7 +55,7 @@ class Workspace:
         path=self.resolve(relative_path)
         if not path.is_file():
             raise WorkspaceError(f"File not found: {relative_path}")
-        if _is_excluded(path):
+        if _is_excluded(path.relative_to(self.root)):
             raise WorkspaceError("Refusing to expose ignored, configuration, or credential files to the model")
         size=path.stat().st_size
         if size>self.max_read_bytes:
@@ -83,7 +86,7 @@ class Workspace:
 
     def write_file(self,relative_path,content,overwrite=False):
         path=self.resolve(relative_path)
-        if _is_excluded(path):
+        if _is_excluded(path.relative_to(self.root)):
             raise WorkspaceError("Refusing to write inside ignored or sensitive paths")
         if path.exists() and not overwrite:
             raise WorkspaceError("File already exists; pass overwrite=True to replace it")

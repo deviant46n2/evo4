@@ -1,11 +1,14 @@
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from evo_experiments.client import list_models, stream_chat_completion
+from evo_experiments.client import ModelRequestError, list_models, stream_chat_completion
 from evo_experiments.config import load_config
 from evo_experiments.db import ResultsDB
 from evo_experiments.evaluation import evaluate_task
@@ -32,6 +35,20 @@ class FakeHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length",str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+    def log_message(self, *args):
+        pass
+
+class PlainJSONHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length","0"))
+        self.rfile.read(length)
+        body = json.dumps({"choices":[{"message":{"role":"assistant","content":"plain"}}],
+                           "usage":{"prompt_tokens":1,"completion_tokens":1}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type","application/json")
+        self.send_header("Content-Length",str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
     def log_message(self, *args):
         pass
 
@@ -66,7 +83,8 @@ class HarnessTests(unittest.TestCase):
             worker.start()
             worker.join()
             db.finish_experiment(eid, {"status":"completed","response":"answer",
-                "evaluation_status":"passed","evaluation_details":"{}","elapsed_seconds":1.5})
+                "evaluation_status":"passed","evaluation_details":"{}","elapsed_seconds":1.5,
+                "evaluation_passed":1,"evaluation_total":1})
             self.assertEqual(db.summary()[0]["status"], "completed")
             self.assertEqual(db.summary()[0]["evaluation_status"], "passed")
             aggregate = db.aggregates()[0]
@@ -93,6 +111,30 @@ class HarnessTests(unittest.TestCase):
             db = ResultsDB(path)
             columns = {row[1] for row in db.connection.execute("PRAGMA table_info(experiments)")}
             self.assertTrue({"run_label","evaluation_status","evaluation_details"}.issubset(columns))
+            db.close()
+
+    def test_legacy_evaluation_details_are_backfilled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "old.db"
+            conn = sqlite3.connect(path)
+            conn.execute("""CREATE TABLE experiments (
+                id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT,
+                task_id TEXT NOT NULL, category TEXT NOT NULL, repetition INTEGER NOT NULL,
+                model TEXT NOT NULL, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
+                prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
+                elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
+                completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT,
+                evaluation_details TEXT)""")
+            conn.execute("""INSERT INTO experiments (started_at,task_id,category,repetition,model,
+                base_url,config_json,prompt,status,evaluation_status,evaluation_details)
+                VALUES ('now','t','test',1,'m','local','{}','p','completed','passed',
+                '{"passed": 2, "total": 2}')""")
+            conn.commit()
+            conn.close()
+            db = ResultsDB(path)
+            self.assertEqual(db.summary()[0]["evaluation_passed"], 2)
+            self.assertEqual(db.aggregates()[0]["checks_passed"], 2)
+            self.assertEqual(db.aggregates()[0]["checks_scored"], 2)
             db.close()
 
     def test_jsonl_tasks_and_duplicate_detection(self):
@@ -125,6 +167,49 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(result["completion_tokens"], 2)
             self.assertIsNotNone(result["time_to_first_token_seconds"])
             self.assertEqual(server.last_payload["messages"][1]["content"], "prompt")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_aggregates_count_individual_checks_not_task_rows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = ResultsDB(Path(temp) / "results.db")
+            for passed, total in ((2, 2), (1, 2)):
+                eid = db.create_experiment({"started_at":"now","task_id":"t","category":"test",
+                    "repetition":1,"model":"m","run_label":"baseline","base_url":"local",
+                    "config_json":"{}","prompt":"p","status":"running"})
+                db.finish_experiment(eid, {"status":"completed",
+                    "evaluation_status":"passed" if passed == total else "failed",
+                    "evaluation_passed":passed,"evaluation_total":total})
+            aggregate = db.aggregates()[0]
+            self.assertEqual(aggregate["checks_passed"], 3)
+            self.assertEqual(aggregate["checks_scored"], 4)
+            db.close()
+
+    def test_run_exits_nonzero_when_all_runs_fail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "config.toml"
+            config.write_text('[server]\nbase_url="http://127.0.0.1:1"\ntimeout_seconds=1\n'
+                              '[experiment]\ndatabase="results.db"\nrepetitions=1\n', encoding="utf-8")
+            tasks = Path(temp) / "tasks.jsonl"
+            tasks.write_text('{"id":"t","prompt":"x"}\n', encoding="utf-8")
+            env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+            result = subprocess.run([sys.executable, "-m", "evo_experiments.cli", "run",
+                                     "--config", str(config), "--tasks", str(tasks)],
+                                    capture_output=True, text=True, env=env, cwd=temp, timeout=30)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("failed", (result.stdout + result.stderr).lower())
+
+    def test_non_sse_response_is_rejected(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PlainJSONHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with self.assertRaises(ModelRequestError):
+                stream_chat_completion(base_url=f"http://127.0.0.1:{server.server_port}",
+                    api_key="k", model="m", system_prompt="s", prompt="p",
+                    max_tokens=5, temperature=0, timeout=3)
         finally:
             server.shutdown()
             server.server_close()

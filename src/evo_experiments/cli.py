@@ -73,6 +73,14 @@ def main():
         ids = run_tasks(config, args.tasks, args.repetitions)
         print(f"Recorded {len(ids)} runs: {ids}")
         print(f"Database: {config.database}")
+        db = ResultsDB(config.database)
+        try:
+            failed = db.count_failed(ids)
+        finally:
+            db.close()
+        if failed:
+            print(f"{failed} of {len(ids)} runs failed; inspect `evo-exp report`.", file=sys.stderr)
+            raise SystemExit(1)
         print("Inspect report and summary commands for results.")
 if __name__ == "__main__":
     main()
