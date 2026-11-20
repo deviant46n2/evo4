@@ -40,6 +40,12 @@ class EvoStore:
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_accessed_at TEXT,
               access_count INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}');
             CREATE INDEX IF NOT EXISTS idx_memories_status_category ON memories(status,category);
+            CREATE TABLE IF NOT EXISTS memory_candidates (
+              id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general',
+              source TEXT NOT NULL, conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+              confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'pending',
+              created_at TEXT NOT NULL, reviewed_at TEXT, memory_id TEXT REFERENCES memories(id));
+            CREATE INDEX IF NOT EXISTS idx_memory_candidates_status ON memory_candidates(status,created_at);
             CREATE TABLE IF NOT EXISTS tasks (
               id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
               status TEXT NOT NULL DEFAULT 'open', priority INTEGER NOT NULL DEFAULT 3,
@@ -182,6 +188,50 @@ class EvoStore:
                                   (status,utc_now(),task_id))
             self.db.commit()
             return cur.rowcount == 1
+
+    def propose_memory(self, content, category="general", source="conversation", conversation_id=None, confidence=0.5):
+        content = content.strip()
+        if not content:
+            raise ValueError("Candidate memory cannot be empty")
+        candidate_id, now = str(uuid.uuid4()), utc_now()
+        with self.lock:
+            existing = self.db.execute("SELECT id FROM memory_candidates WHERE lower(content)=lower(?) AND status='pending'",
+                                       (content,)).fetchone()
+            if existing:
+                return existing["id"]
+            self.db.execute("""INSERT INTO memory_candidates(id,content,category,source,conversation_id,confidence,created_at)
+                               VALUES(?,?,?,?,?,?,?)""",
+                            (candidate_id,content,category,source,conversation_id,
+                             max(0.0,min(1.0,float(confidence))),now))
+            self.db.commit()
+        return candidate_id
+
+    def list_memory_candidates(self, status="pending", limit=50):
+        with self.lock:
+            return self.db.execute("SELECT * FROM memory_candidates WHERE status=? ORDER BY created_at DESC LIMIT ?",
+                                   (status,max(1,limit))).fetchall()
+
+    def review_memory_candidate(self, candidate_id, accept):
+        with self.lock:
+            row = self.db.execute("SELECT * FROM memory_candidates WHERE id=? AND status='pending'",
+                                  (candidate_id,)).fetchone()
+            if not row:
+                return None
+            memory_id = None
+            if accept:
+                memory_id = str(uuid.uuid4())
+                now = utc_now()
+                self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
+                                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                                (memory_id,row["content"],row["category"],"[]",row["source"],
+                                 row["confidence"],now,now,json.dumps({"candidate_id":candidate_id})))
+                if self.fts_available:
+                    self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
+                                    (memory_id,row["content"],row["category"],""))
+            self.db.execute("UPDATE memory_candidates SET status=?,reviewed_at=?,memory_id=? WHERE id=?",
+                            ("accepted" if accept else "rejected",utc_now(),memory_id,candidate_id))
+            self.db.commit()
+            return memory_id if accept else False
 
     def add_research_document(self, title, content, url=None, source_type="manual", metadata=None):
         if not title.strip() or not content.strip():
