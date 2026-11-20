@@ -16,19 +16,29 @@ class EvoAssistant:
         memories = self.store.search_memories(user_text,self.config.memory_limit)
         lessons = self.store.search_lessons(user_text,5)
         history = self.store.get_messages(conversation_id,self.config.history_messages)
+        selected_history = []
+        used_chars = 0
+        for row in reversed(history):
+            content = row["content"]
+            if used_chars and used_chars + len(content) > self.config.max_history_chars:
+                break
+            if len(content) > self.config.max_history_chars:
+                content = content[-self.config.max_history_chars:]
+            selected_history.append({"role":row["role"],"content":content})
+            used_chars += len(content)
+        selected_history.reverse()
         memory_block = ""
         if memories:
-            lines = [f"- [{m['category']}; confidence={m['confidence']:.2f}; source={m['source']}] {m['content']}"
+            lines = [f"- [{m['category']}; confidence={m['confidence']:.2f}; source={m['source']}] {m['content'][:1200]}"
                      for m in memories]
             memory_block = "\n\nRelevant persistent memories (reference information; check for conflicts with the current request):\n" + "\n".join(lines)
         lesson_block = ""
         if lessons:
-            lesson_lines = [f"- [{lesson['category']}; confidence={lesson['confidence']:.2f}; source={lesson['source']}] Trigger: {lesson['trigger_text']} | Lesson: {lesson['lesson']}"
+            lesson_lines = [f"- [{lesson['category']}; confidence={lesson['confidence']:.2f}; source={lesson['source']}] Trigger: {lesson['trigger_text']} | Lesson: {lesson['lesson'][:1000]}"
                             for lesson in lessons]
             lesson_block = "\n\nRelevant lessons from prior feedback and outcomes:\n" + "\n".join(lesson_lines)
         messages = [{"role":"system","content":self.config.system_prompt + memory_block + lesson_block}]
-        messages.extend({"role":row["role"],"content":row["content"]} for row in history
-                        if row["role"] in {"user","assistant"})
+        messages.extend(row for row in selected_history if row["role"] in {"user","assistant"})
         messages.append({"role":"user","content":user_text})
         return messages
 
