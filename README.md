@@ -56,10 +56,12 @@ Edit `config.toml`; set `[server].model` to the exact model ID exposed by your s
 
 ```bash
 evo doctor
+evo doctor --test-tools
 evo chat
 evo chat --conversation CONVERSATION_ID
 evo code --workspace /path/to/project
 evo conversations
+evo backup backups/evo.sqlite3
 evo memory add "The user prefers concise, evidence-based explanations" --category preferences --source user
 evo memory search "explanation preferences"
 evo memory list
@@ -76,7 +78,7 @@ evo task list
 evo task status TASK_ID in_progress
 ```
 
-The chat interface accepts `/new` and `/exit`. Conversation IDs are printed when exiting and can be used to resume later. The coding interface uses model tool calls; read-only tools run automatically, while every file write and command requires explicit approval. Commands must also match a prefix in `[workspace].allowed_commands`. Tool calls and outcomes are recorded for audit.
+The chat interface accepts `/new` and `/exit`. Conversation IDs are printed when exiting and can be used to resume later. The coding interface uses model tool calls; `evo doctor --test-tools` runs a harmless compatibility probe. Read-only tools run automatically, while every file write and command requires explicit approval. Commands must also match a prefix in `[workspace].allowed_commands`. Tool calls and outcomes are recorded for audit.
 
 ## Evo Lab commands
 
@@ -102,7 +104,7 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
 
 ## Important limitations
 
-This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, coding-agent loop, automatic memory extraction/consolidation, background task execution, model scheduling/unloading, or a graphical UI. Memory retrieval is lexical rather than semantic. The current assistant sends recent conversation history and selected memories; it does not guarantee perfect recall or enforce a hard token budget. Tool calling and autonomous actions are not enabled.
+This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, coding-agent loop, automatic memory extraction/consolidation, background task execution, model scheduling/unloading, or a graphical UI. Memory retrieval is lexical rather than semantic. The current assistant sends recent conversation history and selected memories/lessons; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting. Tool calling and autonomous actions are not enabled.
 
 The coding agent depends on OpenAI-compatible streamed tool-call support. Some llama.cpp builds/models may not support the expected tool-call format; this must be tested on the actual endpoint. The agent is bounded by a tool-round limit and is not a background autonomous worker. The streaming client targets common OpenAI-compatible SSE behavior; server-specific quirks must be tested on the actual endpoint. A successful CI run cannot validate the target machine, model, CUDA stack, or real-world response quality.
 
