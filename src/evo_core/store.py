@@ -52,6 +52,12 @@ class EvoStore:
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, due_at TEXT,
               metadata_json TEXT NOT NULL DEFAULT '{}');
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status,priority,created_at);
+            CREATE TABLE IF NOT EXISTS lessons (
+              id TEXT PRIMARY KEY, trigger_text TEXT NOT NULL, lesson TEXT NOT NULL,
+              category TEXT NOT NULL DEFAULT 'general', source TEXT NOT NULL DEFAULT 'user',
+              confidence REAL NOT NULL DEFAULT 1.0, status TEXT NOT NULL DEFAULT 'active',
+              created_at TEXT NOT NULL, access_count INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX IF NOT EXISTS idx_lessons_status_category ON lessons(status,category);
             CREATE TABLE IF NOT EXISTS research_documents (
               id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT, content TEXT NOT NULL,
               source_type TEXT NOT NULL DEFAULT 'manual', captured_at TEXT NOT NULL,
@@ -232,6 +238,39 @@ class EvoStore:
                             ("accepted" if accept else "rejected",utc_now(),memory_id,candidate_id))
             self.db.commit()
             return memory_id if accept else False
+
+    def add_lesson(self, lesson, trigger_text="", category="general", source="user", confidence=1.0):
+        if not lesson.strip():
+            raise ValueError("Lesson cannot be empty")
+        if not 0 <= float(confidence) <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        lesson_id, now = str(uuid.uuid4()), utc_now()
+        with self.lock:
+            self.db.execute("""INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
+                               VALUES(?,?,?,?,?,?,?)""",
+                            (lesson_id,trigger_text,lesson.strip(),category,source,float(confidence),now))
+            self.db.commit()
+        return lesson_id
+
+    def search_lessons(self, query, limit=5, category=None):
+        terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
+        terms=[term for term in terms if len(term)>1][:12]
+        if not terms:
+            return []
+        clauses=" OR ".join("(trigger_text LIKE ? OR lesson LIKE ?)" for _ in terms)
+        params=[]
+        for term in terms: params.extend((f"%{term}%",f"%{term}%"))
+        sql=f"SELECT * FROM lessons WHERE status='active' AND ({clauses})"
+        if category:
+            sql+=" AND category=?"; params.append(category)
+        sql+=" ORDER BY confidence DESC,created_at DESC LIMIT ?"; params.append(max(1,limit))
+        with self.lock:
+            rows=self.db.execute(sql,params).fetchall()
+            if rows:
+                self.db.executemany("UPDATE lessons SET access_count=access_count+1 WHERE id=?",
+                                    [(row["id"],) for row in rows])
+                self.db.commit()
+            return rows
 
     def add_research_document(self, title, content, url=None, source_type="manual", metadata=None):
         if not title.strip() or not content.strip():
