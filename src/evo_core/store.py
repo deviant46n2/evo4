@@ -327,6 +327,17 @@ class EvoStore:
                              str(output_summary)[:4000],status,utc_now()))
             self.db.commit()
 
+    def backup(self, destination):
+        target=Path(destination).expanduser()
+        target.parent.mkdir(parents=True,exist_ok=True)
+        with self.lock:
+            backup_db=sqlite3.connect(target)
+            try:
+                self.db.backup(backup_db)
+            finally:
+                backup_db.close()
+        return target.resolve()
+
     def close(self):
         with self.lock:
             self.db.close()
