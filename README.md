@@ -10,12 +10,14 @@ The first MVP is a small experiment harness, deliberately separate from the even
 
 - Calls an OpenAI-compatible local chat-completions endpoint, initially intended for llama.cpp.
 - `evo-exp doctor` checks the server's model-list endpoint and warns if the configured model ID is not exposed.
+- Records a named configuration label and a manual runtime manifest, with optional model-file SHA-256.
 - Runs repeatable JSONL task suites with configurable repetitions.
 - Records prompts, responses, model/server identity, runtime manifest, run status and timing.
 - Captures an optional model-file SHA-256 when `[run].model_file` is configured.
 - Samples NVIDIA GPU utilization, VRAM, temperature and power through nvidia-smi.
 - Samples system RAM from /proc/meminfo.
-- Stores experiment records and timestamped resource samples in SQLite.
+- Stores experiment records, deterministic task-check results and timestamped resource samples in SQLite.
+- Provides per-run reports and aggregate summaries grouped by configuration label and task category.
 - Reports results as JSON Lines or CSV.
 - Includes unit tests for configuration, manifest hashing, SQLite concurrency, task validation and a local fake OpenAI-compatible streaming server.
 - Uses only the Python standard library at runtime.
@@ -26,7 +28,7 @@ The first MVP is a small experiment harness, deliberately separate from the even
 - It does not measure pure kernel decode speed; timing includes HTTP/streaming overhead.
 - Token throughput is calculated only when the server returns completion-token usage metadata. Missing usage remains null, never guessed.
 - GPU sampling is periodic and can miss brief peaks.
-- It does not isolate background desktop activity or automatically score answer quality.
+- It does not isolate background desktop activity or automatically score open-ended answer quality. Optional exact/substring checks are deliberately limited and transparent.
 - It does not yet capture CPU utilization, disk I/O, per-process VRAM, or automatically parse the llama.cpp launch command. Fill in the runtime manifest manually for now.
 - Streaming usage metadata and accepted request fields vary by server version; compatibility must be checked on the target runtime.
 
@@ -56,6 +58,7 @@ evo-exp doctor
 evo-exp init-db
 evo-exp run --tasks tasks/smoke.jsonl --repetitions 3
 evo-exp report --limit 20
+evo-exp summary --csv > summary.csv
 evo-exp report --limit 100 --csv > results.csv
 ```
 
