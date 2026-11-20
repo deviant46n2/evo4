@@ -1,4 +1,5 @@
 import argparse
+import json
 import sys
 from .assistant import EvoAssistant
 from .config import load_config
@@ -10,11 +11,12 @@ def build_parser():
     parser.add_argument("--config",default="config.toml",help="TOML configuration file")
     sub=parser.add_subparsers(dest="command",required=True)
     sub.add_parser("doctor",help="Check the configured model endpoint")
-    chat=sub.add_parser("chat",help="Start an interactive conversation")
-    chat.add_argument("--conversation",help="Resume an existing conversation ID")
-    code=sub.add_parser("code",help="Start an approval-gated coding-agent session")
-    code.add_argument("--conversation",help="Resume an existing conversation ID")
-    code.add_argument("--workspace",help="Project root (overrides [workspace].root)")
+    for name,help_text in (("chat","Start an interactive conversation"),
+                           ("code","Start an approval-gated coding-agent session")):
+        command=sub.add_parser(name,help=help_text)
+        command.add_argument("--conversation",help="Resume an existing conversation ID")
+        if name=="code":
+            command.add_argument("--workspace",help="Project root (overrides [workspace].root)")
     mem=sub.add_parser("memory",help="Manage persistent memories")
     ms=mem.add_subparsers(dest="memory_command",required=True)
     add=ms.add_parser("add"); add.add_argument("content"); add.add_argument("--category",default="general")
@@ -37,6 +39,48 @@ def build_parser():
     sub.add_parser("conversations",help="List recent conversations")
     return parser
 
+def _interactive(args,config):
+    assistant=EvoAssistant(config)
+    try:
+        cid=args.conversation or assistant.new_conversation()
+        agent=None
+        if args.command=="code":
+            from .coding_agent import CodingAgent
+            agent=CodingAgent(assistant,args.workspace or config.workspace_root,config.allowed_commands)
+            print(f"Evo 4 Coding Agent | workspace {agent.workspace.root} | conversation {cid}")
+            print("Writes and commands require per-action approval. Type /exit to quit.")
+        else:
+            print(f"Evo 4 | conversation {cid}\nType /exit to quit, /new to start another conversation.")
+        while True:
+            try:
+                user_text=input("\nYou> ").strip()
+            except (EOFError,KeyboardInterrupt):
+                print(); break
+            if not user_text: continue
+            if user_text=="/exit": break
+            if user_text=="/new":
+                cid=assistant.new_conversation()
+                print(f"New conversation: {cid}")
+                continue
+            print("\nEvo> ",end="",flush=True)
+            try:
+                stream=lambda token: print(token,end="",flush=True)
+                if agent:
+                    def approve(name,arguments):
+                        print(f"\n\nApproval required: {name}")
+                        print(json.dumps(arguments,indent=2,ensure_ascii=False))
+                        return input("Allow this action? [y/N] ").strip().lower()=="y"
+                    result=agent.run(cid,user_text,approve,on_token=stream)
+                    print(f"\n[agent run {result['run_id']}; {result['tool_rounds']} rounds]",flush=True)
+                else:
+                    result=assistant.turn(cid,user_text,on_token=stream)
+                    print(f"\n[{result['elapsed_seconds']:.1f}s]",flush=True)
+            except Exception as exc:
+                print(f"\nEvo error: {type(exc).__name__}: {exc}",file=sys.stderr)
+        print(f"Conversation ID: {cid}")
+    finally:
+        assistant.close()
+
 def main():
     args=build_parser().parse_args()
     try:
@@ -55,25 +99,7 @@ def main():
         finally: assistant.close()
         return
     if args.command in {"chat","code"}:
-        assistant=EvoAssistant(config)
-        try:
-            cid=args.conversation or assistant.new_conversation()
-            print(f"Evo 4 | conversation {cid}\nType /exit to quit, /new to start another conversation.")
-            while True:
-                try: user_text=input("\nYou> ").strip()
-                except (EOFError,KeyboardInterrupt): print(); break
-                if not user_text: continue
-                if user_text=="/exit": break
-                if user_text=="/new":
-                    cid=assistant.new_conversation(); print(f"New conversation: {cid}"); continue
-                print("\nEvo> ",end="",flush=True)
-                try:
-                    result=assistant.turn(cid,user_text,on_token=lambda token: print(token,end="",flush=True))
-                    print(f"\n[{result['elapsed_seconds']:.1f}s]",flush=True)
-                except ProviderError as exc:
-                    print(f"\nProvider error: {exc}",file=sys.stderr)
-            print(f"Conversation ID: {cid}")
-        finally: assistant.close()
+        _interactive(args,config)
         return
     store=EvoStore(config.database)
     try:
@@ -107,7 +133,8 @@ def main():
         elif args.command=="conversations":
             for row in store.list_conversations():
                 print(f"{row['id']} [{row['updated_at']}] {row['title']}")
-    finally: store.close()
+    finally:
+        store.close()
 
 if __name__=="__main__":
     main()
