@@ -64,6 +64,8 @@ PYTHONPATH=src python -m evo_experiments.cli run
 PYTHONPATH=src python -m evo_experiments.cli report
 ```
 
+See the [experiment protocol](docs/EXPERIMENT-PROTOCOL.md) for baseline discipline, measurement definitions and interpretation caveats.
+
 ## Data model
 
 - experiments: one row per task repetition, including input, response, configuration snapshot, status and timing.
