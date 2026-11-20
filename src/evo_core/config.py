@@ -16,6 +16,7 @@ class EvoConfig:
     history_messages: int
     workspace_root: Path = Path(".")
     allowed_commands: tuple = ()
+    max_history_chars: int = 40000
 
 def load_config(path: str | Path = "config.toml") -> EvoConfig:
     source = Path(path)
@@ -42,4 +43,5 @@ def load_config(path: str | Path = "config.toml") -> EvoConfig:
         history_messages=max(2, int(assistant.get("history_messages", 16))),
         workspace_root=Path(workspace.get("root", ".")),
         allowed_commands=allowed_commands,
+        max_history_chars=max(2000,int(assistant.get("max_history_chars",40000))),
     )
