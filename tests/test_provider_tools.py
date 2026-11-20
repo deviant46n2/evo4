@@ -9,8 +9,8 @@ class ToolSSEHandler(BaseHTTPRequestHandler):
         size=int(self.headers.get("Content-Length","0"))
         self.server.payload=json.loads(self.rfile.read(size))
         events=[
-          {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"read_","arguments":"{\\"path\\":"}}]}}]},
-          {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":"\\"a.py\\"}"}}]}}]},
+          {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"read_","arguments":'{"path":'}}]}}]},
+          {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":'"a.py"}'}}]}}]},
           {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
         ]
         body="".join("data: "+json.dumps(e)+"\n\n" for e in events)+"data: [DONE]\n\n"
