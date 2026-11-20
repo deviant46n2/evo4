@@ -24,6 +24,16 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 ws.write_file("../outside.txt","bad")
 
+    def test_symlinks_cannot_escape_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            outside=Path(tmp)/"outside.txt"; outside.write_text("private",encoding="utf-8")
+            (root/"leak.txt").symlink_to(outside)
+            ws=Workspace(root)
+            self.assertNotIn("leak.txt",ws.list_files())
+            with self.assertRaises(WorkspaceError):
+                ws.read_file("leak.txt")
+
     def test_sensitive_local_config_is_not_exposed(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws=Workspace(tmp)
