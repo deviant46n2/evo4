@@ -329,6 +329,8 @@ class EvoStore:
 
     def backup(self, destination):
         target=Path(destination).expanduser()
+        if target.resolve()==self.path.resolve():
+            raise ValueError("Backup destination must differ from the live database")
         target.parent.mkdir(parents=True,exist_ok=True)
         with self.lock:
             backup_db=sqlite3.connect(target)
