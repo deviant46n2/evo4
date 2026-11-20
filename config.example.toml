@@ -18,6 +18,7 @@ prompt = "You are a precise assistant. Follow the user instructions."
 # Record the runtime conditions for every run. Fill in what you know;
 # do not guess. model_file is optional but, if set, its SHA-256 is captured.
 [run]
+label = "qwen3.8-27b-q3km-baseline"
 model_file = ""
 runtime = "llama.cpp"
 runtime_version = ""
