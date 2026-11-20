@@ -17,6 +17,7 @@ max_tokens = 2048
 temperature = 0.2
 memory_limit = 8
 history_messages = 16
+max_history_chars = 40000
 
 [system]
 prompt = "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference."
