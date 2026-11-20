@@ -13,7 +13,8 @@ Increase the useful capabilities of the user's existing workstation through meas
 - `store.py`: durable SQLite state for conversations, messages, memories, tasks, research captures, agent runs, and tool events.
 - `assistant.py`: conversation orchestration and lexical memory retrieval.
 - `cli.py`: interactive terminal interface and data-management commands.
-- `workspace.py`: constrained project workspace API intended as a foundation for a future coding agent.
+- `workspace.py`: constrained project workspace API.
+- `coding_agent.py`: bounded model-directed tool loop with approval-gated writes and command execution.
 
 ### Evo Lab (`src/evo_experiments`)
 
@@ -28,6 +29,12 @@ FTS5 is used for memory retrieval when available. A lexical LIKE fallback keeps 
 ## Provider boundary
 
 The assistant depends on a narrow chat interface and currently ships one OpenAI-compatible SSE provider. This supports llama.cpp and compatible endpoints without coupling application state to a particular model. Additional provider adapters should preserve the same message/result contract.
+
+## Coding-agent loop
+
+The coding agent sends OpenAI-compatible function definitions to the provider and reassembles streamed tool-call deltas. It supports workspace listing, reading, literal search, writing, and allowlisted command execution. Read-only operations are automatic; writes and commands require an explicit approval callback. Each run and tool event is persisted. The loop has a hard tool-round limit.
+
+This is not yet a general autonomous software engineer: tool-call support varies by model/server, command allowlists need local configuration, and no target-machine validation has been performed.
 
 ## Workspace safety boundary
 
