@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from .client import stream_chat_completion
 from .db import ResultsDB
+from .evaluation import evaluate_task
 from .monitor import ResourceMonitor
 
 def load_tasks(path):
@@ -21,6 +22,8 @@ def load_tasks(path):
                 raise ValueError(f"{path}:{line_no}: task requires a nonempty string id and string prompt")
             if task["id"] in seen_ids:
                 raise ValueError(f"{path}:{line_no}: duplicate task id {task['id']!r}")
+            if "expected_contains" in task and not isinstance(task["expected_contains"], (str, list)):
+                raise ValueError(f"{path}:{line_no}: expected_contains must be a string or list")
             seen_ids.add(task["id"])
             tasks.append(task)
     return tasks
@@ -74,13 +77,16 @@ def run_tasks(config, tasks_path, repetitions=None):
                         model=config.model, system_prompt=config.system_prompt, prompt=task["prompt"],
                         max_tokens=config.max_tokens, temperature=config.temperature,
                         timeout=config.timeout_seconds)
+                    evaluation_status, evaluation_details = evaluate_task(task, result["response"])
                     db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
                         "response": result["response"], "status": "completed",
                         "elapsed_seconds": result["elapsed_seconds"],
                         "time_to_first_token_seconds": result["time_to_first_token_seconds"],
                         "prompt_tokens": result["prompt_tokens"],
                         "completion_tokens": result["completion_tokens"],
-                        "tokens_per_second": result["tokens_per_second"]})
+                        "tokens_per_second": result["tokens_per_second"],
+                        "evaluation_status": evaluation_status,
+                        "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None})
                 except Exception as exc:
                     db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
                         "status": "failed", "error": f"{type(exc).__name__}: {exc}"})
