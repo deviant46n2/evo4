@@ -10,14 +10,13 @@ The first MVP is a small experiment harness, deliberately separate from the even
 
 - Calls an OpenAI-compatible local chat-completions endpoint, initially intended for llama.cpp.
 - `evo-exp doctor` checks the server's model-list endpoint and warns if the configured model ID is not exposed.
-- Records a named configuration label and a manual runtime manifest, with optional model-file SHA-256.
 - Runs repeatable JSONL task suites with configurable repetitions.
 - Records prompts, responses, model/server identity, runtime manifest, run status and timing.
 - Captures an optional model-file SHA-256 when `[run].model_file` is configured.
 - Samples NVIDIA GPU utilization, VRAM, temperature and power through nvidia-smi.
 - Samples system RAM from /proc/meminfo.
 - Stores experiment records, deterministic task-check results and timestamped resource samples in SQLite.
-- Provides per-run reports and aggregate summaries grouped by configuration label and task category.
+- Provides per-run reports and aggregate summaries grouped by configuration label and task category, including sampled peak VRAM, RAM and average GPU utilization.
 - Reports results as JSON Lines or CSV.
 - Includes unit tests for configuration, manifest hashing, SQLite concurrency, task validation and a local fake OpenAI-compatible streaming server.
 - Uses only the Python standard library at runtime.
@@ -70,6 +69,7 @@ PYTHONPATH=src python -m evo_experiments.cli doctor
 PYTHONPATH=src python -m evo_experiments.cli init-db
 PYTHONPATH=src python -m evo_experiments.cli run
 PYTHONPATH=src python -m evo_experiments.cli report
+PYTHONPATH=src python -m evo_experiments.cli summary
 ```
 
 See the [experiment protocol](docs/EXPERIMENT-PROTOCOL.md) for baseline discipline, measurement definitions and interpretation caveats.
