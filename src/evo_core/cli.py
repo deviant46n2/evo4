@@ -34,6 +34,13 @@ def build_parser():
     ta.add_argument("--priority",type=int,default=3)
     tl=ts.add_parser("list"); tl.add_argument("--status")
     td=ts.add_parser("status"); td.add_argument("id"); td.add_argument("value",choices=["open","in_progress","blocked","done","cancelled"])
+    learn=sub.add_parser("learn",help="Store and retrieve lessons from feedback and outcomes")
+    ls=learn.add_subparsers(dest="learn_command",required=True)
+    la=ls.add_parser("add"); la.add_argument("lesson"); la.add_argument("--trigger",default="")
+    la.add_argument("--category",default="general"); la.add_argument("--source",default="user")
+    la.add_argument("--confidence",type=float,default=1.0)
+    lq=ls.add_parser("search"); lq.add_argument("query"); lq.add_argument("--limit",type=int,default=5)
+    ls.add_parser("list")
     research=sub.add_parser("research",help="Store and search sourced research notes")
     rs=research.add_subparsers(dest="research_command",required=True)
     ra=rs.add_parser("add"); ra.add_argument("title"); ra.add_argument("--content",required=True)
@@ -133,6 +140,16 @@ def main():
                     print(f"{row['id']} [{row['status']} p{row['priority']}] {row['title']}")
             elif args.task_command=="status":
                 print("Updated." if store.update_task_status(args.id,args.value) else "Task not found.")
+        elif args.command=="learn":
+            if args.learn_command=="add":
+                lesson_id=store.add_lesson(args.lesson,args.trigger,args.category,args.source,args.confidence)
+                print(f"Saved lesson: {lesson_id}")
+            elif args.learn_command=="search":
+                for row in store.search_lessons(args.query,args.limit):
+                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
+            elif args.learn_command=="list":
+                for row in store.list_lessons():
+                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
         elif args.command=="research":
             if args.research_command=="add":
                 doc_id=store.add_research_document(args.title,args.content,args.url,args.source_type)
