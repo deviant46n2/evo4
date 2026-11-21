@@ -54,7 +54,7 @@ export default function App() {
  return <div className="shell">
   <aside className="sidebar">
    <div className="brand"><div className="brand-mark">E</div><div><strong>Evo</strong><small>PERSONAL AI</small></div></div>
-   <button className="new-chat" onClick={()=>newConversation()}>＋ <span>New conversation</span></button>
+   <button className="new-chat" disabled={busy} onClick={()=>newConversation()}>＋ <span>New conversation</span></button>
    <div className="nav-label">WORKSPACE</div>
    <button className="nav-item selected">◫ <span>Chat</span></button>
    <button className="nav-item disabled" title="Not implemented yet">⌘ <span>Agents</span><em>Later</em></button>
@@ -62,7 +62,7 @@ export default function App() {
    <button className="nav-item disabled" title="Not implemented yet">▥ <span>Hardware</span><em>Later</em></button>
    <button className="nav-item disabled" title="Not implemented yet">⌁ <span>Experiments</span><em>Later</em></button>
    <div className="history-head">RECENT CHATS</div>
-   <div className="history">{conversations.map(c=><button key={c.id} className={active===c.id?"history-item active":"history-item"} onClick={()=>openConversation(c.id)}>{c.title}</button>)}</div>
+   <div className="history">{conversations.map(c=><button key={c.id} className={active===c.id?"history-item active":"history-item"} disabled={busy} onClick={()=>openConversation(c.id)}>{c.title}</button>)}</div>
    <div className="sidebar-bottom"><span className="status-dot"/><span>{status}</span></div>
   </aside>
   <main className="main">
