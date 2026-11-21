@@ -1,4 +1,6 @@
 import sqlite3
+import tempfile
+from pathlib import Path
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -116,6 +118,31 @@ class WorkloadSchedulerTests(unittest.TestCase):
             create_job(self.db, {"name":"bad", "priority":101})
         with self.assertRaises(ValueError):
             create_job(self.db, {"name":"bad", "gpu_heavy":"yes"})
+
+
+    def test_database_reopen_preserves_queue_and_running_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"scheduler.sqlite3"
+            db=sqlite3.connect(path);db.row_factory=sqlite3.Row;initialize_scheduler(db)
+            job=create_job(db,{"name":"persistent","kind":"cpu","estimated_ram_mib":256},now=self.now)
+            db.close()
+            reopened=sqlite3.connect(path);reopened.row_factory=sqlite3.Row
+            initialize_scheduler(reopened)
+            saved=list_jobs(reopened)["jobs"][0]
+            self.assertEqual(saved["id"],job["id"])
+            self.assertEqual(saved["status"],"queued")
+            reopened.close()
+
+    def test_rejected_lifecycle_transition_does_not_leave_open_transaction(self):
+        queued=self.job("queued")
+        with self.assertRaises(ValueError):
+            finish_job(self.db,queued["id"],"completed",now=self.now)
+        self.assertFalse(self.db.in_transaction)
+        with self.assertRaises(ValueError):
+            cancel_job(self.db,"missing-job",now=self.now)
+        self.assertFalse(self.db.in_transaction)
+        self.job("after rejected transitions")
+        self.assertFalse(self.db.in_transaction)
 
     def test_running_jobs_cannot_be_marked_cancelled(self):
         job = self.job()
