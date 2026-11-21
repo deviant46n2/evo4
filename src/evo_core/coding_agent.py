@@ -72,11 +72,11 @@ class CodingAgent:
     @staticmethod
     def _verification_note(report):
         if report["status"]=="passed":
-            return "\\n\\nVerification signal: PASSED (recognized command exited 0 after the latest file write). This is not a guarantee of correctness."
+            return "\n\nVerification signal: PASSED (recognized command exited 0 after the latest file write). This is not a guarantee of correctness."
         if report["status"]=="failed":
-            return "\\n\\nVerification signal: FAILED. Inspect the recorded command output; the change is not verified."
+            return "\n\nVerification signal: FAILED. Inspect the recorded command output; the change is not verified."
         if report["status"]=="not_run":
-            return "\\n\\nVerification signal: NOT RUN. Files were changed, but no recognized test/check/build command completed successfully after the latest change."
+            return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test/check/build command completed successfully after the latest change."
         return ""
 
     def run(self, conversation_id, request, approval, on_token=None):
