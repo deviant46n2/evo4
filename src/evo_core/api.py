@@ -831,7 +831,7 @@ def create_app(config_path="config.toml", provider_name=None):
                         "\n\nInspect before changing files. Every write and command still requires user approval."
                     )
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
-                        stop_event=stop_event, on_progress=progress)
+                        stop_event=stop_event, on_progress=progress, finalize_run=False)
                     step_status = step_result.get("status")
                     step_outcome = "completed" if step_status == "completed" else "interrupted" if step_status == "cancelled" else "failed"
                     with lab_db.lock:
@@ -839,6 +839,7 @@ def create_app(config_path="config.toml", provider_name=None):
                             step_result.get("content", step_status or "No result"))
                     if step_outcome != "completed":
                         raise RuntimeError("Plan stopped because step '" + step["title"] + "' did not complete")
+                store.finish_agent_run(run_id, "completed", "All approved plan steps completed.")
                 with lab_db.lock:
                     orchestration.finish_plan(lab_db.connection, plan_id, "completed")
             final = store.get_agent_run(run_id)
