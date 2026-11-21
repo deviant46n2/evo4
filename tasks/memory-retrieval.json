@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "description": "Small synthetic regression set for Evo's lexical memory retrieval. Expected keys are human-readable fixture identifiers.",
+  "memories": [
+    {
+      "key": "qwen_baseline",
+      "category": "environment",
+      "tags": [
+        "qwen",
+        "llama.cpp",
+        "cuda"
+      ],
+      "content": "The local Qwen3.8-27B Q3_K_M baseline runs through llama.cpp with CUDA, approximately 49K context and around 40 tokens per second."
+    },
+    {
+      "key": "workstation_hardware",
+      "category": "environment",
+      "tags": [
+        "gpu",
+        "cpu",
+        "ram"
+      ],
+      "content": "The workstation uses an NVIDIA RTX 5070 Ti with 16 GB VRAM, a Ryzen 7 9800X3D CPU and about 32 GB system RAM."
+    },
+    {
+      "key": "coding_verification",
+      "category": "coding",
+      "tags": [
+        "agent",
+        "tests",
+        "verification"
+      ],
+      "content": "For coding tasks inspect repository instructions, define acceptance criteria, make narrow edits, run targeted and full tests, and verify actual command exit codes."
+    },
+    {
+      "key": "experiential_learning",
+      "category": "learning",
+      "tags": [
+        "feedback",
+        "outcomes",
+        "lessons"
+      ],
+      "content": "Turn failed attempts, verified outcomes and user corrections into provenance-linked reusable lessons; do not treat model self-reports as verified outcomes."
+    },
+    {
+      "key": "memory_provenance",
+      "category": "memory",
+      "tags": [
+        "retrieval",
+        "confidence",
+        "history"
+      ],
+      "content": "Persistent memories should retain provenance, confidence, timestamps and supersession history, and be retrievable through lexical or semantic ranking."
+    },
+    {
+      "key": "provider_flexibility",
+      "category": "architecture",
+      "tags": [
+        "provider",
+        "cloud",
+        "local"
+      ],
+      "content": "Evo should support interchangeable local and optional free or paid cloud model providers without depending on paid cloud access."
+    },
+    {
+      "key": "foreground_priority",
+      "category": "hardware",
+      "tags": [
+        "scheduler",
+        "latency",
+        "desktop"
+      ],
+      "content": "The local model scheduler should prioritize foreground interaction and keep the desktop usable while background tasks yield GPU resources."
+    },
+    {
+      "key": "research_validation",
+      "category": "research",
+      "tags": [
+        "papers",
+        "evidence",
+        "benchmarks"
+      ],
+      "content": "Published inference optimization claims must be reproduced on the target consumer GPU before being treated as measured local improvements."
+    }
+  ],
+  "queries": [
+    {
+      "id": "local-qwen-runtime",
+      "query": "Qwen CUDA llama.cpp context throughput",
+      "expected": [
+        "qwen_baseline"
+      ]
+    },
+    {
+      "id": "workstation-gpu",
+      "query": "RTX 5070 Ti VRAM Ryzen CPU RAM",
+      "expected": [
+        "workstation_hardware"
+      ]
+    },
+    {
+      "id": "coding-agent-checks",
+      "query": "coding agent repository tests acceptance criteria verify exit codes",
+      "expected": [
+        "coding_verification"
+      ]
+    },
+    {
+      "id": "learning-feedback",
+      "query": "learning failures user feedback reusable lessons outcomes",
+      "expected": [
+        "experiential_learning"
+      ]
+    },
+    {
+      "id": "memory-traceability",
+      "query": "memory provenance confidence retrieval timestamps",
+      "expected": [
+        "memory_provenance"
+      ]
+    },
+    {
+      "id": "provider-options",
+      "query": "optional local cloud provider interchange free paid",
+      "expected": [
+        "provider_flexibility"
+      ]
+    },
+    {
+      "id": "desktop-scheduling",
+      "query": "foreground GPU scheduler desktop usable latency",
+      "expected": [
+        "foreground_priority"
+      ]
+    },
+    {
+      "id": "research-reproducibility",
+      "query": "research benchmarks reproduce GPU inference optimization",
+      "expected": [
+        "research_validation"
+      ]
+    }
+  ]
+}
