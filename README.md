@@ -33,10 +33,20 @@ The repository contains two independently usable applications:
 - Runs repeatable JSONL task suites.
 - Records prompts, responses, model/server identity, runtime manifest, status, timing, token usage, and deterministic evaluation.
 - Captures optional model-file SHA-256.
-- Samples NVIDIA GPU utilization, VRAM, temperature, power, and system RAM.
+- Samples NVIDIA GPU utilization, VRAM, temperature, power, compute-process identity/VRAM, CPU utilization, CPU load averages, and system RAM. Telemetry works without NVIDIA hardware for system metrics.
 - Stores experiments and timestamped resource samples in SQLite.
 - Produces per-run and aggregate reports as JSONL or CSV.
 - Preserves failed runs for diagnosis.
+
+
+### Desktop API additions
+
+The desktop API exposes:
+- `GET /api/v1/hardware/current` — live CPU, RAM, NVIDIA GPU, GPU process, active provider/model, resource headroom, and advisory pressure status.
+- `GET /api/v1/hardware/history` — recent persisted samples from Evo Lab runs.
+- `GET /api/v1/experiments` — recent experiment runs and grouped performance aggregates.
+
+The desktop API initializes/migrates the Evo Lab tables in the same SQLite database used by the assistant. Older experiment databases gain the expanded telemetry columns in place; existing samples are preserved. Hardware polling is read-only. The dashboard deliberately does not expose process command-line arguments, which can contain credentials.
 
 ## Requirements and installation
 
@@ -68,11 +78,11 @@ The desktop client is a React/Vite application backed by Evo's local Python API.
 - Copy-response controls, keyboard send behavior, a new-chat shortcut, loading/error states, and a responsive narrow-window layout.
 - Provider/model identity and API connection status.
 
-The desktop now includes functional Agents and Memory workspaces:
+The desktop now includes functional Agents, Memory, Hardware, and Experiments workspaces:
 - Agents can launch the existing bounded coding agent in the configured workspace (or an explicitly entered workspace path), inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default.
-- Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.
+- Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.\n- Hardware shows live CPU/RAM/GPU metrics, NVIDIA compute processes, pressure warnings, and recorded resource history. Process command-line arguments are deliberately not exposed because they can contain credentials.\n- Experiments displays Evo Lab run history and configuration aggregates, including tokens/sec, time-to-first-token, evaluation outcomes, and sampled VRAM/RAM peaks.
 - Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
-- Hardware and Experiments remain unavailable until their actual workflows are exposed. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
+- Hardware resource management is observe-only in this milestone: Evo recommends deferring work under resource pressure but does not kill processes, change GPU clocks/power limits, stop services, or modify runtime settings. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 

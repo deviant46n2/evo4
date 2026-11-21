@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS resource_samples (
  id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id INTEGER NOT NULL REFERENCES experiments(id),
  sampled_at TEXT NOT NULL, gpu_name TEXT, gpu_utilization_percent REAL,
  gpu_memory_used_mib REAL, gpu_memory_total_mib REAL, gpu_temperature_c REAL,
- gpu_power_w REAL, ram_used_mib REAL
+ gpu_power_w REAL, ram_used_mib REAL,
+ gpu_memory_used_percent REAL, ram_total_bytes REAL, ram_available_bytes REAL,
+ ram_used_bytes REAL, ram_used_percent REAL, cpu_utilization_percent REAL,
+ cpu_logical_cores INTEGER, load_average_1m REAL, load_average_5m REAL,
+ load_average_15m REAL, gpu_processes_json TEXT, gpu_available INTEGER
 );
 """
 class ResultsDB:
@@ -53,6 +57,18 @@ class ResultsDB:
                 self.connection.execute(
                     "UPDATE experiments SET evaluation_passed=?,evaluation_total=? WHERE id=?",
                     (passed, total, row["id"]))
+        sample_columns = {row[1] for row in self.connection.execute("PRAGMA table_info(resource_samples)")}
+        sample_migrations = (
+            ("gpu_memory_used_percent", "REAL"), ("ram_total_bytes", "REAL"),
+            ("ram_available_bytes", "REAL"), ("ram_used_bytes", "REAL"),
+            ("ram_used_percent", "REAL"), ("cpu_utilization_percent", "REAL"),
+            ("cpu_logical_cores", "INTEGER"), ("load_average_1m", "REAL"),
+            ("load_average_5m", "REAL"), ("load_average_15m", "REAL"),
+            ("gpu_processes_json", "TEXT"), ("gpu_available", "INTEGER"),
+        )
+        for name, column_type in sample_migrations:
+            if name not in sample_columns:
+                self.connection.execute(f"ALTER TABLE resource_samples ADD COLUMN {name} {column_type}")
     def create_experiment(self, values):
         keys = list(values)
         with self.lock:
@@ -69,8 +85,14 @@ class ResultsDB:
             self.connection.commit()
     def add_sample(self, experiment_id, values):
         row = {"experiment_id": experiment_id, **values}
-        keys = list(row)
+        if "gpu_processes" in row:
+            row["gpu_processes_json"] = json.dumps(row.pop("gpu_processes"), ensure_ascii=False)
+        if "gpu_available" in row:
+            row["gpu_available"] = int(bool(row["gpu_available"]))
         with self.lock:
+            columns = {item[1] for item in self.connection.execute("PRAGMA table_info(resource_samples)")}
+            row = {key: value for key, value in row.items() if key in columns}
+            keys = list(row)
             self.connection.execute(
                 f"INSERT INTO resource_samples ({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
                 [row[k] for k in keys])

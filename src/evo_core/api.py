@@ -4,6 +4,8 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import sqlite3
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,8 @@ from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
 from .config import load_config
 from .store import EvoStore
+from evo_experiments.monitor import sample_nvidia_smi
+from evo_experiments.db import ResultsDB
 
 
 class ChatRequest(BaseModel):
@@ -49,10 +53,12 @@ class AgentApproval(BaseModel):
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
     store = EvoStore(config.database)
+    lab_db = ResultsDB(config.database)
     assistant = EvoAssistant(config, store=store)
     app = FastAPI(title="Evo 4 Local API", version="0.1.0")
     app.state.config = config
     app.state.store = store
+    app.state.lab_db = lab_db
     app.state.assistant = assistant
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
@@ -102,13 +108,122 @@ def create_app(config_path="config.toml", provider_name=None):
             if entry["users"] == 0 and conversation_locks.get(conversation_id) is entry:
                 del conversation_locks[conversation_id]
 
+
+    @app.get("/api/v1/hardware/current")
+    def hardware_current():
+        sample = sample_nvidia_smi()
+        warnings = []
+        if sample.get("gpu_available"):
+            vram = sample.get("gpu_memory_used_percent")
+            if vram is not None and vram >= 90:
+                warnings.append({"level": "warning", "code": "vram_pressure",
+                                 "message": "GPU memory is above 90%; avoid starting another GPU-heavy workload."})
+            temp = sample.get("gpu_temperature_c")
+            if temp is not None and temp >= 85:
+                warnings.append({"level": "critical", "code": "gpu_temperature",
+                                 "message": "GPU temperature is at or above 85°C; reduce GPU load and inspect cooling."})
+        ram = sample.get("ram_used_percent")
+        if ram is not None and ram >= 90:
+            warnings.append({"level": "warning", "code": "ram_pressure",
+                             "message": "System memory is above 90%; defer large background tasks."})
+        cpu = sample.get("cpu_utilization_percent")
+        if cpu is not None and cpu >= 95:
+            warnings.append({"level": "info", "code": "cpu_saturation",
+                             "message": "CPU utilization is above 95%; consider reducing concurrent background work."})
+        vram_free = None
+        if sample.get("gpu_memory_total_mib") is not None and sample.get("gpu_memory_used_mib") is not None:
+            vram_free = max(0, sample["gpu_memory_total_mib"] - sample["gpu_memory_used_mib"])
+        ram_free_mib = (sample["ram_available_bytes"] / (1024 * 1024)
+                        if sample.get("ram_available_bytes") is not None else None)
+        pressure = bool(warnings)
+        telemetry_known = sample.get("ram_used_percent") is not None and sample.get("gpu_available")
+        background_work = "defer" if pressure else "limited" if telemetry_known else "unknown"
+        budget_reason = ("Resource pressure detected; protect interactive inference." if pressure
+                         else "No configured pressure threshold is currently exceeded." if telemetry_known
+                         else "GPU or system telemetry is incomplete; available headroom is unknown.")
+        parsed_endpoint = urlsplit(config.base_url)
+        hostname = parsed_endpoint.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = "[" + hostname + "]"
+        if parsed_endpoint.port:
+            hostname += ":" + str(parsed_endpoint.port)
+        safe_endpoint = urlunsplit((parsed_endpoint.scheme, hostname, parsed_endpoint.path, "", ""))
+        return {
+            "sample": sample,
+            "runtime": {"provider": config.provider_name, "model": config.model,
+                        "endpoint": safe_endpoint},
+            "budget": {"vram_free_mib": vram_free, "ram_free_mib": ram_free_mib,
+                       "background_work": background_work, "reason": budget_reason},
+            "policy": {"mode": "observe_only", "actions_enabled": False,
+                       "description": "Evo currently measures and recommends; it does not change processes, clocks, power limits, or services."},
+            "warnings": warnings,
+        }
+
+    @app.get("/api/v1/hardware/history")
+    def hardware_history(limit: int = 180):
+        bounded = min(max(limit, 1), 1000)
+        try:
+            with store.lock:
+                rows = store.db.execute(
+                    """SELECT id,experiment_id,sampled_at,gpu_utilization_percent,
+                       gpu_memory_used_mib,gpu_memory_total_mib,gpu_memory_used_percent,
+                       gpu_temperature_c,gpu_power_w,ram_used_mib,ram_used_percent,
+                       cpu_utilization_percent,load_average_1m FROM resource_samples
+                       ORDER BY id DESC LIMIT ?""", (bounded,)
+                ).fetchall()
+            return [dict(row) for row in reversed(rows)]
+        except sqlite3.OperationalError:
+            return []
+
+    @app.get("/api/v1/experiments")
+    def experiments(limit: int = 30):
+        bounded = min(max(limit, 1), 100)
+        try:
+            with store.lock:
+                rows = store.db.execute(
+                    """SELECT id,started_at,finished_at,task_id,category,repetition,
+                       model,run_label,status,error,elapsed_seconds,
+                       time_to_first_token_seconds,prompt_tokens,completion_tokens,
+                       tokens_per_second,evaluation_status,evaluation_passed,evaluation_total
+                       FROM experiments ORDER BY id DESC LIMIT ?""", (bounded,)
+                ).fetchall()
+                aggregates = store.db.execute(
+                    """SELECT COALESCE(run_label,model) AS configuration,model,category,
+                       COUNT(*) AS runs,
+                       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                       ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second,
+                       ROUND(AVG(time_to_first_token_seconds),3) AS avg_ttft_seconds,
+                       MAX(samples.peak_vram_mib) AS peak_vram_mib,
+                       MAX(samples.peak_ram_mib) AS peak_ram_mib
+                       FROM experiments LEFT JOIN (
+                         SELECT experiment_id,MAX(gpu_memory_used_mib) AS peak_vram_mib,
+                                MAX(ram_used_mib) AS peak_ram_mib
+                         FROM resource_samples GROUP BY experiment_id
+                       ) samples ON samples.experiment_id=experiments.id
+                       GROUP BY COALESCE(run_label,model),model,category
+                       ORDER BY configuration,category"""
+                ).fetchall()
+            return {"available": True, "runs": [dict(row) for row in rows],
+                    "aggregates": [dict(row) for row in aggregates]}
+        except sqlite3.OperationalError:
+            return {"available": False, "runs": [], "aggregates": [],
+                    "message": "No Evo Lab experiment database is available yet. Run evo-exp init-db or an experiment."}
+
     @app.get("/api/v1/health")
     def health():
+        parsed_endpoint = urlsplit(config.base_url)
+        hostname = parsed_endpoint.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = "[" + hostname + "]"
+        if parsed_endpoint.port:
+            hostname += ":" + str(parsed_endpoint.port)
+        safe_endpoint = urlunsplit((parsed_endpoint.scheme, hostname, parsed_endpoint.path, "", ""))
         return {
             "status": "ok",
             "provider": config.provider_name,
             "model": config.model,
-            "endpoint": config.base_url,
+            "endpoint": safe_endpoint,
         }
 
     @app.get("/api/v1/capabilities")
@@ -129,8 +244,10 @@ def create_app(config_path="config.toml", provider_name=None):
             "memory_candidates": True,
             "memory_archive": True,
             "memory_supersede": True,
-            "hardware_dashboard": False,
-            "experiments": False,
+            "hardware_dashboard": True,
+            "hardware_process_visibility": True,
+            "resource_policy_advisory": True,
+            "experiments": True,
             "provider_selection": False,
         }
 
@@ -484,5 +601,6 @@ def create_app(config_path="config.toml", provider_name=None):
             pending_approvals.clear()
         executor.shutdown(wait=True, cancel_futures=False)
         assistant.close()
+        lab_db.close()
 
     return app

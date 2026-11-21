@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 const API = "http://127.0.0.1:8765/api/v1";
@@ -151,5 +151,93 @@ export function AgentsWorkspace() {
         </> : <div className="empty-state detail-empty">Choose an agent run to see its plan, approvals, and recorded tool events.</div>}
       </section>
     </div>
+  </div>;
+}
+
+
+type HardwareSample = {
+  sampled_at: string; gpu_name: string | null; gpu_available: boolean;
+  gpu_utilization_percent: number | null; gpu_memory_used_mib: number | null;
+  gpu_memory_total_mib: number | null; gpu_memory_used_percent: number | null;
+  gpu_temperature_c: number | null; gpu_power_w: number | null;
+  gpu_processes: Array<{pid:number;process_name:string;memory_used_mib:number}>;
+  cpu_utilization_percent: number | null; cpu_logical_cores: number | null;
+  load_average_1m: number | null; load_average_5m: number | null; load_average_15m: number | null;
+  ram_used_mib: number | null; ram_used_percent: number | null;
+  ram_total_bytes: number | null; ram_available_bytes: number | null;
+};
+type HardwareResponse = {sample:HardwareSample;runtime:{provider:string;model:string;endpoint:string};budget:{vram_free_mib:number|null;ram_free_mib:number|null;background_work:string;reason:string};policy:{mode:string;actions_enabled:boolean;description:string};warnings:Array<{level:string;code:string;message:string}>};
+type HardwareHistory = {id:number;experiment_id:number;sampled_at:string;gpu_utilization_percent:number|null;gpu_memory_used_mib:number|null;gpu_temperature_c:number|null;ram_used_mib:number|null;cpu_utilization_percent:number|null;ram_used_percent:number|null;gpu_memory_used_percent:number|null};
+type ExperimentRun = {id:number;started_at:string;finished_at:string|null;task_id:string;category:string;repetition:number;model:string;run_label:string|null;status:string;error:string|null;elapsed_seconds:number|null;time_to_first_token_seconds:number|null;prompt_tokens:number|null;completion_tokens:number|null;tokens_per_second:number|null;evaluation_status:string|null;evaluation_passed:number|null;evaluation_total:number|null};
+type ExperimentAggregate = {configuration:string;model:string;category:string;runs:number;completed:number;failed:number;avg_tokens_per_second:number|null;avg_ttft_seconds:number|null;peak_vram_mib:number|null;peak_ram_mib:number|null};
+
+function Metric({label,value,detail,percent}:{label:string;value:string;detail?:string;percent?:number|null}) {
+  const width = percent == null || !Number.isFinite(percent) ? 0 : Math.max(0,Math.min(100,percent));
+  return <article className="metric-card"><span>{label}</span><strong>{value}</strong>{percent != null && <div className="metric-track"><i style={{width:width+"%"}}/></div>}{detail && <small>{detail}</small>}</article>;
+}
+function fmt(value:number|null|undefined,digits=1) { return value == null || !Number.isFinite(value) ? "—" : value.toFixed(digits); }
+function mib(value:number|null|undefined) { return value == null ? "—" : value >= 1024 ? (value/1024).toFixed(1)+" GiB" : Math.round(value)+" MiB"; }
+function HistoryLine({samples,field,label}:{samples:HardwareHistory[];field:"gpu_utilization_percent"|"gpu_memory_used_mib"|"gpu_temperature_c"|"ram_used_mib"|"cpu_utilization_percent";label:string}) {
+  const values=samples.map(item=>item[field]).filter((value):value is number=>value!=null&&Number.isFinite(value));
+  const max=Math.max(1,...values);
+  const points=values.map((value,index)=>`${values.length<2?0:index/(values.length-1)*600},${92-value/max*82}`).join(" ");
+  return <div className="history-chart"><div className="history-chart-head"><strong>{label}</strong><small>{values.length} recorded samples</small></div>{values.length>1?<svg viewBox="0 0 600 100" preserveAspectRatio="none" role="img" aria-label={label+" history"}><line x1="0" y1="92" x2="600" y2="92"/><polyline points={points}/></svg>:<div className="chart-empty">Run an Evo Lab experiment to record resource history.</div>}</div>;
+}
+
+export function HardwareWorkspace() {
+  const [data,setData]=useState<HardwareResponse|null>(null);
+  const [history,setHistory]=useState<HardwareHistory[]>([]);
+  const [error,setError]=useState("");
+  const refreshing=useRef(false);
+  const refresh=useCallback(async()=>{
+    if(refreshing.current)return;
+    refreshing.current=true;
+    try {
+      const [current,series]=await Promise.all([
+        api<HardwareResponse>("/hardware/current"),
+        api<HardwareHistory[]>("/hardware/history?limit=180"),
+      ]);
+      setData(current);setHistory(series);setError("");
+    } catch(e) {setError(e instanceof Error?e.message:String(e));}
+    finally {refreshing.current=false;}
+  },[]);
+  useEffect(()=>{void refresh();const id=window.setInterval(()=>void refresh(),3000);return()=>window.clearInterval(id);},[refresh]);
+  const s=data?.sample;
+  return <div className="workspace-page telemetry-page">
+    <div className="workspace-heading"><div><div className="eyebrow">LIVE SYSTEM OBSERVABILITY</div><h1>Hardware</h1><p>Live resource telemetry, GPU workloads, and conservative pressure warnings.</p></div><div className="telemetry-heading-right"><span className="live-indicator">LIVE · 3s</span><button className="quiet-button" onClick={()=>void refresh()}>Refresh</button></div></div>
+    {error&&<div className="workspace-error" role="alert">{error}</div>}
+    <div className="telemetry-grid">
+      <Metric label="GPU utilization" value={s?.gpu_utilization_percent==null?"—":fmt(s.gpu_utilization_percent,0)+"%"} detail={s?.gpu_name||"NVIDIA telemetry unavailable"} percent={s?.gpu_utilization_percent}/>
+      <Metric label="VRAM in use" value={s?.gpu_memory_used_mib==null?"—":mib(s.gpu_memory_used_mib)} detail={s?.gpu_memory_total_mib==null?"No GPU detected":mib(s.gpu_memory_total_mib)+" total"} percent={s?.gpu_memory_used_percent}/>
+      <Metric label="GPU temperature" value={s?.gpu_temperature_c==null?"—":fmt(s.gpu_temperature_c,0)+"°C"} detail={s?.gpu_power_w==null?"Power unavailable":fmt(s.gpu_power_w,0)+" W board draw"}/>
+      <Metric label="CPU utilization" value={s?.cpu_utilization_percent==null?"Sampling…":fmt(s.cpu_utilization_percent,0)+"%"} detail={(s?.cpu_logical_cores??"—")+" logical cores"} percent={s?.cpu_utilization_percent}/>
+      <Metric label="System RAM" value={s?.ram_used_mib==null?"—":mib(s.ram_used_mib)} detail={s?.ram_used_percent==null?"Memory unavailable":fmt(s.ram_used_percent,0)+"% used"} percent={s?.ram_used_percent}/>
+      <Metric label="Load average" value={fmt(s?.load_average_1m,2)} detail={"5m "+fmt(s?.load_average_5m,2)+" · 15m "+fmt(s?.load_average_15m,2)}/>
+    </div>
+    <section className="workspace-panel"><div className="panel-toolbar"><div><h2>Active inference runtime</h2><p>Provider identity from Evo configuration; endpoint shown without credentials.</p></div><span className="workspace-count">{data?.runtime.provider||"—"}</span></div><div className="runtime-details"><div><small>MODEL</small><strong>{data?.runtime.model||"—"}</strong></div><div><small>ENDPOINT</small><strong>{data?.runtime.endpoint||"—"}</strong></div></div></section>
+    <section className="workspace-panel"><div className="panel-toolbar"><div><h2>Resource policy</h2><p>Observe-first guardrails. No process control is enabled in this milestone.</p></div><span className="run-status">ADVISORY ONLY</span></div><p className="policy-copy">{data?.policy.description||"Waiting for telemetry…"}</p><div className="budget-recommendation"><strong>{data?.budget.background_work==="defer"?"Defer background work":"Limited background work"}</strong><span>{data?.budget.reason||"Waiting for telemetry…"}</span><small>Free VRAM: {mib(data?.budget.vram_free_mib)} · Available RAM: {mib(data?.budget.ram_free_mib)}</small></div>{data?.warnings.length?<div className="warning-list">{data.warnings.map(w=><div className={"resource-warning "+w.level} key={w.code}><strong>{w.level.toUpperCase()}</strong><span>{w.message}</span></div>)}</div>:<div className="healthy-state">No resource pressure thresholds currently triggered.</div>}</section>
+    <div className="history-grid"><HistoryLine samples={history} field="gpu_utilization_percent" label="GPU utilization"/><HistoryLine samples={history} field="gpu_memory_used_mib" label="VRAM allocation"/><HistoryLine samples={history} field="ram_used_mib" label="System RAM"/><HistoryLine samples={history} field="cpu_utilization_percent" label="CPU utilization"/><HistoryLine samples={history} field="gpu_temperature_c" label="GPU temperature"/></div>
+    <section className="workspace-panel"><div className="panel-toolbar"><div><h2>GPU compute processes</h2><p>Processes currently reported by NVIDIA's driver, with command line where readable.</p></div><span className="workspace-count">{s?.gpu_processes.length??0} processes</span></div><div className="process-table"><div className="process-row process-header"><span>Process</span><span>PID</span><span>VRAM</span></div>{s?.gpu_processes.map(p=><div className="process-row" key={p.pid}><strong>{p.process_name}</strong><span>{p.pid}</span><span>{mib(p.memory_used_mib)}</span></div>)}{s?.gpu_processes.length===0&&<div className="empty-state">{s?.gpu_available?"No compute processes reported.":"NVIDIA telemetry unavailable; install/use nvidia-smi to expose GPU processes."}</div>}</div></section>
+    <div className="policy-note">Telemetry is sampled on demand and refreshed every three seconds. Historical charts show samples recorded during Evo Lab experiments; they are not fabricated or interpolated.</div>
+  </div>;
+}
+
+export function ExperimentsWorkspace() {
+  const [runs,setRuns]=useState<ExperimentRun[]>([]);
+  const [aggregates,setAggregates]=useState<ExperimentAggregate[]>([]);
+  const [available,setAvailable]=useState(false);
+  const [message,setMessage]=useState("");
+  const [error,setError]=useState("");
+  const refresh=useCallback(async()=>{
+    try {const result=await api<{available:boolean;runs:ExperimentRun[];aggregates:ExperimentAggregate[];message?:string}>("/experiments?limit=100");setRuns(result.runs);setAggregates(result.aggregates);setAvailable(result.available);setMessage(result.message||"");setError("");}
+    catch(e){setError(e instanceof Error?e.message:String(e));}
+  },[]);
+  useEffect(()=>{void refresh();const id=window.setInterval(()=>void refresh(),10000);return()=>window.clearInterval(id);},[refresh]);
+  return <div className="workspace-page">
+    <div className="workspace-heading"><div><div className="eyebrow">REPRODUCIBLE PERFORMANCE</div><h1>Experiments</h1><p>Compare model configurations using measured speed, latency, evaluation outcomes, and resource peaks.</p></div><button className="quiet-button" onClick={()=>void refresh()}>Refresh</button></div>
+    {error&&<div className="workspace-error" role="alert">{error}</div>}
+    {!available&&<section className="workspace-panel"><div className="empty-state">{message||"No experiment database found."} Use the Evo Lab CLI to initialize the database and run a task suite; this screen only displays recorded results.</div></section>}
+    {available&&<><section className="workspace-panel"><div className="panel-toolbar"><div><h2>Configuration comparisons</h2><p>Aggregated by configuration label, model, and task category.</p></div><span className="workspace-count">{aggregates.length} groups</span></div>{aggregates.length?<div className="aggregate-grid">{aggregates.map((a,i)=><article className="aggregate-card" key={a.configuration+"-"+a.category+"-"+i}><div className="record-top"><span className="record-category">{a.category}</span><span>{a.runs} runs</span></div><strong>{a.configuration}</strong><small>{a.model}</small><div className="aggregate-metrics"><span><b>{fmt(a.avg_tokens_per_second,1)}</b><small>tok/s avg</small></span><span><b>{fmt(a.avg_ttft_seconds,2)}s</b><small>TTFT avg</small></span><span><b>{a.completed}/{a.runs}</b><small>completed</small></span><span><b>{mib(a.peak_vram_mib)}</b><small>peak VRAM</small></span></div>{a.failed>0&&<div className="failed-note">{a.failed} failed runs</div>}</article>)}</div>:<div className="empty-state">No aggregate results yet.</div>}</section>
+    <section className="workspace-panel"><div className="panel-toolbar"><div><h2>Recent runs</h2><p>Individual experiment records from the shared Evo Lab database.</p></div><span className="workspace-count">{runs.length} runs</span></div><div className="experiment-list">{runs.map(run=><article className="experiment-row" key={run.id}><div className="experiment-main"><div className="record-top"><span className={"run-status "+run.status}>{run.status}</span><span>{run.category}</span><span>#{run.id}</span></div><strong>{run.task_id}</strong><small>{run.run_label||run.model} · repetition {run.repetition} · {new Date(run.started_at).toLocaleString()}</small>{run.error&&<p className="failed-note">{run.error}</p>}</div><div className="experiment-stats"><span><b>{fmt(run.tokens_per_second,1)}</b><small>tok/s</small></span><span><b>{fmt(run.time_to_first_token_seconds,2)}s</b><small>TTFT</small></span><span><b>{run.evaluation_passed==null?"—":run.evaluation_passed+"/"+run.evaluation_total}</b><small>checks</small></span></div></article>)}{runs.length===0&&<div className="empty-state">No experiment runs recorded yet.</div>}</div></section></>}
   </div>;
 }
