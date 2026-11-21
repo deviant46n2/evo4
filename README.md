@@ -56,6 +56,34 @@ cp config.example.toml config.toml
 
 Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
 
+
+## Desktop interface (early preview)
+
+The first desktop-client slice includes a local HTTP API and a React chat interface. The existing CLI remains supported. The interface currently implements persistent conversations, conversation history, streamed chat, and provider/model identification. Agents, Memory, Hardware, and Experiments are visibly marked as not yet implemented rather than simulated.
+
+Install the optional API dependencies and frontend packages:
+
+```bash
+python -m pip install -e '.[desktop]'
+cd desktop
+npm install
+```
+
+In one terminal, from the repository root, start the API:
+
+```bash
+evo serve
+```
+
+In another terminal:
+
+```bash
+cd desktop
+npm run dev
+```
+
+Open the local Vite address shown in the terminal (normally `http://127.0.0.1:5173`). The API binds only to `127.0.0.1:8765`, restricts Host headers to loopback names, and allows only the local development/preview origins. Provider credentials remain in the Python process and are never sent to the browser. This is a development preview, not yet a packaged desktop application. Generation cannot yet be cancelled from the UI.
+
 ## Evo assistant commands
 
 ```bash
