@@ -11,6 +11,7 @@ class ToolSSEHandler(BaseHTTPRequestHandler):
         events=[
           {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"read_","arguments":'{"path":'}}]}}]},
           {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":'"a.py"}'}}]}}]},
+          {"choices":[{"delta":{},"finish_reason":getattr(self.server,"finish_reason","tool_calls")}]},
           {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
         ]
         body="".join("data: "+json.dumps(e)+"\n\n" for e in events)+"data: [DONE]\n\n"
@@ -44,7 +45,21 @@ class ProviderToolTests(unittest.TestCase):
             result=provider.chat([{"role":"user","content":"read"}],tools=[{"type":"function"}])
             self.assertEqual(result["tool_calls"][0]["function"]["name"],"read_file")
             self.assertEqual(result["tool_calls"][0]["function"]["arguments"],{"path":"a.py"})
+            self.assertEqual(result["finish_reason"],"tool_calls")
+            self.assertFalse(result["truncated"])
             self.assertIn("tools",server.payload)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_length_finish_reason_is_exposed_as_truncated(self):
+        server=ThreadingHTTPServer(("127.0.0.1",0),ToolSSEHandler)
+        server.finish_reason="length"
+        thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()
+        try:
+            provider=OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}","key","fake",3)
+            result=provider.chat([{"role":"user","content":"read"}])
+            self.assertEqual(result["finish_reason"],"length")
+            self.assertTrue(result["truncated"])
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
