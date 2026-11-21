@@ -1,4 +1,4 @@
-# Evo 4 architecture (substantial-v1)
+# Evo 4 architecture (hardware-observability-v1 baseline)
 
 ## Phase 1 objective
 
