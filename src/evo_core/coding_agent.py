@@ -128,6 +128,8 @@ class CodingAgent:
                     raise AgentCancelled("Cancellation requested; stopped at a safe boundary.")
                 result=self.assistant.provider.chat(messages,max_tokens=self.assistant.config.max_tokens,
                     temperature=self.assistant.config.temperature,on_token=on_token,tools=TOOL_SPECS)
+                if stop_event is not None and stop_event.is_set():
+                    raise AgentCancelled("Cancellation requested; provider response returned and the task stopped safely.")
                 calls=result.get("tool_calls") or []
                 if not calls:
                     verification=self._verification_state(successful_writes,last_write_call,last_verification)
