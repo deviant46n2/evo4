@@ -5,7 +5,7 @@ from unittest.mock import patch
 from evo_experiments.intelligence import discover_runtimes
 
 try:
-    from evo_core.api import create_app, RuntimeProfileInput, WorkloadAssessment
+    from evo_core.api import create_app, RuntimeProfileInput, WorkloadAssessment, SchedulerJobInput, SchedulerFinishInput
     AVAILABLE = True
 except ImportError:
     AVAILABLE = False
