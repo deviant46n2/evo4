@@ -31,7 +31,7 @@ REPORT_FIELDS = ("id","started_at","task_id","category","repetition","model","ru
     "elapsed_seconds","time_to_first_token_seconds","prompt_tokens","completion_tokens",
     "tokens_per_second","finish_reason","seed","evaluation_status","evaluation_details",
     "evaluation_passed","evaluation_total","error")
-SUMMARY_FIELDS = ("configuration","model","category","runs","completed","failed","truncated","incomplete",
+SUMMARY_FIELDS = ("configuration","model","category","runs","completed","failed","running","truncated","incomplete",
     "unknown","checks_passed","checks_scored","avg_elapsed_seconds","median_elapsed_seconds","stdev_elapsed_seconds",
     "avg_ttft_seconds","median_ttft_seconds","stdev_ttft_seconds","avg_tokens_per_second",
     "median_tokens_per_second","stdev_tokens_per_second","avg_peak_vram_mib","max_peak_vram_mib",
