@@ -338,6 +338,10 @@ def create_app(config_path="config.toml", provider_name=None):
     def hardware_scheduler_finish(job_id: str, payload: SchedulerFinishInput):
         try:
             with lab_db.lock:
+                managed = lab_db.connection.execute(
+                    "SELECT status FROM workload_executions WHERE job_id=?", (job_id,)).fetchone()
+                if managed and managed["status"] in {"queued", "running"}:
+                    raise HTTPException(status_code=409, detail="Evo-managed execution is supervised by its worker and cannot be externally marked finished")
                 return finish_job(lab_db.connection, job_id, payload.outcome, payload.note)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
