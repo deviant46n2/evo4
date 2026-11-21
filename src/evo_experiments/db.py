@@ -45,6 +45,15 @@ class ResultsDB:
                                   ("run_label", "TEXT"), ("finish_reason", "TEXT"), ("seed", "INTEGER")):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} {column_type}")
+        # Pre-integrity versions marked every received response completed without
+        # retaining the server's termination reason. Reclassify those rows as
+        # unknown and remove their old scores from trusted aggregates.
+        self.connection.execute(
+            "UPDATE experiments SET status='unknown',"
+            "evaluation_status='legacy_unknown_finish_reason',"
+            "evaluation_passed=NULL,evaluation_total=NULL "
+            "WHERE status='completed' AND finish_reason IS NULL"
+        )
         legacy = self.connection.execute(
             "SELECT id,evaluation_details FROM experiments "
             "WHERE evaluation_details IS NOT NULL AND evaluation_passed IS NULL").fetchall()
