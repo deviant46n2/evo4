@@ -48,6 +48,15 @@ class MemoryEvaluationTests(unittest.TestCase):
         self.assertEqual(report["hit_rate_at_k"],1.0)
         self.assertEqual(report["mean_recall_at_k"],1.0)
 
+    def test_challenge_fixture_loads_and_reports_diagnostic_metrics(self):
+        fixture=Path(__file__).resolve().parents[1]/"tasks"/"memory-retrieval-challenge.json"
+        report=evaluate_memory_retrieval(fixture,top_k=5,backend="fallback")
+        self.assertEqual(report["memory_count"],12)
+        self.assertEqual(report["query_count"],15)
+        self.assertGreaterEqual(report["mean_precision_at_k"],0.0)
+        self.assertLessEqual(report["mean_precision_at_k"],1.0)
+        self.assertTrue(any(row["id"].startswith("paraphrase-") for row in report["results"]))
+
     def test_invalid_backend_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=self.write_cases(tmp,{
