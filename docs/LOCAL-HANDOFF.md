@@ -5,7 +5,7 @@ This branch is a substantial early implementation, not a claim of target-machine
 ## First local setup
 
 ```bash
-git clone -b substantial-v1 https://github.com/deviant46n2/evo4.git
+git clone -b learning-feedback-v1 https://github.com/deviant46n2/evo4.git
 cd evo4
 python -m venv .venv
 source .venv/bin/activate
@@ -25,9 +25,15 @@ evo chat
 evo code --workspace .
 evo memory add "Evo is a local-first assistant project" --category project --source user
 evo memory search "local-first assistant"
+evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend auto
+evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend fallback
 evo memory candidates
 evo learn add "Run tests before claiming success" --trigger "coding tests" --category coding
 evo learn search "coding tests"
+evo runs list --limit 20
+evo runs summary
+evo runs show RUN_ID
+evo runs review RUN_ID --outcome partial --feedback "Describe what worked and what did not." --lesson "A reusable correction." --trigger "relevant trigger terms"
 evo task add "Run first local validation" --priority 1
 evo task list
 evo research add "Example source note" --url "https://example.org" --content "Replace this with actual sourced notes."
@@ -51,8 +57,12 @@ Review this repository as a skeptical senior Python engineer. Do not assume the 
 4. Inspect path traversal/symlink handling and command allowlisting in the workspace API.
 5. Exercise the CLI against the actual local model endpoint without changing model/runtime settings.
 6. Test restart persistence for conversations, memories, tasks, and research documents.
-7. Identify missing features and bugs; distinguish reproduced failures from static-review concerns.
-8. Do not make broad rewrites. Produce a prioritized report with file/line references, reproduction steps, severity, and suggested minimal fixes.
+7. Verify the synthetic memory benchmark under both FTS5 and forced fallback; confirm it does not create or touch the configured live database.
+8. Test that superseded memories remain historically linked, are not retrieved as current facts, and can still be surfaced when a query matches the old wording. Test that explicit contradictions are surfaced without the model silently resolving them.
+9. Test that run feedback links user-authored lessons to their source run, and that run summaries report correct verification and feedback metrics.
+10. Attack the coding-agent verification heuristic: command classification, nonzero exit codes, denied commands, and a later file write invalidating an earlier successful check.
+11. Identify missing features and bugs; distinguish reproduced failures from static-review concerns.
+12. Do not make broad rewrites. Produce a prioritized report with file/line references, reproduction steps, severity, and suggested minimal fixes.
 
 Do not run arbitrary commands or modify files outside the cloned repository. Do not change the local model server configuration without explicit approval.
 
@@ -67,4 +77,4 @@ Return:
 - resource measurements
 - recommended fixes ranked by severity
 
-Do not report an untested hypothesis as a confirmed defect.
+Do not report an untested hypothesis as a confirmed defect. The base branch's earlier live Qwen test does not validate new features on this branch; repeat the real endpoint checks here. CI covers Python 3.11 and 3.14, but does not validate the user's local model behavior.
