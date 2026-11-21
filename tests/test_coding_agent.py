@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 from evo_core.assistant import EvoAssistant
-from evo_core.coding_agent import CodingAgent, is_verification_command
+from evo_core.coding_agent import CodingAgent, is_test_command
 from evo_core.config import EvoConfig
 from evo_core.store import EvoStore
 
@@ -89,8 +89,8 @@ class CodingAgentTests(unittest.TestCase):
         self.assertEqual(report["status"],"not_run")
         self.assertEqual(CodingAgent._verification_state(0,0,None)["status"],"not_required")
 
-    def test_verification_command_detection_is_conservative(self):
-        self.assertTrue(is_verification_command(["python","-m","pytest","-q"]))
+    def test_test_command_detection_is_conservative(self):
+        self.assertTrue(is_test_command(["python","-m","pytest","-q"]))
         self.assertTrue(is_verification_command(["cargo","test"]))
         self.assertTrue(is_verification_command(["npm","run","test:unit"]))
         self.assertFalse(is_verification_command(["python","main.py"]))
