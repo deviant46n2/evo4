@@ -162,6 +162,8 @@ class CodingAgent:
                                 output={"error":"User denied this action; no changes or command execution were performed."}
                                 status="denied"
                             else:
+                                if stop_event is not None and stop_event.is_set():
+                                    raise AgentCancelled("Cancellation requested before the approved action began.")
                                 test_approval=None
                                 if name=="write_file" and is_test_path(args.get("path","")):
                                     test_approval=self.workspace.approve_test_write(args["path"])
@@ -170,6 +172,8 @@ class CodingAgent:
                         else:
                             output=self._execute(name,args)
                             status="completed"
+                    except AgentCancelled:
+                        raise
                     except Exception as exc:
                         output={"error":f"{type(exc).__name__}: {exc}"}
                         status="failed"
