@@ -310,7 +310,7 @@ function WorkloadSchedulerPanel() {
     if(busy)return;
     const argv=commandArgs.split("\n").map(part=>part.trim()).filter(Boolean);
     if(!argv.length){setError("Enter an allowlisted command, one argument per line.");return;}
-    if(!window.confirm("Execute this command inside Evo's configured workspace?\n\n"+JSON.stringify(argv)+"\\n\\nOnly configured command prefixes are accepted."))return;
+    if(!window.confirm("Execute this command inside Evo's configured workspace?\n\n"+JSON.stringify(argv)+"\n\nOnly configured command prefixes are accepted."))return;
     setBusy(true);setError("");
     try{await api("/hardware/scheduler/jobs/"+job.id+"/execute",json({argv,timeout_seconds:Number(timeout)}));await refresh();}
     catch(e){setError(e instanceof Error?e.message:String(e));}
