@@ -256,9 +256,6 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"run_id": run_id, "status": "running"}
 
     def run_agent(run_id, request_text, workspace):
-        conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
-        store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
-
         def approval(name, arguments):
             import uuid
             approval_id = uuid.uuid4().hex
@@ -277,6 +274,8 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"])
 
         try:
+            conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
+            store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
             agent = CodingAgent(assistant, workspace, config.allowed_commands)
             agent.run(conversation_id, request_text, approval, run_id=run_id)
         except Exception as exc:
