@@ -87,6 +87,15 @@ class WorkloadSchedulerTests(unittest.TestCase):
         self.assertEqual(saved["status"], "reserved")
         self.assertEqual(result["decisions"][0]["decision"], "reserved")
 
+    def test_queue_refresh_reaps_expired_reservations(self):
+        job=self.job()
+        dispatch_jobs(self.db,self.sample,now=self.now)
+        later=self.now+timedelta(seconds=LEASE_SECONDS+1)
+        with unittest.mock.patch("evo_experiments.scheduler._now",return_value=later):
+            saved=next(item for item in list_jobs(self.db)["jobs"] if item["id"]==job["id"])
+        self.assertEqual(saved["status"],"queued")
+        self.assertIsNone(saved["lease_expires_at"])
+
     def test_start_finish_lifecycle_releases_reservation(self):
         job = self.job()
         dispatch_jobs(self.db, self.sample, now=self.now)
