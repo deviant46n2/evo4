@@ -91,7 +91,7 @@ class CodingAgentTests(unittest.TestCase):
 
     def test_test_command_detection_is_conservative(self):
         self.assertTrue(is_test_command(["python","-m","pytest","-q"]))
-        self.assertTrue(is_verification_command(["cargo","test"]))
+        self.assertTrue(is_test_command(["cargo","test"]))
         self.assertTrue(is_verification_command(["npm","run","test:unit"]))
         self.assertFalse(is_verification_command(["python","main.py"]))
         self.assertFalse(is_verification_command(["git","status"]))
