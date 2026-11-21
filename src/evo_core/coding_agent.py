@@ -94,7 +94,7 @@ class CodingAgent:
             return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test runner completed after the latest change."
         return ""
 
-    def run(self, conversation_id, request, approval, on_token=None, run_id=None, stop_event=None, on_progress=None):
+    def run(self, conversation_id, request, approval, on_token=None, run_id=None, stop_event=None, on_progress=None, finalize_run=True):
         if not isinstance(request,str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
         if not callable(approval):
@@ -138,7 +138,8 @@ class CodingAgent:
                         "successful_file_writes":successful_writes,"tool_calls":total_tool_calls})
                     store.add_message(conversation_id,"assistant",final_text,metadata={
                         "agent_run_id":run_id,"verification":verification["status"]})
-                    store.finish_agent_run(run_id,"completed",final_text[:1000])
+                    if finalize_run:
+                        store.finish_agent_run(run_id,"completed",final_text[:1000])
                     return {"content":final_text,"run_id":run_id,"tool_rounds":round_index+1,
                             "tool_calls":total_tool_calls,"status":"completed",
                             "verification":verification["status"]}
@@ -199,13 +200,16 @@ class CodingAgent:
             store.add_message(conversation_id,"assistant",final_text,
                               metadata={"agent_run_id":run_id,"truncated":True,
                                         "verification":verification["status"]})
-            store.finish_agent_run(run_id,"failed",final_text)
+            if finalize_run:
+                store.finish_agent_run(run_id,"failed",final_text)
             return {"content":final_text,"run_id":run_id,"tool_rounds":self.max_tool_rounds,
                     "tool_calls":total_tool_calls,"status":"max_rounds_reached",
                     "verification":verification["status"]}
         except AgentCancelled as exc:
-            store.finish_agent_run(run_id,"cancelled",str(exc))
+            if finalize_run:
+                store.finish_agent_run(run_id,"cancelled",str(exc))
             return {"content": str(exc), "run_id": run_id, "status": "cancelled"}
         except Exception as exc:
-            store.finish_agent_run(run_id,"failed",f"{type(exc).__name__}: {exc}")
+            if finalize_run:
+                store.finish_agent_run(run_id,"failed",f"{type(exc).__name__}: {exc}")
             raise
