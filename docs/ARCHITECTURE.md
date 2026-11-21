@@ -20,7 +20,7 @@ Increase the useful capabilities of the user's existing workstation through meas
 
 ### Evo Lab (`src/evo_experiments`)
 
-The experiment harness remains independently usable. It runs repeatable tasks, records model/runtime manifests, deterministic checks, timing, and sampled hardware telemetry. Its role is to evaluate both models and future Evo subsystems from outside their implementation.
+The experiment harness remains independently usable. It runs repeatable tasks, records model/runtime manifests, deterministic checks, timing, and sampled hardware telemetry. Streaming finish reasons are retained: only explicit stop responses count as completed, length is truncated, other reported endings are incomplete, and missing finish reasons are unknown. Incomplete runs are not scored and are excluded from latency/throughput aggregates. Optional configured seeds increment by repetition; allowlisted live llama.cpp /props fields are snapshotted when available, while unexposed launch/runtime settings remain user-supplied. Aggregate performance includes mean, median, and sample standard deviation. Its role is to evaluate both models and future Evo subsystems from outside their implementation.
 
 ## Persistence
 
