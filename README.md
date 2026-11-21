@@ -68,7 +68,11 @@ The desktop client is a React/Vite application backed by Evo's local Python API.
 - Copy-response controls, keyboard send behavior, a new-chat shortcut, loading/error states, and a responsive narrow-window layout.
 - Provider/model identity and API connection status.
 
-Agents, Memory, Hardware, and Experiments remain visibly unavailable until their backend workflows are implemented. The client does not simulate agent execution, cancellation, background work, or provider switching. Generation cannot yet be cancelled from the desktop client; closing the client stops event delivery but does not interrupt an in-flight provider request.
+The desktop now includes functional Agents and Memory workspaces:
+- Agents can launch the existing bounded coding agent in the configured workspace (or an explicitly entered workspace path), inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default.
+- Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.
+- Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
+- Hardware and Experiments remain unavailable until their actual workflows are exposed. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 
@@ -104,6 +108,8 @@ The API is versioned under `/api/v1`. Current routes:
 - `PATCH /conversations/{id}` with a `title`
 - `DELETE /conversations/{id}` (returns conflict while that conversation is active)
 - `POST /chat` as a server-sent event stream
+- `GET/POST /memories`, `POST /memories/{id}/archive`, `GET /memory-candidates`, and `POST /memory-candidates/{id}/review`
+- `GET /agents`, `GET /agents/{run_id}`, `POST /agents`, and `POST /agents/{run_id}/approval`
 
 The capabilities endpoint is the source of truth for which future workspace areas the running backend actually supports. The browser is a presentation/client layer; conversation persistence, prompts, memory retrieval, provider calls, and assistant orchestration remain in Python/SQLite.
 
