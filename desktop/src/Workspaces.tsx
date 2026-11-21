@@ -28,6 +28,9 @@ export function MemoryWorkspace() {
   const [status, setStatus] = useState("active");
   const [content, setContent] = useState("");
   const [category, setCategory] = useState("general");
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const [replacement, setReplacement] = useState("");
+  const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
@@ -56,6 +59,13 @@ export function MemoryWorkspace() {
     try { await api("/memories/" + encodeURIComponent(id) + "/archive", { method: "POST" }); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
+  async function supersede(id: string) {
+    if (!replacement.trim()) return;
+    try {
+      await api("/memories/" + encodeURIComponent(id) + "/supersede", json({ content: replacement.trim(), reason: reason.trim() }));
+      setReplacing(null); setReplacement(""); setReason(""); await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
   async function review(id: string, approved: boolean) {
     try { await api("/memory-candidates/" + encodeURIComponent(id) + "/review", json({ approved })); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -72,7 +82,7 @@ export function MemoryWorkspace() {
     </section>
     <section className="workspace-panel">
       <div className="panel-toolbar"><div><h2>Saved records</h2><p>Explicitly stored facts and user-approved candidates</p></div><div className="memory-filters"><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search memories…"/><select value={status} onChange={e => setStatus(e.target.value)}><option value="active">Active</option><option value="archived">Archived</option><option value="superseded">Superseded</option></select></div></div>
-      <div className="record-list">{items.map(item => <article className="record-card" key={item.id}><div className="record-top"><span className="record-category">{item.category}</span><span>{item.source}</span><span>{Math.round(item.confidence * 100)}% confidence</span></div><p>{item.content}</p><div className="record-bottom"><small>Added {new Date(item.created_at).toLocaleString()} · Retrieved {item.access_count} times</small>{item.status === "active" && <button className="quiet-button danger" onClick={() => void archive(item.id)}>Archive</button>}</div></article>)}{items.length === 0 && <div className="empty-state">No {status} memories match this view.</div>}</div>
+      <div className="record-list">{items.map(item => <article className="record-card" key={item.id}><div className="record-top"><span className="record-category">{item.category}</span><span>{item.source}</span><span>{Math.round(item.confidence * 100)}% confidence</span></div><p>{item.content}</p><div className="record-bottom"><small>Added {new Date(item.created_at).toLocaleString()} · Retrieved {item.access_count} times</small>{item.status === "active" && <div className="inline-actions"><button className="quiet-button" onClick={() => { setReplacing(replacing === item.id ? null : item.id); setReplacement(""); setReason(""); }}>Correct / replace</button><button className="quiet-button danger" onClick={() => void archive(item.id)}>Archive</button></div>}</div>{replacing === item.id && <div className="supersede-editor"><textarea value={replacement} onChange={e => setReplacement(e.target.value)} placeholder="Enter the corrected memory…" rows={2}/><input value={reason} onChange={e => setReason(e.target.value)} placeholder="Why is this replacing the old record? (optional)"/><div className="inline-actions"><button className="quiet-button" onClick={() => setReplacing(null)}>Cancel</button><button disabled={!replacement.trim()} onClick={() => void supersede(item.id)}>Save correction</button></div></div>}</article>)}{items.length === 0 && <div className="empty-state">No {status} memories match this view.</div>}</div>
     </section>
     <section className="workspace-panel">
       <div className="panel-toolbar"><div><h2>Awaiting review</h2><p>Heuristically detected candidates are not used as trusted memories until accepted.</p></div><span className="workspace-count">{candidates.length} pending</span></div>
