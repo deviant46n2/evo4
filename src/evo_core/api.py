@@ -680,6 +680,8 @@ def create_app(config_path="config.toml", provider_name=None):
         with lab_db.lock:
             claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
         if not claimed:
+            agent_stop_events.pop(run_id, None)
+            agent_futures.pop(run_id, None)
             return
         def progress(event_type, payload):
             with lab_db.lock:
