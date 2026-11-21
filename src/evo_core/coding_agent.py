@@ -22,18 +22,39 @@ TOOL_SPECS = [
  {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120}},"required":["argv"],"additionalProperties":False}}}
 ]
 
-_VERIFICATION_MARKERS={"pytest","unittest","tox","nox","test","tests","check","lint","build","ruff","mypy","pyright","eslint","tsc"}
+_DIRECT_VERIFICATION_TOOLS={"pytest","tox","nox","ruff","mypy","pyright","eslint","tsc","pre-commit"}
+_TEST_SUBCOMMANDS={"test","tests","check","lint","build","clippy","vet"}
 
 def is_verification_command(argv):
-    """Conservative command-name heuristic; success means exit code zero, not correctness."""
-    if not isinstance(argv,(list,tuple)):
+    """Recognize common test/check tools without scanning arbitrary path arguments."""
+    if not isinstance(argv,(list,tuple)) or not argv:
         return False
-    for value in argv:
-        token=str(value).strip().lower().rsplit("/",1)[-1]
-        base=token.split(":",1)[0]
-        if base in _VERIFICATION_MARKERS or base.startswith("test_"):
+    args=[str(value).strip().lower() for value in argv]
+    executable=args[0].rsplit("/",1)[-1]
+    if executable in _DIRECT_VERIFICATION_TOOLS:
+        return True
+    if executable.startswith("python") and len(args)>=3:
+        if args[1]=="-m" and args[2] in {"pytest","unittest","tox","nox","ruff","mypy","pyright"}:
             return True
+        if args[1]=="-m" and args[2]=="compileall":
+            return True
+    if executable in {"npm","pnpm","yarn","bun","npx"}:
+        return any(token in _TEST_SUBCOMMANDS or token.startswith("test:") or
+                   token in {"jest","vitest","eslint","tsc"} for token in args[1:4])
+    if executable=="cargo":
+        return len(args)>1 and args[1] in {"test","check","build","clippy"}
+    if executable=="go":
+        return len(args)>1 and args[1] in {"test","vet"}
+    if executable in {"make","gmake"}:
+        return any(token in _TEST_SUBCOMMANDS for token in args[1:])
+    if executable=="cmake":
+        return "--build" in args
+    if executable=="dotnet":
+        return len(args)>1 and args[1] in {"test","build"}
+    if executable=="git":
+        return len(args)>2 and args[1:3]==["diff","--check"]
     return False
+
 
 
 class CodingAgent:
