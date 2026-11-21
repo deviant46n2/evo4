@@ -5,6 +5,7 @@ from .assistant import EvoAssistant
 from .config import load_config
 from .provider import OpenAICompatibleProvider, ProviderError
 from .store import EvoStore
+from .workspace import is_test_path
 from .memory_eval import evaluate_memory_retrieval
 
 def build_parser():
@@ -109,6 +110,8 @@ def _interactive(args,config):
                 if agent:
                     def approve(name,arguments):
                         print(f"\n\nApproval required: {name}")
+                        if name=="write_file" and is_test_path(arguments.get("path","")):
+                            print("WARNING: This is a test/spec file. Approve only if the test change is intentional and does not weaken coverage.")
                         print(json.dumps(arguments,indent=2,ensure_ascii=False))
                         return input("Allow this action? [y/N] ").strip().lower()=="y"
                     result=agent.run(cid,user_text,approve,on_token=stream)
