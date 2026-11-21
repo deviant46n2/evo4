@@ -44,6 +44,10 @@ The repository contains two independently usable applications:
 The desktop API exposes:
 - `GET /api/v1/hardware/current` — live CPU, RAM, NVIDIA GPU, GPU process, active provider/model, resource headroom, and advisory pressure status.
 - `GET /api/v1/hardware/history` — recent persisted samples from Evo Lab runs.
+- `GET /api/v1/hardware/runtimes` — heuristic local inference-process discovery without exposing arguments or environment variables.
+- `GET/POST /api/v1/hardware/profiles` — save and list named runtime configurations.
+- `POST /api/v1/hardware/estimate` — conservative model-file and architecture-derived KV-cache estimates; fit remains unknown without full runtime allocation data.
+- `POST /api/v1/hardware/admission` — advisory allow/defer/unknown resource check with protected VRAM/RAM reserves.
 - `GET /api/v1/experiments` — recent experiment runs and grouped performance aggregates.
 
 The desktop API initializes/migrates the Evo Lab tables in the same SQLite database used by the assistant. Older experiment databases gain the expanded telemetry columns in place; existing samples are preserved. Hardware polling is read-only. The dashboard deliberately does not expose process command-line arguments, which can contain credentials.
@@ -210,3 +214,8 @@ Fresh installations can load reversible, clearly labeled sample memories, agent 
 Memory retrieval now combines FTS5 and parameterized LIKE candidate generation instead of treating them as mutually exclusive. A deterministic ranker weighs query-term coverage, content matches, tags/categories, exact phrase evidence, and a small FTS rank contribution. Results carry an inspectable score, matched terms, coverage, and a human-readable reason. The desktop Memory workspace includes a recall preview so users can test what Evo would retrieve before relying on it. This remains lexical retrieval: it does not claim semantic understanding or embedding-based recall.
 
 Evaluation reports precision@k and zero-result rate alongside hit rate, recall@k, and reciprocal rank. Synthetic evaluation remains isolated from the live database and does not establish recall over personal memories.
+
+
+## Hardware Intelligence v1
+
+Hardware intelligence adds runtime discovery, persistent runtime profiles, architecture-aware KV-cache estimates and advisory workload admission. It does not apply profiles, schedule or preempt running workloads, start/stop services, signal PIDs, or change GPU/runtime settings. Interactive work receives a higher advisory priority, but admission is not a reservation or a hard scheduler. See [the hardware intelligence notes](docs/HARDWARE-INTELLIGENCE.md) for formulas, safety boundaries and limitations.
