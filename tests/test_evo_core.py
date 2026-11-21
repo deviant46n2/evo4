@@ -313,5 +313,32 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual([r["id"] for r in store.search_research("100%")],[doc])
             store.close()
 
+
+    def test_legacy_supersession_edges_are_migrated_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"evo.db"
+            store=EvoStore(path)
+            old_id=store.add_memory("Old project configuration")
+            new_id=store.supersede_memory(old_id,"Corrected project configuration")
+            # Simulate a database written by the earlier, reversed convention.
+            store.db.execute(
+                "UPDATE memory_relations SET source_memory_id=?,target_memory_id=? WHERE relation_type='supersedes'",
+                (old_id,new_id))
+            store.db.execute(
+                "DELETE FROM schema_migrations WHERE name='supersedes_direction_current_to_old_v1'")
+            store.db.commit()
+            store.close()
+            migrated=EvoStore(path)
+            try:
+                relation=migrated.get_memory_relations([new_id])[0]
+                self.assertEqual(relation["source_memory_id"],new_id)
+                self.assertEqual(relation["target_memory_id"],old_id)
+                marker=migrated.db.execute(
+                    "SELECT COUNT(*) FROM schema_migrations WHERE name='supersedes_direction_current_to_old_v1'"
+                ).fetchone()[0]
+                self.assertEqual(marker,1)
+            finally:
+                migrated.close()
+
 if __name__=="__main__":
     unittest.main()
