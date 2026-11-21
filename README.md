@@ -57,9 +57,18 @@ cp config.example.toml config.toml
 Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
 
 
-## Desktop interface (early preview)
+## Desktop interface (0.1 development milestone)
 
-The first desktop-client slice includes a local HTTP API and a React chat interface. The existing CLI remains supported. The interface currently implements persistent conversations, conversation history, streamed chat, and provider/model identification. Agents, Memory, Hardware, and Experiments are visibly marked as not yet implemented rather than simulated.
+The desktop client is a React/Vite application backed by Evo's local Python API. The CLI remains fully supported. This milestone provides:
+
+- Persistent conversations with automatic first-message titles.
+- Search across conversation titles and message bodies.
+- Conversation rename and deletion (including message cleanup).
+- Streaming chat with Markdown, GitHub-flavored tables/lists, and readable code blocks.
+- Copy-response controls, keyboard send behavior, a new-chat shortcut, loading/error states, and a responsive narrow-window layout.
+- Provider/model identity and API connection status.
+
+Agents, Memory, Hardware, and Experiments remain visibly unavailable until their backend workflows are implemented. The client does not simulate agent execution, cancellation, background work, or provider switching. Generation cannot yet be cancelled from the desktop client; closing the client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 
@@ -82,7 +91,21 @@ cd desktop
 npm run dev
 ```
 
-Open the local Vite address shown in the terminal (normally `http://127.0.0.1:5173`). The API binds only to `127.0.0.1:8765`, restricts Host headers to loopback names, and allows only the local development/preview origins. Provider credentials remain in the Python process and are never sent to the browser. This is a development preview, not yet a packaged desktop application. Generation cannot yet be cancelled from the UI.
+Open the local Vite address shown in the terminal (normally `http://127.0.0.1:5173`). The API binds only to `127.0.0.1:8765`, restricts Host headers to loopback names, and allows only the local development/preview origins. Provider credentials remain in the Python process and are never sent to the browser.
+
+### Desktop API
+
+The API is versioned under `/api/v1`. Current routes:
+
+- `GET /health` and `GET /capabilities`
+- `GET /conversations?limit=100&q=...`
+- `POST /conversations`
+- `GET /conversations/{id}/messages`
+- `PATCH /conversations/{id}` with a `title`
+- `DELETE /conversations/{id}` (returns conflict while that conversation is active)
+- `POST /chat` as a server-sent event stream
+
+The capabilities endpoint is the source of truth for which future workspace areas the running backend actually supports. The browser is a presentation/client layer; conversation persistence, prompts, memory retrieval, provider calls, and assistant orchestration remain in Python/SQLite.
 
 ## Evo assistant commands
 
