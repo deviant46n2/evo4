@@ -1056,6 +1056,8 @@ def create_app(config_path="config.toml", provider_name=None):
                             "prompt_tokens": result.get("prompt_tokens"),
                             "completion_tokens": result.get("completion_tokens"),
                             "tokens_per_second": result.get("tokens_per_second"),
+                            "finish_reason": result.get("finish_reason"),
+                            "truncated": bool(result.get("truncated", False)),
                         },
                     })
                 except Exception as exc:
