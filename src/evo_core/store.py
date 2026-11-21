@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -208,48 +209,94 @@ class EvoStore:
         return mid
 
     def search_memories(self, query, limit=8, category=None):
-        terms = [part.strip(" \t\r\n.,!?;:\"'()[]{}") for part in query.split()]
-        terms = [term for term in terms if len(term) > 1][:12]
-        if not terms:
+        """Hybrid lexical retrieval with inspectable evidence; embeddings are not used."""
+        raw_query = (query or "").strip()
+        if not raw_query:
             return []
+        stop = {"a","an","and","are","as","at","be","been","by","can","could","did","do","does",
+                "for","from","had","has","have","how","i","in","into","is","it","its","me","my",
+                "of","on","or","our","please","should","that","the","their","them","there","this",
+                "to","use","used","using","was","we","what","when","where","which","who","why",
+                "will","with","would","you","your"}
+        tokens = []
+        for token in re.findall(r"[a-z0-9]+(?:[._'-][a-z0-9]+)*", raw_query.casefold()):
+            if len(token) > 1 and token not in stop and token not in tokens:
+                tokens.append(token)
+        tokens = tokens[:24]
+        if not tokens:
+            return []
+        bounded = min(max(int(limit), 1), 100)
+        pool_size = min(max(bounded * 12, 60), 240)
         with self.lock:
-            rows = []
+            candidates, fts_ranks = {}, {}
             if self.fts_available:
-                match = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
+                match = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
                 sql = """SELECT m.* FROM memories_fts f JOIN memories m ON m.id=f.memory_id
                          WHERE memories_fts MATCH ? AND m.status='active'"""
                 params = [match]
                 if category:
                     sql += " AND m.category=?"; params.append(category)
-                sql += " ORDER BY bm25(memories_fts),m.confidence DESC LIMIT ?"; params.append(max(1,limit))
+                sql += " ORDER BY bm25(memories_fts),m.confidence DESC LIMIT ?"
+                params.append(pool_size)
                 try:
-                    rows = self.db.execute(sql, params).fetchall()
+                    for rank, row in enumerate(self.db.execute(sql, params).fetchall(), 1):
+                        candidates[row["id"]] = row
+                        fts_ranks[row["id"]] = rank
                 except sqlite3.OperationalError:
-                    rows = []
-            if not rows:
-                where_clauses=[]
-                where_params=[]
-                score_parts=[]
-                score_params=[]
-                for term in terms:
-                    pattern=_like_pattern(term)
-                    where_clauses.append("(content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')")
-                    where_params.extend((pattern,pattern,pattern))
-                    score_parts.append("(CASE WHEN content LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
-                                       "CASE WHEN tags_json LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
-                                       "CASE WHEN category LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
-                    score_params.extend((pattern,pattern,pattern))
-                sql = f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM memories WHERE status='active' AND ({' OR '.join(where_clauses)})"
-                params=score_params+where_params
-                if category:
-                    sql += " AND category=?"; params.append(category)
-                sql += " ORDER BY relevance DESC,confidence DESC,updated_at DESC LIMIT ?"; params.append(max(1,limit))
-                rows = self.db.execute(sql, params).fetchall()
-            if rows:
+                    pass
+            clauses, params = [], []
+            for token in tokens:
+                pattern = _like_pattern(token)
+                clauses.append("(content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')")
+                params.extend((pattern, pattern, pattern))
+            sql = "SELECT * FROM memories WHERE status='active' AND (" + " OR ".join(clauses) + ")"
+            if category:
+                sql += " AND category=?"; params.append(category)
+            sql += " ORDER BY updated_at DESC LIMIT ?"; params.append(pool_size)
+            for row in self.db.execute(sql, params).fetchall():
+                candidates.setdefault(row["id"], row)
+
+            query_set = set(tokens)
+            phrase = " ".join(tokens)
+            ranked = []
+            for memory_id, row in candidates.items():
+                content = row["content"].casefold()
+                try:
+                    tags = json.loads(row["tags_json"] or "[]")
+                except (TypeError, json.JSONDecodeError):
+                    tags = []
+                tokenize = lambda value: set(re.findall(r"[a-z0-9]+(?:[._'-][a-z0-9]+)*", value.casefold()))
+                content_hits = query_set & tokenize(content)
+                tag_hits = query_set & tokenize(" ".join(str(tag) for tag in tags))
+                category_hits = query_set & tokenize(str(row["category"] or ""))
+                matched = content_hits | tag_hits | category_hits
+                coverage = len(matched) / len(query_set)
+                content_coverage = len(content_hits) / len(query_set)
+                tag_coverage = len(tag_hits) / len(query_set)
+                exact = bool(phrase and phrase in content)
+                rank = fts_ranks.get(memory_id)
+                fts_bonus = 1.0 / (60 + rank) if rank else 0.0
+                confidence = max(0.0, min(1.0, float(row["confidence"] or 0.0)))
+                score = coverage*.62 + content_coverage*.18 + tag_coverage*.08 + (0.10 if exact else 0) + fts_bonus*3 + confidence*.02
+                reasons = []
+                if content_hits: reasons.append("content: " + ", ".join(sorted(content_hits)))
+                if tag_hits: reasons.append("tags: " + ", ".join(sorted(tag_hits)))
+                if category_hits: reasons.append("category: " + ", ".join(sorted(category_hits)))
+                if exact: reasons.append("exact phrase")
+                item = dict(row)
+                item.update(retrieval_score=round(score,6), retrieval_coverage=round(coverage,4),
+                            retrieval_matched_terms=sorted(matched),
+                            retrieval_reason="; ".join(reasons) or "lexical candidate",
+                            retrieval_method="hybrid-fts-like" if rank else "lexical-like")
+                ranked.append(item)
+            ranked.sort(key=lambda item:(item["retrieval_score"],float(item["confidence"] or 0),item["updated_at"]),reverse=True)
+            selected = ranked[:bounded]
+            if selected:
+                now = utc_now()
                 self.db.executemany("UPDATE memories SET access_count=access_count+1,last_accessed_at=? WHERE id=?",
-                                    [(utc_now(), row["id"]) for row in rows])
+                                    [(now,item["id"]) for item in selected])
                 self.db.commit()
-            return rows
+            return selected
 
     def list_memories(self, limit=50):
         with self.lock:
