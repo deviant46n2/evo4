@@ -227,3 +227,8 @@ Hardware intelligence adds runtime discovery, persistent runtime profiles, archi
 ## Managed workload execution
 
 Reserved scheduler jobs can now run explicitly approved commands through Evo's managed worker. Commands are argv arrays (never shell strings), must match workspace.allowed_commands, run in the configured workspace, and have bounded captured output plus a configurable timeout. Evo records execution state and marks unfinished runs interrupted after restart without signalling potentially orphaned processes. This does not attach to or control an existing llama-server. See the hardware intelligence notes in docs/HARDWARE-INTELLIGENCE.md.
+
+
+## Background agent execution
+
+The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
