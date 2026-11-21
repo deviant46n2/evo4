@@ -38,6 +38,14 @@ class HardwareIntelligenceTests(unittest.TestCase):
         sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":2000,"ram_available_bytes":8*1024**3}
         result=assess_workload(sample,{"kind":"background","estimated_ram_mib":512})
         self.assertEqual(result["decision"],"unknown")
+    def test_high_gpu_temperature_defers_background_work(self):
+        sample={"ram_available_bytes":8*1024**3,"gpu_memory_total_mib":16384,"gpu_memory_used_mib":1000,"gpu_temperature_c":86}
+        result=assess_workload(sample,{"kind":"benchmark","estimated_vram_mib":2048,"estimated_ram_mib":512})
+        self.assertEqual(result["decision"],"defer")
+    def test_high_ram_pressure_defers_background_work(self):
+        sample={"ram_available_bytes":8*1024**3,"ram_used_percent":91,"gpu_memory_total_mib":16384,"gpu_memory_used_mib":1000}
+        result=assess_workload(sample,{"kind":"benchmark","estimated_vram_mib":2048,"estimated_ram_mib":512})
+        self.assertEqual(result["decision"],"defer")
     def test_interactive_priority_does_not_preempt(self):
         result=assess_workload({},{"kind":"chat"})
         self.assertEqual(result["priority"],100); self.assertFalse(result["preemption"])
