@@ -377,13 +377,22 @@ class EvoStore:
         terms=[term for term in terms if len(term)>1][:12]
         if not terms:
             return []
-        clauses=" OR ".join("(trigger_text LIKE ? ESCAPE '!' OR lesson LIKE ? ESCAPE '!')" for _ in terms)
-        params=[]
-        for term in terms: params.extend((_like_pattern(term),_like_pattern(term)))
-        sql=f"SELECT * FROM lessons WHERE status='active' AND ({clauses})"
+        clauses=[]
+        where_params=[]
+        score_parts=[]
+        score_params=[]
+        for term in terms:
+            pattern=_like_pattern(term)
+            clauses.append("(trigger_text LIKE ? ESCAPE '!' OR lesson LIKE ? ESCAPE '!')")
+            where_params.extend((pattern,pattern))
+            score_parts.append("(CASE WHEN trigger_text LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
+                               "CASE WHEN lesson LIKE ? ESCAPE '!' THEN 2 ELSE 0 END)")
+            score_params.extend((pattern,pattern))
+        sql=f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM lessons WHERE status='active' AND ({' OR '.join(clauses)})"
+        params=score_params+where_params
         if category:
             sql+=" AND category=?"; params.append(category)
-        sql+=" ORDER BY confidence DESC,created_at DESC LIMIT ?"; params.append(max(1,limit))
+        sql+=" ORDER BY relevance DESC,confidence DESC,created_at DESC LIMIT ?"; params.append(max(1,limit))
         with self.lock:
             rows=self.db.execute(sql,params).fetchall()
             if rows:
@@ -409,14 +418,23 @@ class EvoStore:
         terms = [term for term in terms if len(term)>1][:12]
         if not terms:
             return []
-        clauses = " OR ".join("(title LIKE ? ESCAPE '!' OR content LIKE ? ESCAPE '!')" for _ in terms)
-        params = []
+        clauses=[]
+        where_params=[]
+        score_parts=[]
+        score_params=[]
         for term in terms:
-            params.extend((_like_pattern(term),_like_pattern(term)))
-        params.append(max(1,limit))
+            pattern=_like_pattern(term)
+            clauses.append("(title LIKE ? ESCAPE '!' OR content LIKE ? ESCAPE '!')")
+            where_params.extend((pattern,pattern))
+            score_parts.append("(CASE WHEN title LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
+                               "CASE WHEN content LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
+            score_params.extend((pattern,pattern))
+        params=score_params+where_params+[max(1,limit)]
         with self.lock:
-            return self.db.execute(f"SELECT * FROM research_documents WHERE {clauses} ORDER BY captured_at DESC LIMIT ?",
-                                   params).fetchall()
+            return self.db.execute(
+                f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM research_documents "
+                f"WHERE {' OR '.join(clauses)} ORDER BY relevance DESC,captured_at DESC LIMIT ?",
+                params).fetchall()
 
     def start_agent_run(self, kind, metadata=None):
         run_id, now = str(uuid.uuid4()), utc_now()
