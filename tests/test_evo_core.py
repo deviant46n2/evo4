@@ -52,7 +52,7 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual([row["id"] for row in store.search_memories("Qwen configuration profile")],[new_id])
             relation=store.get_memory_relations([new_id])[0]
             self.assertEqual(relation["relation_type"],"supersedes")
-            self.assertEqual(relation["source_memory_id"],old_id)
+            self.assertEqual(relation["source_memory_id"],new_id)
             self.assertIn("User corrected",relation["evidence"])
             config=self.make_config(Path(tmp)/"evo.db")
             assistant=EvoAssistant(config,store,StubProvider())
@@ -209,7 +209,7 @@ class EvoCoreTests(unittest.TestCase):
             try:
                 relation=backup.get_memory_relations([new_id])[0]
                 self.assertEqual(relation["source_memory_id"],old_id)
-                self.assertEqual(relation["target_memory_id"],new_id)
+                self.assertEqual(relation["target_memory_id"],old_id)
                 self.assertEqual(relation["relation_type"],"supersedes")
             finally:
                 backup.close()
