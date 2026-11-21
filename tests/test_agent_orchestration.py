@@ -45,6 +45,8 @@ class AgentOrchestrationTests(unittest.TestCase):
             orchestration.approve_plan(self.db, self.plan["id"])
 
     def test_steps_must_run_in_order_and_finish_from_running(self):
+        orchestration.approve_plan(self.db, self.plan["id"])
+        orchestration.attach_run(self.db, self.plan["id"], "run-1")
         steps = self.plan["steps"]
         with self.assertRaises(ValueError):
             orchestration.start_step(self.db, self.plan["id"], steps[1]["id"])
