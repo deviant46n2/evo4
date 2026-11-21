@@ -24,7 +24,7 @@ The experiment harness remains independently usable. It runs repeatable tasks, r
 
 ## Persistence
 
-SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time. A SQLite online-backup operation creates a consistent copy of both assistant and lab state.
+SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. User-directed supersession marks the old record as superseded, creates a replacement, and stores an explicit relation so the history is not destroyed. Users can also mark two records as supporting or contradicting; retrieved relations are shown to the model as explicit evidence, not silently resolved. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time. A SQLite online-backup operation creates a consistent copy of both assistant and lab state.
 
 FTS5 is used for memory retrieval when available. A relevance-ranked lexical LIKE fallback searches memory content, categories, and tags when FTS5 is unavailable. The synthetic benchmark can force either backend so regressions can be compared independently. Retrieval is not semantic and does not imply perfect recall. `evo memory evaluate` seeds an isolated in-memory database from a versioned synthetic fixture and reports hit rate, recall@k, and mean reciprocal rank. It is a retrieval regression test, not a measurement of real-world personal-memory recall.
 
@@ -48,7 +48,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 
 - Keep experiment history and assistant state durable across application versions.
 - Use additive schema migrations when changing existing tables.
-- Do not silently reinterpret or delete user memories.
+- Do not silently reinterpret or delete user memories. Superseded records remain stored and linked to their replacements; contradiction links preserve both claims.
 - Preserve provenance and confidence when transforming memory records.
 - New agent actions should create auditable tool-event records.
 - Avoid coupling the lab database schema to internal assistant implementation details.
