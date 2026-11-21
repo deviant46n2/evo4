@@ -61,7 +61,7 @@ class RunFeedbackTests(unittest.TestCase):
         run_id=self.make_run()
         config=Path(self.tmp.name)/"config.toml"
         config.write_text(
-            f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{self.store.path}"\\n',
+            f'[server]\nmodel="test"\n[experiment]\ndatabase="{self.store.path}"\n',
             encoding="utf-8")
         argv=["evo","--config",str(config),"runs","review",run_id,
               "--outcome","partial","--feedback","One test remains failing.",
@@ -76,7 +76,7 @@ class RunFeedbackTests(unittest.TestCase):
         run_id=self.make_run()
         config=Path(self.tmp.name)/"config.toml"
         config.write_text(
-            f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{self.store.path}"\\n',
+            f'[server]\nmodel="test"\n[experiment]\ndatabase="{self.store.path}"\n',
             encoding="utf-8")
         argv=["evo","--config",str(config),"runs","show",run_id]
         with patch.object(sys,"argv",argv), patch("sys.stdout",new=io.StringIO()) as output:
