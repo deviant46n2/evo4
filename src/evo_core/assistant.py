@@ -132,7 +132,7 @@ class EvoAssistant:
         for row in reversed(history_rows):
             content=row.get("content","")
             if len(content)>remaining:
-                continue
+                break
             history.append({**row,"content":content})
             remaining-=len(content)
         history.reverse()
