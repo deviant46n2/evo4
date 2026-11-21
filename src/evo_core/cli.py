@@ -5,6 +5,7 @@ from .assistant import EvoAssistant
 from .config import load_config
 from .provider import OpenAICompatibleProvider, ProviderError
 from .store import EvoStore
+from .memory_eval import evaluate_memory_retrieval
 
 def build_parser():
     parser=argparse.ArgumentParser(prog="evo",description="Evo 4 local-first assistant")
@@ -31,6 +32,9 @@ def build_parser():
     ms.add_parser("candidates",help="List tentative memories awaiting review")
     accept=ms.add_parser("accept"); accept.add_argument("id")
     reject=ms.add_parser("reject"); reject.add_argument("id")
+    meval=ms.add_parser("evaluate",help="Score retrieval against a deterministic synthetic benchmark")
+    meval.add_argument("--cases",default="tasks/memory-retrieval.json")
+    meval.add_argument("--top-k",type=int,default=5)
     task=sub.add_parser("task",parents=[config_parent],help="Manage persistent tasks")
     ts=task.add_subparsers(dest="task_command",required=True)
     ta=ts.add_parser("add"); ta.add_argument("title"); ta.add_argument("--description",default="")
@@ -147,7 +151,14 @@ def main():
         if args.command=="backup":
             print(f"Backup written to {store.backup(args.destination)}")
         elif args.command=="memory":
-            if args.memory_command=="add":
+            if args.memory_command=="evaluate":
+                try:
+                    report=evaluate_memory_retrieval(args.cases,args.top_k)
+                except ValueError as exc:
+                    print(f"Error: {exc}",file=sys.stderr)
+                    raise SystemExit(2)
+                print(json.dumps(report,ensure_ascii=False,indent=2))
+            elif args.memory_command=="add":
                 mid=store.add_memory(args.content,args.category,args.tag,args.source,args.confidence)
                 print(f"Saved memory: {mid}")
             elif args.memory_command=="search":
