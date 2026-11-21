@@ -66,5 +66,39 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         self.assertTrue(caps["hardware_runtime_discovery"])
         self.assertFalse(caps["hardware_process_control"])
 
+
+    def test_scheduler_api_persists_and_dispatches_without_starting_processes(self):
+        create = self.routes[("/api/v1/hardware/scheduler/jobs","POST")]
+        saved = create(SchedulerJobInput(name="Background benchmark",kind="benchmark",
+            estimated_vram_mib=1024,estimated_ram_mib=512))
+        self.assertEqual(saved["status"],"queued")
+        sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":2000,
+                "ram_available_bytes":8*1024**3,"ram_used_percent":50,"gpu_temperature_c":55}
+        with patch("evo_core.api.sample_nvidia_smi",return_value=sample):
+            result=self.routes[("/api/v1/hardware/scheduler/dispatch","POST")](limit=5)
+        self.assertEqual(result["decisions"][0]["decision"],"reserved")
+        current=self.routes[("/api/v1/hardware/scheduler","GET")]()
+        self.assertEqual(current["jobs"][0]["status"],"reserved")
+        self.assertFalse(current["process_control"])
+
+    def test_scheduler_api_requires_reserved_state_and_explicit_external_finish(self):
+        create=self.routes[("/api/v1/hardware/scheduler/jobs","POST")]
+        saved=create(SchedulerJobInput(name="Managed job",kind="cpu",gpu_heavy=False,
+            estimated_ram_mib=256))
+        with self.assertRaises(Exception):
+            self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/start","POST")](saved["id"])
+        with patch("evo_core.api.sample_nvidia_smi",return_value={
+            "ram_available_bytes":8*1024**3,"ram_used_percent":40}):
+            self.routes[("/api/v1/hardware/scheduler/dispatch","POST")](limit=5)
+        started=self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/start","POST")](saved["id"])
+        self.assertEqual(started["status"],"running")
+        finished=self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/finish","POST")](
+            saved["id"],SchedulerFinishInput(outcome="completed",note="External process exited"))
+        self.assertEqual(finished["status"],"completed")
+
+    def test_scheduler_capability_is_advertised(self):
+        caps=self.routes[("/api/v1/capabilities","GET")]()
+        self.assertTrue(caps["hardware_workload_scheduler"])
+
 if __name__=="__main__":
     unittest.main()
