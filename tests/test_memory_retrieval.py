@@ -57,6 +57,19 @@ class HybridMemoryRetrievalTests(unittest.TestCase):
         self.assertEqual(self.store.search_memories(""), [])
         self.assertEqual(self.store.search_memories("what is it"), [])
 
+    def test_legacy_relevance_alias_is_preserved(self):
+        self.store.add_memory("RTX 5070 Ti has 16 GB VRAM", category="hardware")
+        row = self.store.search_memories("RTX VRAM", limit=1)[0]
+        self.assertGreater(row["relevance"], 0)
+        self.assertEqual(row["relevance"], row["retrieval_score"])
+
+    def test_percentage_is_a_literal_token_not_a_broad_numeric_match(self):
+        exact = self.store.add_memory("100% local inference")
+        self.store.add_memory("100 local inference")
+        rows = self.store.search_memories("100%", limit=8)
+        self.assertEqual([row["id"] for row in rows], [exact])
+        self.assertIn("100%", rows[0]["retrieval_matched_terms"])
+
     def test_archived_and_superseded_records_never_enter_active_retrieval(self):
         old_id = self.store.add_memory("RTX 5070 Ti old driver", source="user")
         new_id = self.store.supersede_memory(
