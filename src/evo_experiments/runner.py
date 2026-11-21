@@ -67,6 +67,7 @@ def run_tasks(config, tasks_path, repetitions=None):
                 monitor = ResourceMonitor(config.sample_interval_seconds,
                     lambda sample, experiment_id=eid: db.add_sample(experiment_id, sample))
                 monitor.start()
+                result = None
                 try:
                     result = stream_chat_completion(base_url=config.base_url, api_key=config.api_key,
                         model=config.model, system_prompt=config.system_prompt, prompt=task["prompt"],
@@ -83,8 +84,16 @@ def run_tasks(config, tasks_path, repetitions=None):
                         "evaluation_passed": evaluation_details["passed"] if evaluation_details else None,
                         "evaluation_total": evaluation_details["total"] if evaluation_details else None})
                 except Exception as exc:
-                    db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
-                        "status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+                    failure = {"finished_at": datetime.now(timezone.utc).isoformat(),
+                        "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                    if result is not None:
+                        failure.update({"response": result["response"],
+                            "elapsed_seconds": result["elapsed_seconds"],
+                            "time_to_first_token_seconds": result["time_to_first_token_seconds"],
+                            "prompt_tokens": result["prompt_tokens"],
+                            "completion_tokens": result["completion_tokens"],
+                            "tokens_per_second": result["tokens_per_second"]})
+                    db.finish_experiment(eid, failure)
                 finally:
                     monitor.stop()
     finally:

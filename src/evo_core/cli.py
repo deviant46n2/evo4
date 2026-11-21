@@ -3,22 +3,24 @@ import json
 import sys
 from .assistant import EvoAssistant
 from .config import load_config
-from .provider import ProviderError
+from .provider import OpenAICompatibleProvider, ProviderError
 from .store import EvoStore
 
 def build_parser():
     parser=argparse.ArgumentParser(prog="evo",description="Evo 4 local-first assistant")
     parser.add_argument("--config",default="config.toml",help="TOML configuration file")
     sub=parser.add_subparsers(dest="command",required=True)
-    doctor=sub.add_parser("doctor",help="Check the configured model endpoint")
+    config_parent=argparse.ArgumentParser(add_help=False)
+    config_parent.add_argument("--config",default=argparse.SUPPRESS,help="TOML configuration file")
+    doctor=sub.add_parser("doctor",parents=[config_parent],help="Check the configured model endpoint")
     doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
     for name,help_text in (("chat","Start an interactive conversation"),
                            ("code","Start an approval-gated coding-agent session")):
-        command=sub.add_parser(name,help=help_text)
+        command=sub.add_parser(name,parents=[config_parent],help=help_text)
         command.add_argument("--conversation",help="Resume an existing conversation ID")
         if name=="code":
             command.add_argument("--workspace",help="Project root (overrides [workspace].root)")
-    mem=sub.add_parser("memory",help="Manage persistent memories")
+    mem=sub.add_parser("memory",parents=[config_parent],help="Manage persistent memories")
     ms=mem.add_subparsers(dest="memory_command",required=True)
     add=ms.add_parser("add"); add.add_argument("content"); add.add_argument("--category",default="general")
     add.add_argument("--tag",action="append",default=[]); add.add_argument("--source",default="user")
@@ -29,26 +31,26 @@ def build_parser():
     ms.add_parser("candidates",help="List tentative memories awaiting review")
     accept=ms.add_parser("accept"); accept.add_argument("id")
     reject=ms.add_parser("reject"); reject.add_argument("id")
-    task=sub.add_parser("task",help="Manage persistent tasks")
+    task=sub.add_parser("task",parents=[config_parent],help="Manage persistent tasks")
     ts=task.add_subparsers(dest="task_command",required=True)
     ta=ts.add_parser("add"); ta.add_argument("title"); ta.add_argument("--description",default="")
     ta.add_argument("--priority",type=int,default=3)
     tl=ts.add_parser("list"); tl.add_argument("--status")
     td=ts.add_parser("status"); td.add_argument("id"); td.add_argument("value",choices=["open","in_progress","blocked","done","cancelled"])
-    learn=sub.add_parser("learn",help="Store and retrieve lessons from feedback and outcomes")
+    learn=sub.add_parser("learn",parents=[config_parent],help="Store and retrieve lessons from feedback and outcomes")
     ls=learn.add_subparsers(dest="learn_command",required=True)
     la=ls.add_parser("add"); la.add_argument("lesson"); la.add_argument("--trigger",default="")
     la.add_argument("--category",default="general"); la.add_argument("--source",default="user")
     la.add_argument("--confidence",type=float,default=1.0)
     lq=ls.add_parser("search"); lq.add_argument("query"); lq.add_argument("--limit",type=int,default=5)
     ls.add_parser("list")
-    research=sub.add_parser("research",help="Store and search sourced research notes")
+    research=sub.add_parser("research",parents=[config_parent],help="Store and search sourced research notes")
     rs=research.add_subparsers(dest="research_command",required=True)
     ra=rs.add_parser("add"); ra.add_argument("title"); ra.add_argument("--content",required=True)
     ra.add_argument("--url"); ra.add_argument("--source-type",default="manual")
     rq=rs.add_parser("search"); rq.add_argument("query"); rq.add_argument("--limit",type=int,default=10)
-    sub.add_parser("conversations",help="List recent conversations")
-    backup=sub.add_parser("backup",help="Create a consistent SQLite backup of Evo and lab data")
+    sub.add_parser("conversations",parents=[config_parent],help="List recent conversations")
+    backup=sub.add_parser("backup",parents=[config_parent],help="Create a consistent SQLite backup of Evo and lab data")
     backup.add_argument("destination")
     return parser
 
@@ -101,17 +103,17 @@ def main():
     except Exception as exc:
         print(f"Configuration error: {exc}",file=sys.stderr); raise SystemExit(2)
     if args.command=="doctor":
-        assistant=EvoAssistant(config)
+        provider=OpenAICompatibleProvider(config.base_url,config.api_key,config.model,config.timeout_seconds)
         try:
-            models=assistant.provider.list_models()
+            models=provider.list_models()
             print(f"Endpoint: {config.base_url}\nConfigured model: {config.model}\nAvailable models:")
             for model in models: print(f"  {model}")
             if models and config.model not in models: raise SystemExit(2)
             if args.test_tools:
                 probe=[{"type":"function","function":{"name":"evo_probe","description":"Return the supplied test value.","parameters":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":False}}}]
                 try:
-                    result=assistant.provider.chat([{"role":"user","content":"Call evo_probe exactly once with value evo-tool-test."}],
-                                                   max_tokens=64,temperature=0.0,tools=probe)
+                    result=provider.chat([{"role":"user","content":"Call evo_probe exactly once with value evo-tool-test."}],
+                                         max_tokens=64,temperature=0.0,tools=probe)
                     calls=result.get("tool_calls") or []
                     if calls and calls[0]["function"]["name"]=="evo_probe":
                         print("Tool calling: supported by this model/server probe.")
@@ -123,11 +125,13 @@ def main():
                     raise SystemExit(3)
         except ProviderError as exc:
             print(str(exc),file=sys.stderr); raise SystemExit(1)
-        finally: assistant.close()
         return
     if args.command in {"chat","code"}:
         _interactive(args,config)
         return
+    if args.command=="backup" and not config.database.exists():
+        print(f"Database not found: {config.database}",file=sys.stderr)
+        raise SystemExit(2)
     store=EvoStore(config.database)
     try:
         if args.command=="backup":

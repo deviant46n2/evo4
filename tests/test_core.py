@@ -8,11 +8,12 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from evo_experiments.client import ModelRequestError, list_models, stream_chat_completion
 from evo_experiments.config import load_config
 from evo_experiments.db import ResultsDB
 from evo_experiments.evaluation import evaluate_task
-from evo_experiments.runner import build_run_manifest, load_tasks
+from evo_experiments.runner import build_run_manifest, load_tasks, run_tasks
 
 class FakeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -59,6 +60,7 @@ class HarnessTests(unittest.TestCase):
             path.write_text('[server]\nmodel="test"\n[experiment]\nrepetitions=2\n[run]\ncontext_size=49152\n', encoding="utf-8")
             config = load_config(path)
             self.assertEqual(config.model, "test")
+            self.assertEqual(config.base_url, "http://127.0.0.1:18997")
             self.assertEqual(config.repetitions, 2)
             self.assertEqual(build_run_manifest(config)["runtime_manifest"]["context_size"], 49152)
 
@@ -210,6 +212,63 @@ class HarnessTests(unittest.TestCase):
                 stream_chat_completion(base_url=f"http://127.0.0.1:{server.server_port}",
                     api_key="k", model="m", system_prompt="s", prompt="p",
                     max_tokens=5, temperature=0, timeout=3)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_empty_report_and_summary_csv_have_headers(self):
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "config.toml"
+            config.write_text(f'[experiment]\ndatabase="{Path(temp)/"empty.db"}"\n', encoding="utf-8")
+            for command, header in (("report", "id,started_at"), ("summary", "configuration,model")):
+                result = subprocess.run([sys.executable, "-m", "evo_experiments.cli", command,
+                                         "--config", str(config), "--csv"],
+                                        capture_output=True, text=True, env=env, cwd=temp, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(result.stdout.startswith(header), result.stdout)
+
+    def test_missing_config_and_tasks_report_clean_errors(self):
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "config.toml"
+            config.write_text(f'[server]\nbase_url="http://127.0.0.1:1"\ntimeout_seconds=1\n'
+                              f'[experiment]\ndatabase="{Path(temp)/"x.db"}"\n', encoding="utf-8")
+            commands = (
+                ["doctor", "--config", str(Path(temp) / "missing.toml")],
+                ["run", "--config", str(config), "--tasks", str(Path(temp) / "missing.jsonl")],
+            )
+            for command in commands:
+                result = subprocess.run([sys.executable, "-m", "evo_experiments.cli", *command],
+                                        capture_output=True, text=True, env=env, cwd=temp, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIn("Error:", result.stderr)
+
+    def test_response_is_preserved_when_evaluation_raises(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FakeHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                db_path = Path(temp) / "results.db"
+                config = Path(temp) / "config.toml"
+                config.write_text(f'[server]\nbase_url="http://127.0.0.1:{server.server_port}"\n'
+                                  f'model="fake-model"\ntimeout_seconds=3\n'
+                                  f'[experiment]\ndatabase="{db_path}"\n'
+                                  f'sample_interval_seconds=0.2\nrepetitions=1\n', encoding="utf-8")
+                tasks = Path(temp) / "tasks.jsonl"
+                tasks.write_text('{"id":"t","prompt":"p"}\n', encoding="utf-8")
+                with patch("evo_experiments.runner.evaluate_task", side_effect=RuntimeError("boom")):
+                    run_tasks(load_config(config), tasks)
+                db = ResultsDB(db_path)
+                row = db.connection.execute(
+                    "SELECT status,response,error FROM experiments").fetchone()
+                self.assertEqual(row["status"], "failed")
+                self.assertEqual(row["response"], "hello world")
+                self.assertIn("boom", row["error"])
+                db.close()
         finally:
             server.shutdown()
             server.server_close()

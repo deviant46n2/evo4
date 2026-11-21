@@ -29,7 +29,15 @@ def load_config(path: str | Path = "config.toml") -> EvoConfig:
     system = raw.get("system", {})
     assistant = raw.get("assistant", {})
     workspace = raw.get("workspace", {})
-    allowed_commands = tuple(tuple(str(part) for part in command) for command in workspace.get("allowed_commands", []) if command)
+    raw_commands = workspace.get("allowed_commands", [])
+    if not isinstance(raw_commands, list):
+        raise ValueError("workspace.allowed_commands must be a list of argv lists")
+    allowed_commands = []
+    for command in raw_commands:
+        if not isinstance(command, (list, tuple)) or not command or not all(isinstance(part, str) and part for part in command):
+            raise ValueError("workspace.allowed_commands entries must be non-empty lists of strings")
+        allowed_commands.append(tuple(command))
+    allowed_commands = tuple(allowed_commands)
     return EvoConfig(
         base_url=str(server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
         api_key=str(server.get("api_key", "no-key")),

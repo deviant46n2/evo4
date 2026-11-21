@@ -40,7 +40,7 @@ This is not yet a general autonomous software engineer: tool-call support varies
 
 ## Workspace safety boundary
 
-Workspace paths are resolved beneath a configured root. Reads are bounded by file size. Writes refuse to overwrite existing files unless explicitly authorized by the caller. Commands are argv arrays, never shell strings, and must match an explicitly configured command prefix. This is a tool foundation, not yet a model-directed autonomous coding loop.
+Workspace paths are resolved beneath a configured root. Reads are bounded by file size. Writes refuse to overwrite existing files unless explicitly authorized by the caller. Commands are argv arrays, never shell strings, and must match an explicitly configured command prefix. The workspace is a bounded tool foundation; the coding agent drives it through the approval-gated loop described above.
 
 ## Data ownership and migration
 
@@ -56,7 +56,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - Automatic memory extraction, deduplication, contradiction resolution, and consolidation.
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
-- Model tool-calling and autonomous coding-agent loop.
+- Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
 - Background jobs, task interruption/resumption, and agent scheduler.
 - Model loading/unloading and GPU arbitration.
 - GUI/web application.

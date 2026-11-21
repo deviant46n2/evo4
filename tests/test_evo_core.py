@@ -1,8 +1,12 @@
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+import evo_core.cli as evo_cli
 from evo_core.assistant import EvoAssistant
-from evo_core.config import EvoConfig
+from evo_core.config import EvoConfig, load_config
 from evo_core.store import EvoStore
 
 class StubProvider:
@@ -132,6 +136,54 @@ class EvoCoreTests(unittest.TestCase):
             config=load_config(path)
             self.assertEqual(config.workspace_root,Path("project"))
             self.assertEqual(config.allowed_commands,(("python","-m","unittest"),))
+
+    def test_allowed_commands_reject_string_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"config.toml"
+            path.write_text('[workspace]\nallowed_commands=["pytest"]\n',encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_config(path)
+
+    def test_config_option_works_before_or_after_subcommand(self):
+        parser=evo_cli.build_parser()
+        self.assertEqual(parser.parse_args(["--config","a.toml","doctor"]).config,"a.toml")
+        self.assertEqual(parser.parse_args(["doctor","--config","a.toml"]).config,"a.toml")
+        self.assertEqual(parser.parse_args(["doctor"]).config,"config.toml")
+
+    def test_doctor_and_backup_do_not_create_missing_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path=Path(tmp)/"state"/"evo.sqlite3"
+            config=Path(tmp)/"config.toml"
+            config.write_text(f'[server]\nmodel="fake-model"\n[experiment]\ndatabase="{db_path}"\n',
+                              encoding="utf-8")
+            with patch("evo_core.provider.OpenAICompatibleProvider.list_models",
+                       return_value=["fake-model"]):
+                with patch.object(sys,"argv",["evo","--config",str(config),"doctor"]):
+                    with patch("sys.stdout",new=io.StringIO()):
+                        evo_cli.main()
+            self.assertFalse(db_path.exists())
+            with patch.object(sys,"argv",["evo","--config",str(config),"backup",
+                                          str(Path(tmp)/"backup.sqlite3")]):
+                with self.assertRaises(SystemExit) as raised:
+                    with patch("sys.stderr",new=io.StringIO()):
+                        evo_cli.main()
+            self.assertEqual(raised.exception.code,2)
+            self.assertFalse(db_path.exists())
+
+    def test_like_search_treats_wildcards_literally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            store.fts_available=False
+            exact=store.add_memory("100% local inference")
+            store.add_memory("100 local inference")
+            self.assertEqual([r["id"] for r in store.search_memories("100%")],[exact])
+            lesson=store.add_lesson("Use 100% coverage",trigger_text="100%")
+            store.add_lesson("Use 100 coverage",trigger_text="100")
+            self.assertEqual([r["id"] for r in store.search_lessons("100%")],[lesson])
+            doc=store.add_research_document("100% coverage","100% coverage is required")
+            store.add_research_document("100 coverage","100 coverage is required")
+            self.assertEqual([r["id"] for r in store.search_research("100%")],[doc])
+            store.close()
 
 if __name__=="__main__":
     unittest.main()

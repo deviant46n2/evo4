@@ -22,7 +22,7 @@ def load_config(path: str | Path) -> Config:
     server, exp, system = raw.get("server", {}), raw.get("experiment", {}), raw.get("system", {})
     run = raw.get("run", {})
     return Config(
-        base_url=str(server.get("base_url", "http://127.0.0.1:8080")).rstrip("/"),
+        base_url=str(server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
         api_key=str(server.get("api_key", "no-key")),
         model=str(server.get("model", "local-model")),
         timeout_seconds=max(1, int(server.get("timeout_seconds", 600))),

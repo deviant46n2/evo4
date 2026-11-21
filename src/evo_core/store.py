@@ -8,6 +8,10 @@ import uuid
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
+def _like_pattern(term):
+    escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+    return f"%{escaped}%"
+
 class EvoStore:
     """Persistent state store. Uses SQLite WAL and FTS5 when the SQLite build supports it."""
     def __init__(self, path):
@@ -145,8 +149,8 @@ class EvoStore:
                 except sqlite3.OperationalError:
                     rows = []
             if not rows:
-                clauses = " OR ".join("content LIKE ?" for _ in terms)
-                params = [f"%{term}%" for term in terms]
+                clauses = " OR ".join("content LIKE ? ESCAPE '!'" for _ in terms)
+                params = [_like_pattern(term) for term in terms]
                 sql = f"SELECT * FROM memories WHERE status='active' AND ({clauses})"
                 if category:
                     sql += " AND category=?"; params.append(category)
@@ -262,9 +266,9 @@ class EvoStore:
         terms=[term for term in terms if len(term)>1][:12]
         if not terms:
             return []
-        clauses=" OR ".join("(trigger_text LIKE ? OR lesson LIKE ?)" for _ in terms)
+        clauses=" OR ".join("(trigger_text LIKE ? ESCAPE '!' OR lesson LIKE ? ESCAPE '!')" for _ in terms)
         params=[]
-        for term in terms: params.extend((f"%{term}%",f"%{term}%"))
+        for term in terms: params.extend((_like_pattern(term),_like_pattern(term)))
         sql=f"SELECT * FROM lessons WHERE status='active' AND ({clauses})"
         if category:
             sql+=" AND category=?"; params.append(category)
@@ -294,10 +298,10 @@ class EvoStore:
         terms = [term for term in terms if len(term)>1][:12]
         if not terms:
             return []
-        clauses = " OR ".join("(title LIKE ? OR content LIKE ?)" for _ in terms)
+        clauses = " OR ".join("(title LIKE ? ESCAPE '!' OR content LIKE ? ESCAPE '!')" for _ in terms)
         params = []
         for term in terms:
-            params.extend((f"%{term}%",f"%{term}%"))
+            params.extend((_like_pattern(term),_like_pattern(term)))
         params.append(max(1,limit))
         with self.lock:
             return self.db.execute(f"SELECT * FROM research_documents WHERE {clauses} ORDER BY captured_at DESC LIMIT ?",

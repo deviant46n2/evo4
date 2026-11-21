@@ -6,12 +6,12 @@ import urllib.request
 class ModelRequestError(RuntimeError):
     pass
 
-def _request(url, api_key, timeout):
+def _request(url, api_key):
     return urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}",
         "Accept": "application/json"})
 
 def list_models(*, base_url, api_key, timeout):
-    request = _request(f"{base_url}/v1/models", api_key, timeout)
+    request = _request(f"{base_url}/v1/models", api_key)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
