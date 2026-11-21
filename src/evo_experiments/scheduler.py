@@ -95,10 +95,10 @@ def get_job(connection, job_id):
     row = connection.execute("SELECT * FROM workload_jobs WHERE id=?", (job_id,)).fetchone()
     return _decode(row) if row else None
 
-def list_jobs(connection, limit=100):
+def list_jobs(connection, limit=100, now=None):
     bounded = min(max(int(limit), 1), 200)
     # Lazy lease reaping keeps GET refreshes truthful without a background thread.
-    if _expire_reservations(connection, _stamp()):
+    if _expire_reservations(connection, _stamp(now)):
         connection.commit()
     rows = connection.execute(
         """SELECT * FROM workload_jobs
@@ -169,7 +169,7 @@ def dispatch_jobs(connection, sample, limit=5, now=None):
                 decisions.append({"id":row["id"],"decision":decision["decision"],"reasons":decision["reasons"]})
         connection.commit()
         return {"decisions":decisions,"expired_reservations":expired,
-                "jobs":list_jobs(connection)["jobs"]}
+                "jobs":list_jobs(connection, now=now_dt)["jobs"]}
     except Exception:
         connection.rollback()
         raise
