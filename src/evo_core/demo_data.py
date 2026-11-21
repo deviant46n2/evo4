@@ -48,7 +48,7 @@ def seed_demo_data(store, lab_db):
             ("Potential preference", "When comparing local models, prioritize coding reliability and usable context over headline parameter count.", "preferences", 0.72),
             ("Potential project requirement", "The desktop should make provenance visible so sample data, user-provided facts, and model inferences are never confused.", "project", 0.81),
         ]
-        for body, category, confidence in candidates:
+        for title, body, category, confidence in candidates:
             exists = store.db.execute(
                 "SELECT id FROM memory_candidates WHERE source='demo-seed' AND content=?",
                 (body,)).fetchone()
