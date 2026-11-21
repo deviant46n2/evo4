@@ -27,6 +27,7 @@ def initialize(connection):
       id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES agent_plans(id) ON DELETE CASCADE,
       position INTEGER NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
       expected_outcome TEXT NOT NULL, verification TEXT NOT NULL,
+      verification_commands_json TEXT NOT NULL DEFAULT '[]',
       status TEXT NOT NULL DEFAULT 'pending', result TEXT NOT NULL DEFAULT '',
       started_at TEXT, finished_at TEXT, UNIQUE(plan_id,position)
     );
@@ -36,7 +37,26 @@ def initialize(connection):
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_agent_plan_events ON agent_plan_events(plan_id,id);
+    CREATE TABLE IF NOT EXISTS agent_plan_step_verifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plan_id TEXT NOT NULL REFERENCES agent_plans(id) ON DELETE CASCADE,
+      step_id TEXT NOT NULL REFERENCES agent_plan_steps(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      command_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      exit_code INTEGER,
+      stdout TEXT NOT NULL DEFAULT '',
+      stderr TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_plan_step_verifications ON agent_plan_step_verifications(plan_id,step_id,id);
     """)
+    for column, definition in (
+        ("verification_commands_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ):
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plan_steps)")}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE agent_plan_steps ADD COLUMN {column} {definition}")
     connection.commit()
 
 def _event(connection, plan_id, event_type, payload=None, step_id=None):
@@ -67,6 +87,19 @@ def create_plan(connection, request, workspace, proposal):
             raise ValueError("Each step needs a title, description, expected outcome, and verification")
         if any(len(value) > limit for value, limit in zip(values.values(), (160, 3000, 1000, 1000))):
             raise ValueError("A plan step exceeds its text limit")
+        commands = item.get("verification_commands", [])
+        if commands is None:
+            commands = []
+        if not isinstance(commands, list) or len(commands) > 5:
+            raise ValueError("verification_commands must be a list of at most 5 commands")
+        normalized_commands = []
+        for command in commands:
+            if not isinstance(command, list) or not command or not all(isinstance(part, str) and part.strip() for part in command):
+                raise ValueError("Each verification command must be a nonempty argv list of strings")
+            if len(command) > 20 or any(len(part) > 500 for part in command):
+                raise ValueError("A verification command exceeds its size limit")
+            normalized_commands.append([part.strip() for part in command])
+        values["verification_commands"] = normalized_commands
         steps.append(values)
     plan_id, stamp = uuid.uuid4().hex, _now()
     with connection:
@@ -76,10 +109,11 @@ def create_plan(connection, request, workspace, proposal):
             (plan_id, request[:20000], workspace, title, summary, "proposed", stamp, stamp))
         for index, step in enumerate(steps):
             connection.execute(
-                """INSERT INTO agent_plan_steps(id,plan_id,position,title,description,expected_outcome,verification)
-                   VALUES(?,?,?,?,?,?,?)""",
+                """INSERT INTO agent_plan_steps(id,plan_id,position,title,description,expected_outcome,verification,verification_commands_json)
+                   VALUES(?,?,?,?,?,?,?,?)""",
                 (uuid.uuid4().hex, plan_id, index, step["title"], step["description"],
-                 step["expected_outcome"], step["verification"]))
+                 step["expected_outcome"], step["verification"],
+                 json.dumps(step["verification_commands"])))
         _event(connection, plan_id, "proposed", {"step_count": len(steps)})
     return get_plan(connection, plan_id)
 
@@ -91,15 +125,38 @@ def record_event(connection, plan_id, event_type, payload=None, step_id=None):
 
 
 def _step(row):
-    return dict(row)
+    item = dict(row)
+    try:
+        item["verification_commands"] = json.loads(item.get("verification_commands_json") or "[]")
+    except (TypeError, json.JSONDecodeError):
+        item["verification_commands"] = []
+    return item
 
 def get_plan(connection, plan_id):
     row = connection.execute("SELECT * FROM agent_plans WHERE id=?", (plan_id,)).fetchone()
     if not row:
         return None
     result = dict(row)
-    result["steps"] = [_step(item) for item in connection.execute(
+    steps = [_step(item) for item in connection.execute(
         "SELECT * FROM agent_plan_steps WHERE plan_id=? ORDER BY position", (plan_id,)).fetchall()]
+    for step in steps:
+        step["verification_checks"] = [dict(v) for v in connection.execute(
+            "SELECT id,command_json,status,exit_code,stdout,stderr,created_at FROM agent_plan_step_verifications WHERE step_id=? ORDER BY id",
+            (step["id"],)).fetchall()]
+        for check in step["verification_checks"]:
+            try:
+                check["command"] = json.loads(check.pop("command_json"))
+            except (TypeError, json.JSONDecodeError):
+                check["command"] = []
+    for step in steps:
+        step["verification_status"] = step_verification_status(step)
+    result["steps"] = steps
+    result["verification_summary"] = {
+        "passed": sum(1 for s in steps if s["verification_status"] == "passed"),
+        "failed": sum(1 for s in steps if s["verification_status"] == "failed"),
+        "not_run": sum(1 for s in steps if s["verification_status"] == "not_run"),
+        "not_configured": sum(1 for s in steps if s["verification_status"] == "not_configured"),
+    }
     result["events"] = [{
         "id": item["id"], "step_id": item["step_id"], "type": item["event_type"],
         "payload": json.loads(item["payload_json"] or "{}"), "created_at": item["created_at"]
@@ -167,6 +224,31 @@ def finish_step(connection, plan_id, step_id, outcome, result=""):
             raise ValueError("Step is not running")
         _event(connection, plan_id, "step_" + outcome, {"result": str(result)[:1000]}, step_id)
     return True
+
+def record_verification(connection, plan_id, step_id, command, status, exit_code=None, stdout="", stderr=""):
+    if status not in {"passed", "failed", "denied", "error", "timed_out"}:
+        raise ValueError("Invalid verification status")
+    stamp = _now()
+    with connection:
+        connection.execute(
+            """INSERT INTO agent_plan_step_verifications
+               (plan_id,step_id,position,command_json,status,exit_code,stdout,stderr,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (plan_id, step_id,
+             connection.execute("SELECT position FROM agent_plan_steps WHERE id=?", (step_id,)).fetchone()[0],
+             json.dumps(command), status, exit_code, str(stdout)[:4000], str(stderr)[:4000], stamp))
+    return True
+
+def step_verification_status(step):
+    commands = step.get("verification_commands") or []
+    checks = step.get("verification_checks") or []
+    if not commands:
+        return "not_configured"
+    if not checks:
+        return "not_run"
+    if all(check.get("status") == "passed" for check in checks) and len(checks) >= len(commands):
+        return "passed"
+    return "failed"
 
 def finish_plan(connection, plan_id, outcome, error=""):
     if outcome not in {"completed", "failed", "cancelled", "interrupted"}:

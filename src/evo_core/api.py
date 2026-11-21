@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
-from . import background_agent, orchestration, agent_lifecycle
+from . import background_agent, lifecycle, orchestration
 from .config import load_config
 from .store import EvoStore
 from .memory_review import find_duplicate_candidates
@@ -122,14 +122,17 @@ def create_app(config_path="config.toml", provider_name=None):
     initialize_execution(lab_db.connection)
     background_agent.initialize(lab_db.connection)
     orchestration.initialize(lab_db.connection)
-    agent_lifecycle.initialize(lab_db.connection)
     with lab_db.lock:
         recover_interrupted_executions(lab_db.connection)
         recovered_agent_tasks = background_agent.recover(lab_db.connection)
         orchestration.recover_plans(lab_db.connection)
         for recovered_id in recovered_agent_tasks:
             store.finish_agent_run(recovered_id, "interrupted", "Evo restarted; in-flight work was not resumed.")
-        agent_lifecycle.reconcile(lab_db.connection, store)
+    # Converge every lifecycle record onto one durable terminal decision. This is
+    # repeatable: already-repaired records are left alone and completed records
+    # are never downgraded. Nothing is replayed and no process is signalled.
+    lifecycle.initialize(lab_db.connection)
+    app.state.lifecycle_report = lifecycle.reconcile(store, lab_db)
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
     # Shutdown waits for active turns before closing the shared SQLite store.
@@ -712,6 +715,23 @@ def create_app(config_path="config.toml", provider_name=None):
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    def _finalize_agent_run(run_id, outcome, reason, plan_id=None):
+        """Record one durable decision, then mirror it into dependent records.
+
+        The decision is committed before any mirror update, so a crash between
+        the two is repaired by the next startup reconciliation.
+        """
+        with lab_db.lock:
+            result = lifecycle.decide(lab_db.connection, run_id, outcome,
+                                      source="worker", reason=reason)
+            decision = result["decision"]
+        lifecycle.apply_decision(store, decision)
+        with lab_db.lock:
+            lifecycle.apply_background_from_decision(lab_db.connection, decision)
+            if plan_id:
+                lifecycle.apply_plan_decision(lab_db.connection, plan_id, decision)
+        return decision
+
     @app.post("/api/v1/agents/plans/{plan_id}/execute", status_code=202)
     def execute_agent_plan(plan_id: str):
         if shutting_down.is_set():
@@ -728,14 +748,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
-            try:
-                background_agent.create(lab_db.connection, run_id)
-                orchestration.attach_run(lab_db.connection, plan_id, run_id)
-            except Exception:
-                store.finish_agent_run(run_id, "failed", "Unable to attach orchestrated run")
-                with lab_db.lock:
-                    background_agent.decide_finalization(lab_db.connection, run_id, "failed", "Unable to attach orchestrated run", {"plan_id": plan_id})
-                raise HTTPException(status_code=503, detail="Unable to start orchestrated worker")
+            background_agent.create(lab_db.connection, run_id)
+            orchestration.attach_run(lab_db.connection, plan_id, run_id)
         stop_event = threading.Event()
         with agent_registry_guard:
             agent_stop_events[run_id] = stop_event
@@ -745,11 +759,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures[run_id] = future
             future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
         except Exception as exc:
-            store.finish_agent_run(run_id, "failed", "Unable to start orchestrated worker")
-            with lab_db.lock:
-                background_agent.decide_finalization(lab_db.connection, run_id, "failed", "Unable to start orchestrated worker", {"plan_id": plan_id})
-                background_agent.transition(lab_db.connection, run_id, "failed", {"error": "Unable to start worker"})
-                orchestration.finish_plan(lab_db.connection, plan_id, "failed", "Unable to start worker")
+            _finalize_agent_run(run_id, "failed", "Unable to start orchestrated worker", plan_id)
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start orchestrated worker") from exc
@@ -767,26 +777,15 @@ def create_app(config_path="config.toml", provider_name=None):
         stop_event = threading.Event()
         with agent_registry_guard:
             agent_stop_events[run_id] = stop_event
-        try:
-            with lab_db.lock:
-                background_agent.create(lab_db.connection, run_id)
-        except Exception:
-            store.finish_agent_run(run_id, "failed", "Unable to create background task")
-            with lab_db.lock:
-                background_agent.decide_finalization(lab_db.connection, run_id, "failed", "Unable to create background task", {})
-            with agent_registry_guard:
-                agent_stop_events.pop(run_id, None)
-            raise HTTPException(status_code=503, detail="Unable to start agent worker")
+        with lab_db.lock:
+            background_agent.create(lab_db.connection, run_id)
         try:
             future = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
             with agent_registry_guard:
                 agent_futures[run_id] = future
             future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
         except Exception as exc:
-            store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
-            with lab_db.lock:
-                background_agent.decide_finalization(lab_db.connection, run_id, "failed", "Unable to start agent worker", {})
-                background_agent.transition(lab_db.connection, run_id, "failed", {"error": "Unable to start agent worker"})
+            _finalize_agent_run(run_id, "failed", "Unable to start agent worker")
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
@@ -801,6 +800,9 @@ def create_app(config_path="config.toml", provider_name=None):
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
                 agent_futures.pop(run_id, None)
+            with lab_db.lock:
+                decision = lifecycle.finalize_unclaimed(lab_db.connection, run_id)
+            lifecycle.apply_decision(store, decision)
             return
         def progress(event_type, payload):
             with lab_db.lock:
@@ -862,47 +864,54 @@ def create_app(config_path="config.toml", provider_name=None):
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
                         stop_event=stop_event, on_progress=progress, finalize_run=False)
                     step_status = step_result.get("status")
-                    step_outcome = "completed" if step_status == "completed" else "interrupted" if step_status == "cancelled" else "failed"
+                    verification_status = "not_configured"
+                    for command in (step.get("verification_commands") or []):
+                        if stop_event.is_set() or shutting_down.is_set():
+                            break
+                        approved = approval("run_command", {"argv": command, "timeout_seconds": 120})
+                        if not approved:
+                            with lab_db.lock:
+                                orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "denied", None, "", "Verification command was denied.")
+                            verification_status = "failed"
+                            continue
+                        try:
+                            result = agent.workspace.run(command, 120)
+                            status = "passed" if result.get("returncode") == 0 else "failed"
+                            with lab_db.lock:
+                                orchestration.record_verification(
+                                    lab_db.connection, plan_id, step["id"], command, status,
+                                    result.get("returncode"), result.get("stdout", ""), result.get("stderr", ""))
+                            if status != "passed":
+                                verification_status = "failed"
+                        except Exception as exc:
+                            with lab_db.lock:
+                                orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "error", None, "", str(exc))
+                            verification_status = "failed"
+                    if verification_status == "failed":
+                        step_outcome = "failed"
+                    else:
+                        step_outcome = "completed" if step_status == "completed" else "interrupted" if step_status == "cancelled" else "failed"
                     with lab_db.lock:
                         orchestration.finish_step(lab_db.connection, plan_id, step["id"], step_outcome,
                             step_result.get("content", step_status or "No result"))
                     if step_outcome != "completed":
                         raise RuntimeError("Plan stopped because step '" + step["title"] + "' did not complete")
-                store.finish_agent_run(run_id, "completed", "All approved plan steps completed.")
-            # Serialize cancellation against terminal completion. If cancellation
-            # wins this lock, it wins the final state; if completion wins, later
-            # cancellation sees a terminal task and is rejected.
-            with agent_registry_guard:
+            if plan_id is None:
                 final = store.get_agent_run(run_id)
-                if stop_event.is_set() and final and final["status"] != "interrupted":
-                    store.finish_agent_run(run_id, "cancelled", "Cancellation was requested before terminal completion.")
-                final = store.get_agent_run(run_id)
-                final_status = final["status"] if final else "failed"
-                target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
-                with lab_db.lock:
-                    background_agent.decide_finalization(lab_db.connection, run_id, target,
-                        final["summary"] if final else "", {"plan_id": plan_id})
-                    task = background_agent.get(lab_db.connection, run_id)
-                    if task and task["status"] not in {"interrupted"}:
-                        background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
-                    if plan_id and task:
-                        plan = orchestration.get_plan(lab_db.connection, plan_id)
-                        if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
-                            outcome = "completed" if target == "completed" else "cancelled" if target == "cancelled" else "failed"
-                            orchestration.finish_plan(lab_db.connection, plan_id, outcome, final["summary"] if final else "")
+                outcome = final["status"] if final and final["status"] in lifecycle.TERMINAL else "failed"
+                reason = (final["summary"] if final and final["summary"] else "Agent run finished.")
+            else:
+                outcome = "completed"
+                reason = "All approved plan steps completed."
+            if stop_event.is_set() and outcome == "completed":
+                outcome = "cancelled"
+                reason = "Cancellation was requested before terminal completion."
+            # One durable decision wins; the background task and plan are mirrored
+            # from it and never overwrite a competing terminal record.
+            _finalize_agent_run(run_id, outcome, reason, plan_id)
         except Exception as exc:
-            target = "cancelled" if stop_event.is_set() else "failed"
-            store.finish_agent_run(run_id, target, f"{type(exc).__name__}: {exc}")
-            with lab_db.lock:
-                background_agent.decide_finalization(lab_db.connection, run_id, target,
-                    f"{type(exc).__name__}: {exc}", {"plan_id": plan_id})
-                task = background_agent.get(lab_db.connection, run_id)
-                if task and task["status"] not in {"interrupted"}:
-                    background_agent.transition(lab_db.connection, run_id, target, {"error": f"{type(exc).__name__}: {exc}"})
-                if plan_id:
-                    plan = orchestration.get_plan(lab_db.connection, plan_id)
-                    if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
-                        orchestration.finish_plan(lab_db.connection, plan_id, target, str(exc))
+            _finalize_agent_run(run_id, "cancelled" if stop_event.is_set() else "failed",
+                                f"{type(exc).__name__}: {exc}", plan_id)
         finally:
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
@@ -921,9 +930,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 if not background_agent.request_cancel(lab_db.connection, run_id):
                     return {"cancelled": False, "status": task["status"]}
                 if previous_status == "queued":
-                    store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
-                    background_agent.decide_finalization(lab_db.connection, run_id, "cancelled", "Cancelled before execution began.", {})
                     background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
+                    store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
                     plan_row = lab_db.connection.execute("SELECT id FROM agent_plans WHERE run_id=?", (run_id,)).fetchone()
                     if plan_row:
                         orchestration.finish_plan(lab_db.connection, plan_row["id"], "cancelled",

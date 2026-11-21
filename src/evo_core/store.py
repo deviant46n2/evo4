@@ -9,6 +9,8 @@ import uuid
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
+TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
+
 def _like_pattern(term):
     escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     return f"%{escaped}%"
@@ -588,22 +590,42 @@ class EvoStore:
             self.db.commit()
         return run_id
 
-    TERMINAL_AGENT_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
-
     def finish_agent_run(self, run_id, status, summary=""):
-        if status not in self.TERMINAL_AGENT_RUN_STATUSES:
+        if status not in TERMINAL_RUN_STATUSES:
+            raise ValueError("Invalid agent run status")
+        # Terminal outcomes are written once. Repeats are idempotent and a
+        # conflicting terminal outcome is preserved instead of overwritten.
+        with self.lock:
+            cursor=self.db.execute(
+                "UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=? "
+                "AND status NOT IN ('completed','failed','cancelled','interrupted')",
+                (status,utc_now(),summary,run_id))
+            self.db.commit()
+            return cursor.rowcount==1
+
+    def apply_agent_run_decision(self, run_id, outcome, summary="", source="lifecycle"):
+        """Mirror a durable finalization decision into the run record."""
+        if outcome not in TERMINAL_RUN_STATUSES:
             raise ValueError("Invalid agent run status")
         with self.lock:
-            row = self.db.execute("SELECT status FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+            row=self.db.execute("SELECT status FROM agent_runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
-                return False
-            if row["status"] in self.TERMINAL_AGENT_RUN_STATUSES:
-                # Terminal states are durable; do not overwrite an existing outcome.
-                return False
-            self.db.execute("UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=?",
-                            (status, utc_now(), summary, run_id))
+                return {"applied": False, "reason": "missing"}
+            if row["status"] == outcome:
+                return {"applied": False, "reason": "consistent"}
+            if row["status"] in TERMINAL_RUN_STATUSES:
+                return {"applied": False, "reason": "conflict", "existing": row["status"]}
+            cursor=self.db.execute(
+                "UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=? "
+                "AND status NOT IN ('completed','failed','cancelled','interrupted')",
+                (outcome,utc_now(),summary,run_id))
             self.db.commit()
-            return True
+            return {"applied": cursor.rowcount==1, "previous": row["status"]}
+
+    def list_active_agent_runs(self):
+        with self.lock:
+            return self.db.execute(
+                "SELECT * FROM agent_runs WHERE status='running' ORDER BY started_at").fetchall()
 
     def update_agent_run_metadata(self, run_id, updates):
         if not isinstance(updates,dict):
