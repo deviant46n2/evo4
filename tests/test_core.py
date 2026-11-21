@@ -191,7 +191,9 @@ class HarnessTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as temp:
                 path = Path(temp) / "config.toml"
-                path.write_text(f'[server]\nbase_url="http://127.0.0.1:{server.server_port}"\n',encoding="utf-8")
+                path.write_text(chr(10).join([
+                    '[server]', f'base_url="http://127.0.0.1:{server.server_port}"'
+                ]),encoding="utf-8")
                 manifest = build_run_manifest(load_config(path))
                 props = manifest["runtime_manifest"]["server_props"]
                 self.assertTrue(manifest["runtime_manifest"]["server_props_available"])
@@ -211,9 +213,11 @@ class HarnessTests(unittest.TestCase):
                 config_path = Path(temp) / "config.toml"
                 db_path = Path(temp) / "results.db"
                 tasks_path = Path(temp) / "tasks.jsonl"
-                config_path.write_text(f'[server]\nbase_url="http://127.0.0.1:{server.server_port}"\n'
-                    f'[experiment]\ndatabase="{db_path}"\nseed=41\nmax_tokens=20\n',encoding="utf-8")
-                tasks_path.write_text(json.dumps({"id":"t","prompt":"solve","expected_contains":"world"})+"\n",
+                config_path.write_text(chr(10).join([
+                    '[server]', f'base_url="http://127.0.0.1:{server.server_port}"',
+                    '[experiment]', f'database="{db_path}"', 'seed=41', 'max_tokens=20'
+                ]),encoding="utf-8")
+                tasks_path.write_text(json.dumps({"id":"t","prompt":"solve","expected_contains":"world"})+chr(10),
                                       encoding="utf-8")
                 ids = run_tasks(load_config(config_path),tasks_path,repetitions=2)
                 db = ResultsDB(db_path)
