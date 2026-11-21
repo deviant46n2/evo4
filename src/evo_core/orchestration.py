@@ -45,8 +45,13 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
 def create_plan(connection, request, workspace, proposal):
-    title = str(proposal.get("title", "")).strip()[:160]
-    summary = str(proposal.get("summary", "")).strip()[:3000]
+    if not isinstance(proposal, dict):
+        raise ValueError("Plan proposal must be an object")
+    raw_title, raw_summary = proposal.get("title"), proposal.get("summary")
+    if not isinstance(raw_title, str) or not isinstance(raw_summary, str):
+        raise ValueError("Plan title and summary must be text")
+    title = raw_title.strip()[:160]
+    summary = raw_summary.strip()[:3000]
     raw_steps = proposal.get("steps")
     if not title or not summary or not isinstance(raw_steps, list) or not 1 <= len(raw_steps) <= 12:
         raise ValueError("Plan must include a title, summary, and 1-12 steps")
@@ -54,8 +59,10 @@ def create_plan(connection, request, workspace, proposal):
     for index, item in enumerate(raw_steps):
         if not isinstance(item, dict):
             raise ValueError("Every plan step must be an object")
-        values = {key: str(item.get(key, "")).strip() for key in
-                  ("title", "description", "expected_outcome", "verification")}
+        keys = ("title", "description", "expected_outcome", "verification")
+        if any(not isinstance(item.get(key), str) for key in keys):
+            raise ValueError("Plan step fields must all be text")
+        values = {key: item[key].strip() for key in keys}
         if any(not values[key] for key in values):
             raise ValueError("Each step needs a title, description, expected outcome, and verification")
         if any(len(value) > limit for value, limit in zip(values.values(), (160, 3000, 1000, 1000))):
