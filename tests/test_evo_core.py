@@ -1,4 +1,5 @@
 import io
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -74,6 +75,20 @@ class EvoCoreTests(unittest.TestCase):
             self.assertIn("18997",messages[0]["content"])
             self.assertIn("8080",messages[0]["content"])
             assistant.close()
+
+    def test_failed_supersession_rolls_back_new_memory_and_status_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            old_id=store.add_memory("Old active record")
+            store.db.execute(
+                "CREATE TRIGGER reject_relation BEFORE INSERT ON memory_relations BEGIN SELECT RAISE(ABORT,'forced failure'); END")
+            store.db.commit()
+            with self.assertRaises(sqlite3.IntegrityError):
+                store.supersede_memory(old_id,"Replacement record")
+            old=store.db.execute("SELECT status FROM memories WHERE id=?",(old_id,)).fetchone()
+            self.assertEqual(old["status"],"active")
+            self.assertEqual(len(store.list_memories()),1)
+            store.close()
 
     def test_superseding_unknown_memory_does_not_create_replacement(self):
         with tempfile.TemporaryDirectory() as tmp:
