@@ -55,16 +55,21 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - New agent actions should create auditable tool-event records.
 - Avoid coupling the lab database schema to internal assistant implementation details.
 
+## Implemented since the original architecture snapshot
+
+- A React/Vite desktop application with Chat, Agents, Memory, Hardware, and Experiments workspaces.
+- Runtime discovery, persistent runtime profiles, architecture-derived KV estimates, and conservative workload admission.
+- A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit user-confirmed lifecycle transitions. It does not execute or stop processes.
+
 ## Deliberately not implemented yet
 
-- Automatic memory extraction, deduplication, contradiction resolution, and consolidation.
+- Automatic memory extraction beyond narrow first-person heuristics, semantic deduplication, automatic contradiction adjudication, and consolidation.
 - Automated outcome adjudication or autonomous lesson promotion; current experiential feedback is explicitly user-confirmed.
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
 - Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Background jobs, task interruption/resumption, and agent scheduler.
-- Model loading/unloading and GPU arbitration.
-- GUI/web application.
+- Agent execution workers, pause/resume, interruption, and restart-safe execution. The workload scheduler tracks and reserves jobs but does not execute them.
+- Model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
 - Autonomous self-modification or online weight training.
 
 These are future layers, not reasons to discard the current foundation.
