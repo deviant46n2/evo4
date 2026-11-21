@@ -14,7 +14,7 @@ Increase the useful capabilities of the user's existing workstation through meas
 - `assistant.py`: conversation orchestration and lexical memory retrieval.
 - `cli.py`: interactive terminal interface and data-management commands.
 - `workspace.py`: constrained project workspace API.
-- `coding_agent.py`: bounded model-directed tool loop with approval-gated writes and command execution.
+- `coding_agent.py`: bounded model-directed tool loop with project orientation, explicit verification policy, approval-gated writes and command execution.
 
 ### Evo Lab (`src/evo_experiments`)
 
@@ -34,7 +34,7 @@ The assistant depends on a narrow chat interface and currently ships one OpenAI-
 
 ## Coding-agent loop
 
-The coding agent sends OpenAI-compatible function definitions to the provider and reassembles streamed tool-call deltas. It supports workspace listing, reading, literal search, writing, and allowlisted command execution. Read-only operations are automatic; writes and commands require an explicit approval callback. Each run and tool event is persisted. The loop has a hard tool-round limit.
+The coding agent sends OpenAI-compatible function definitions to the provider and reassembles streamed tool-call deltas. It begins with a bounded project-inspection tool that returns safe top-level entries, a capped file list, and selected project manifests/instructions while excluding ignored and credential-like paths. Its system policy asks it to inspect before editing, minimize scope, run relevant checks, and report only observed outcomes. It supports workspace listing, reading, literal search, writing, and allowlisted command execution. Read-only operations are automatic; writes and commands require an explicit approval callback. Each run and tool event is persisted. Reaching the hard tool-round limit is recorded as a failed/incomplete run, not a completed one.
 
 This is not yet a general autonomous software engineer: tool-call support varies by model/server, command allowlists need local configuration, and no target-machine validation has been performed.
 
