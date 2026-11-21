@@ -840,20 +840,25 @@ def create_app(config_path="config.toml", provider_name=None):
                     if step_outcome != "completed":
                         raise RuntimeError("Plan stopped because step '" + step["title"] + "' did not complete")
                 store.finish_agent_run(run_id, "completed", "All approved plan steps completed.")
+            # Serialize cancellation against terminal completion. If cancellation
+            # wins this lock, it wins the final state; if completion wins, later
+            # cancellation sees a terminal task and is rejected.
+            with agent_registry_guard:
+                final = store.get_agent_run(run_id)
+                if stop_event.is_set() and final and final["status"] != "interrupted":
+                    store.finish_agent_run(run_id, "cancelled", "Cancellation was requested before terminal completion.")
+                final = store.get_agent_run(run_id)
+                final_status = final["status"] if final else "failed"
                 with lab_db.lock:
-                    orchestration.finish_plan(lab_db.connection, plan_id, "completed")
-            final = store.get_agent_run(run_id)
-            final_status = final["status"] if final else "failed"
-            with lab_db.lock:
-                task = background_agent.get(lab_db.connection, run_id)
-                if task and task["status"] not in {"interrupted"}:
-                    target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
-                    background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
-                if plan_id and task and target != "completed":
-                    plan = orchestration.get_plan(lab_db.connection, plan_id)
-                    if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
-                        outcome = "cancelled" if target == "cancelled" else "failed"
-                        orchestration.finish_plan(lab_db.connection, plan_id, outcome, final["summary"] if final else "")
+                    task = background_agent.get(lab_db.connection, run_id)
+                    if task and task["status"] not in {"interrupted"}:
+                        target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
+                        background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
+                    if plan_id and task:
+                        plan = orchestration.get_plan(lab_db.connection, plan_id)
+                        if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
+                            outcome = "completed" if target == "completed" else "cancelled" if target == "cancelled" else "failed"
+                            orchestration.finish_plan(lab_db.connection, plan_id, outcome, final["summary"] if final else "")
         except Exception as exc:
             store.finish_agent_run(run_id, "cancelled" if stop_event.is_set() else "failed", f"{type(exc).__name__}: {exc}")
             with lab_db.lock:
@@ -873,20 +878,26 @@ def create_app(config_path="config.toml", provider_name=None):
 
     @app.post("/api/v1/agents/{run_id}/cancel")
     def cancel_agent(run_id: str):
-        with lab_db.lock:
-            task = background_agent.get(lab_db.connection, run_id)
-            if task is None:
-                raise HTTPException(status_code=404, detail="Background agent task not found")
-            previous_status = task["status"]
-            if not background_agent.request_cancel(lab_db.connection, run_id):
-                return {"cancelled": False, "status": task["status"]}
-            if previous_status == "queued":
-                background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
-                store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
+        # Same lock order as worker finalization prevents a late cancellation
+        # from racing a completed terminal state.
         with agent_registry_guard:
+            with lab_db.lock:
+                task = background_agent.get(lab_db.connection, run_id)
+                if task is None:
+                    raise HTTPException(status_code=404, detail="Background agent task not found")
+                previous_status = task["status"]
+                if not background_agent.request_cancel(lab_db.connection, run_id):
+                    return {"cancelled": False, "status": task["status"]}
+                if previous_status == "queued":
+                    background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
+                    store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
+                    plan_row = lab_db.connection.execute("SELECT id FROM agent_plans WHERE run_id=?", (run_id,)).fetchone()
+                    if plan_row:
+                        orchestration.finish_plan(lab_db.connection, plan_row["id"], "cancelled",
+                                                  "Cancelled before worker claim.")
             stop_event = agent_stop_events.get(run_id)
-        if stop_event:
-            stop_event.set()
+            if stop_event:
+                stop_event.set()
         with approval_guard:
             for item in pending_approvals.values():
                 if item["run_id"] == run_id:
