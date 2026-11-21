@@ -115,12 +115,12 @@ class AgentOrchestrationTests(unittest.TestCase):
     def test_markdown_fenced_model_json_is_unwrapped(self):
         class Provider:
             def chat(self, messages, **kwargs):
-                return {"content": ```json
+                return {"content": """```json
 {"title":"T","summary":"S","steps":[
   {"title":"I","description":"Inspect","expected_outcome":"Understand the code",
    "verification":"Read relevant files"}
 ]}
-```}
+```"""}
         proposal = orchestration.propose_with_model(Provider(), "Do work", "/workspace")
         self.assertEqual(proposal["title"], "T")
         self.assertEqual(len(proposal["steps"]), 1)
