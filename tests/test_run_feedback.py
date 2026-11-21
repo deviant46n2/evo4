@@ -98,6 +98,21 @@ class RunFeedbackTests(unittest.TestCase):
         self.assertEqual(summary["feedback_outcomes"],{"success":1})
         self.assertEqual(summary["average_tool_calls"],4.0)
 
+    def test_backup_preserves_feedback_and_linked_lesson(self):
+        run_id=self.make_run()
+        result=self.store.record_run_feedback(
+            run_id,"failure","A regression was found.",
+            "Run regression tests before merging changes.","regression tests")
+        destination=self.store.backup(Path(self.tmp.name)/"backup.sqlite3")
+        restored=EvoStore(destination)
+        try:
+            feedback=restored.list_run_feedback(run_id)
+            self.assertEqual(len(feedback),1)
+            self.assertEqual(feedback[0]["lesson_id"],result["lesson_id"])
+            self.assertEqual(len(restored.search_lessons("regression tests")),1)
+        finally:
+            restored.close()
+
     def test_run_history_and_tool_events_are_inspectable(self):
         run_id=self.make_run()
         self.store.record_tool_event(run_id,"read_file",{"path":"main.py"},{"ok":True},"completed")
