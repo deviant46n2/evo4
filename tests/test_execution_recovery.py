@@ -272,5 +272,112 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertEqual(get_job(self.db, job_two["id"])["status"], "failed")
 
 
+    def test_finalization_rolls_back_when_scheduler_update_fails(self):
+        job = self.reserve("finalization-scheduler-fail")
+        record = self.register(job)
+
+        class SchedulerFailProxy:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def execute(self, sql, *args, **kwargs):
+                if "SET status='launching'" in sql:
+                    raise sqlite3.OperationalError("launch intent write failed")
+                if "UPDATE workload_jobs" in sql:
+                    raise sqlite3.OperationalError("scheduler finalization failed")
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = SchedulerFailProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertIn(result["status"], {"queued", "launching"})
+        self.assertEqual(get_job(self.db, job["id"])["status"], "running")
+
+    def test_finalization_rolls_back_when_execution_update_fails(self):
+        job = self.reserve("finalization-execution-fail")
+        record = self.register(job)
+
+        class ExecutionFailProxy:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def execute(self, sql, *args, **kwargs):
+                if "SET status='launching'" in sql:
+                    raise sqlite3.OperationalError("launch intent write failed")
+                if "SET status='failed'" in sql:
+                    raise sqlite3.OperationalError("execution finalization failed")
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = ExecutionFailProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertIn(result["status"], {"queued", "launching"})
+        self.assertEqual(get_job(self.db, job["id"])["status"], "running")
+
+    def test_finalization_db_unavailable_leaves_recoverable_state(self):
+        job = self.reserve("finalization-db-unavailable")
+        record = self.register(job)
+
+        class DbUnavailableProxy:
+            def __init__(self, connection):
+                self._connection = connection
+                self._select_calls = 0
+
+            def execute(self, sql, *args, **kwargs):
+                if "SET status='launching'" in sql:
+                    raise sqlite3.OperationalError("launch intent write failed")
+                if sql.lstrip().upper().startswith("SELECT"):
+                    self._select_calls += 1
+                    if self._select_calls >= 2:
+                        raise sqlite3.OperationalError("database unavailable")
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = DbUnavailableProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertIn(result["status"], {"queued", "launching"})
+        self.assertEqual(get_job(self.db, job["id"])["status"], "running")
+
+    def test_successful_failure_finalization_marks_both_failed(self):
+        job = self.reserve("finalization-success")
+        record = self.register(job)
+
+        class LaunchIntentProxy:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def execute(self, sql, *args, **kwargs):
+                if "SET status='launching'" in sql:
+                    raise sqlite3.OperationalError("launch intent write failed")
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = LaunchIntentProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Launch intent could not be persisted", result["error"])
+        self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -146,28 +146,34 @@ def run_execution(connection, lock, execution_id):
             connection.commit()
             launch_intent_persisted = True
     except Exception as exc:
+        error_text = f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}"
         with lock:
-            connection.rollback()
-            current = get_execution(connection, execution_id)
+            try:
+                connection.rollback()
+            except Exception:
+                pass
+            try:
+                current = get_execution(connection, execution_id)
+            except Exception:
+                # Database unavailable: leave the queued/launching row and running
+                # job for startup recovery instead of claiming finalization.
+                return
             if current is not None and current["status"] in {"queued", "launching"}:
-                connection.execute(
-                    """UPDATE workload_executions
-                       SET status='failed', finished_at=?, error=?, pid=NULL
-                       WHERE id=? AND status IN ('queued', 'launching')""",
-                    (_now(), f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
-                     execution_id))
-                job = get_job(connection, record["job_id"])
-                if job and job["status"] == "running":
-                    try:
-                        finish_job(connection, record["job_id"], "failed",
-                                   f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
-                                   commit=False)
-                    except Exception:
-                        pass
                 try:
+                    connection.execute(
+                        """UPDATE workload_executions
+                           SET status='failed', finished_at=?, error=?, pid=NULL
+                           WHERE id=? AND status IN ('queued', 'launching')""",
+                        (_now(), error_text, execution_id))
+                    job = get_job(connection, record["job_id"])
+                    if job and job["status"] == "running":
+                        finish_job(connection, record["job_id"], "failed", error_text, commit=False)
                     connection.commit()
                 except Exception:
-                    connection.rollback()
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
         return
     try:
         process = subprocess.Popen(
