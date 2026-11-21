@@ -43,7 +43,7 @@ class EvoCoreTests(unittest.TestCase):
             store=EvoStore(Path(tmp)/"evo.db")
             old_id=store.add_memory("The project uses an older model runtime setting","environment")
             new_id=store.supersede_memory(old_id,
-                "The project now uses the updated model runtime setting",
+                "The project now uses Qwen configuration profile B",
                 reason="User corrected the previous configuration.")
             old=store.db.execute("SELECT status FROM memories WHERE id=?",(old_id,)).fetchone()
             new=store.db.execute("SELECT status FROM memories WHERE id=?",(new_id,)).fetchone()
@@ -57,9 +57,10 @@ class EvoCoreTests(unittest.TestCase):
             config=self.make_config(Path(tmp)/"evo.db")
             assistant=EvoAssistant(config,store,StubProvider())
             cid=assistant.new_conversation()
+            self.assertEqual(store.search_memories("older model runtime setting"),[])
             messages=assistant._build_messages(cid,"older model runtime setting")
             self.assertIn("supersedes an older memory",messages[0]["content"])
-            self.assertIn("updated model runtime setting",messages[0]["content"])
+            self.assertIn("Qwen configuration profile B",messages[0]["content"])
             assistant.close()
 
     def test_explicit_contradiction_is_injected_into_assistant_context(self):
