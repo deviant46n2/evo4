@@ -20,9 +20,23 @@ class HardwareIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["decision"],"unknown"); self.assertFalse(result["process_actions"])
     def test_reserve_prevents_oversubscription(self):
         sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":12000,"ram_available_bytes":8*1024**3,"ram_used_percent":50}
-        self.assertEqual(assess_workload(sample,{"kind":"benchmark","gpu_heavy":True,"estimated_vram_mib":4000})["decision"],"defer")
-    def test_default_benchmark_is_gpu_heavy_and_unknown_fails_closed(self):
-        result=assess_workload({},{"kind":"benchmark","estimated_vram_mib":2048})
+        self.assertEqual(assess_workload(sample,{"kind":"benchmark","gpu_heavy":True,"estimated_vram_mib":4000,"estimated_ram_mib":512})["decision"],"defer")
+    def test_default_background_is_gpu_heavy_and_unknown_fails_closed(self):
+        result=assess_workload({},{"kind":"benchmark","estimated_vram_mib":2048,"estimated_ram_mib":512})
+        self.assertEqual(result["decision"],"unknown")
+    def test_background_without_resource_estimates_is_unknown(self):
+        self.assertEqual(assess_workload({},{"kind":"background"})["decision"],"unknown")
+    def test_cpu_only_background_still_requires_ram_headroom_and_estimate(self):
+        sample={"ram_available_bytes":8*1024**3,"ram_used_percent":50}
+        result=assess_workload(sample,{"kind":"background","gpu_heavy":False,"estimated_ram_mib":512})
+        self.assertEqual(result["decision"],"allow")
+    def test_ram_reserve_prevents_cpu_only_background_work(self):
+        sample={"ram_available_bytes":2*1024**3,"ram_used_percent":80}
+        result=assess_workload(sample,{"kind":"background","gpu_heavy":False,"estimated_ram_mib":512})
+        self.assertEqual(result["decision"],"defer")
+    def test_gpu_background_with_missing_vram_demand_is_unknown(self):
+        sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":2000,"ram_available_bytes":8*1024**3}
+        result=assess_workload(sample,{"kind":"background","estimated_ram_mib":512})
         self.assertEqual(result["decision"],"unknown")
     def test_interactive_priority_does_not_preempt(self):
         result=assess_workload({},{"kind":"chat"})
