@@ -63,7 +63,7 @@ class HardeningFeatureTests(unittest.TestCase):
                 messages=[
                     {"role":"system","content":"BASE POLICY\n"+"retrieved memory "*300},
                     {"role":"user","content":"oldest "*1000},
-                    {"role":"assistant","content":"middle "*1000},
+                    {"role":"assistant","content":"middle "*2000},
                     {"role":"user","content":"newest history"},
                     {"role":"user","content":"CURRENT REQUEST"},
                 ]
