@@ -17,7 +17,7 @@ Each lifecycle transition is append-only and timestamped. Tool proposals and res
 - A task is atomically claimed from the queued state. Concurrent workers cannot claim the same task.
 - Read-only project inspection remains automatic.
 - File writes and allowlisted commands still require explicit approval for each action.
-- Cancellation is cooperative. Evo checks the cancellation signal before and after provider calls and before starting each next tool action. A provider request already in flight cannot currently be interrupted; cancellation takes effect when that request returns.
+- Cancellation is cooperative. Evo checks the cancellation signal before and after provider calls and before starting each next tool action. A provider request or an already-started tool action cannot currently be interrupted; cancellation takes effect when that operation returns or reaches its own timeout. Evo checks again before beginning the next side effect.
 - Denied actions are not executed. Cancelling while awaiting approval resolves the approval as denied.
 - Existing managed command execution continues to use its own argv allowlist, timeout, output bounds, and private child process group.
 - No arbitrary model-generated shell strings, process attachment, or process management is introduced.
