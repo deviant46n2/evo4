@@ -40,6 +40,19 @@ class MemoryReviewTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertLessEqual(len(first), 3)
 
+    def test_review_pairs_are_disjoint_and_one_record_cannot_dominate(self):
+        rows = [
+            {"id": "a", "content": "RTX 5070 Ti 16 GB VRAM CUDA support local graphics"},
+            {"id": "b", "content": "RTX 5070 Ti 16 GB VRAM CUDA support local graphics card"},
+            {"id": "c", "content": "RTX 5070 Ti 16 GB VRAM CUDA support local graphics device"},
+            {"id": "d", "content": "Ryzen 9800X3D processor desktop CPU cores"},
+            {"id": "e", "content": "Ryzen 9800X3D processor desktop CPU cores chip"},
+        ]
+        result = find_duplicate_candidates(rows, limit=10)
+        ids = [item[key]["id"] for item in result for key in ("left", "right")]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertIn({"d", "e"}, [{item["left"]["id"], item["right"]["id"]} for item in result])
+
     def test_input_records_are_never_mutated(self):
         rows = [{"id": "a", "content": "RTX 5070 Ti 16 GB VRAM CUDA"},
                 {"id": "b", "content": "RTX 5070 Ti 16 GB VRAM CUDA"}]
