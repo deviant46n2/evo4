@@ -284,7 +284,7 @@ class EvoStore:
                 if category_hits: reasons.append("category: " + ", ".join(sorted(category_hits)))
                 if exact: reasons.append("exact phrase")
                 item = dict(row)
-                item.update(retrieval_score=round(score,6), retrieval_coverage=round(coverage,4),
+                item.update(retrieval_score=round(min(score,1.0),6), retrieval_coverage=round(coverage,4),
                             retrieval_matched_terms=sorted(matched),
                             retrieval_reason="; ".join(reasons) or "lexical candidate",
                             retrieval_method="hybrid-fts-like" if rank else "lexical-like")
