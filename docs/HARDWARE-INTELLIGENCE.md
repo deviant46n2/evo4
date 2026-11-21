@@ -9,7 +9,7 @@ This milestone adds an advisory resource-intelligence layer, not a process manag
 
 ## Safety
 
-All operations are read-only or persist user-authored profile data. Evo does not signal PIDs, kill processes, start/stop services, alter GPU clocks/power, or edit runtime launch settings. Admission decisions do not reserve resources; concurrent callers can invalidate an estimate. A workload marked CPU-only is trusted as declared; Evo does not inspect its code to verify that it avoids GPU use.
+Runtime discovery and resource estimates are read-only. Runtime profiles and scheduler queue/lifecycle records are persisted in SQLite. Evo does not signal PIDs, kill processes, start/stop services, alter GPU clocks/power, or edit runtime launch settings. Admission decisions do not reserve resources; concurrent callers can invalidate an estimate. A workload marked CPU-only is trusted as declared; Evo does not inspect its code to verify that it avoids GPU use.
 
 ## Limitations
 
