@@ -44,6 +44,7 @@ function DemoDataBanner() {
 
 type Memory = { id: string; content: string; category: string; source: string; confidence: number; status: string; created_at: string; access_count: number };
 type Candidate = { id: string; content: string; category: string; source: string; confidence: number; created_at: string };
+type RecallPreview = { query:string; count:number; retrieval:string; matches:Array<{id:string;content:string;category:string;source:string;confidence:number;score:number;coverage:number;matched_terms:string[];reason:string;method:string}> };
 type Run = { id: string; kind: string; status: string; started_at: string; finished_at?: string; summary?: string; metadata: Record<string, any> };
 type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> } };
 
@@ -51,6 +52,9 @@ export function MemoryWorkspace() {
   const [items, setItems] = useState<Memory[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [query, setQuery] = useState("");
+  const [recallQuery, setRecallQuery] = useState("");
+  const [recallPreview, setRecallPreview] = useState<RecallPreview | null>(null);
+  const [recallBusy, setRecallBusy] = useState(false);
   const [status, setStatus] = useState("active");
   const [content, setContent] = useState("");
   const [category, setCategory] = useState("general");
@@ -76,6 +80,16 @@ export function MemoryWorkspace() {
     window.addEventListener("evo-demo-data-changed",changed);
     return ()=>window.removeEventListener("evo-demo-data-changed",changed);
   }, [refresh]);
+  async function previewRecall(event: FormEvent) {
+    event.preventDefault();
+    if (!recallQuery.trim() || recallBusy) return;
+    setRecallBusy(true); setError(""); setRecallPreview(null);
+    try {
+      const params = new URLSearchParams({ q: recallQuery.trim(), limit: "8" });
+      setRecallPreview(await api<RecallPreview>("/memories/search?" + params.toString()));
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setRecallBusy(false); }
+  }
   async function addMemory(event: FormEvent) {
     event.preventDefault();
     if (!content.trim()) return;
@@ -105,6 +119,22 @@ export function MemoryWorkspace() {
     <DemoDataBanner/>
     <div className="workspace-heading"><div><div className="eyebrow">PERSISTENT KNOWLEDGE</div><h1>Memory</h1><p>Review what Evo has stored, where it came from, and what is still awaiting your approval.</p></div><span className="workspace-count">{items.length} records</span></div>
     {error && <div className="workspace-error" role="alert">{error}</div>}
+    <section className="workspace-panel">
+      <h2>Test memory recall</h2>
+      <p>Preview the records Evo would retrieve for a prompt, including why each result matched.</p>
+      <form className="memory-add" onSubmit={previewRecall}>
+        <div className="memory-add-footer"><input value={recallQuery} onChange={e => setRecallQuery(e.target.value)} placeholder="Try a natural-language question or topic…" aria-label="Memory recall query"/><button disabled={recallBusy || !recallQuery.trim()}>{recallBusy ? "Searching…" : "Preview recall"}</button></div>
+      </form>
+      {recallPreview && <div className="record-list">
+        <small>{recallPreview.count} results · {recallPreview.retrieval}</small>
+        {recallPreview.matches.map((match,index)=><article className="record-card" key={match.id}>
+          <div className="record-top"><span className="record-category">#{index+1} · {match.category}</span><span>{match.source}</span><span>{Math.round(match.score*100)}% match</span></div>
+          <p>{match.content}</p>
+          <div className="record-bottom"><small>{match.reason} · {Math.round(match.coverage*100)}% query-term coverage</small></div>
+        </article>)}
+        {recallPreview.count===0 && <div className="empty-state">No active memories matched this query.</div>}
+      </div>}
+    </section>
     <section className="workspace-panel">
       <h2>Add a memory</h2>
       <form className="memory-add" onSubmit={addMemory}>
