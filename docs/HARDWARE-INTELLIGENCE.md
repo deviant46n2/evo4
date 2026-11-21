@@ -5,11 +5,11 @@ This milestone adds an advisory resource-intelligence layer, not a process manag
 - Runtime discovery: `GET /api/v1/hardware/runtimes` recognizes selected inference process names without reading arguments or environment variables. The configured endpoint is reported separately; ownership is not inferred.
 - Runtime profiles: `GET/POST /api/v1/hardware/profiles` persists named runtime settings in the experiment database. Saving never launches or changes a runtime.
 - Resource estimate: `POST /api/v1/hardware/estimate` reports model-file size and KV cache only when architecture dimensions are supplied. KV cache is context × layers × KV heads × head dimension × (K bytes + V bytes), with a 15% margin. Runtime buffers, CUDA allocations, fragmentation, offload and overhead are excluded. Fit remains unknown rather than guessed.
-- Workload admission: `POST /api/v1/hardware/admission` returns allow/defer/unknown advice using live telemetry, a 1 GiB VRAM reserve and 2 GiB RAM reserve. Interactive work has higher advisory priority; nothing is preempted. Unknown GPU capacity or demand fails closed for GPU-heavy work.
+- Workload admission: `POST /api/v1/hardware/admission` returns allow/defer/unknown advice using live telemetry, a 1 GiB VRAM reserve and 2 GiB RAM reserve. Background work requires an explicit RAM estimate and available-RAM telemetry; GPU-heavy work (the default unless explicitly declared CPU-only) also requires a VRAM estimate and GPU telemetry. Missing requirements return unknown rather than allow. Interactive work has higher advisory priority; nothing is preempted. Unknown GPU capacity or demand fails closed for GPU-heavy work.
 
 ## Safety
 
-All operations are read-only or persist user-authored profile data. Evo does not signal PIDs, kill processes, start/stop services, alter GPU clocks/power, or edit runtime launch settings. Admission decisions do not reserve resources; concurrent callers can invalidate an estimate.
+All operations are read-only or persist user-authored profile data. Evo does not signal PIDs, kill processes, start/stop services, alter GPU clocks/power, or edit runtime launch settings. Admission decisions do not reserve resources; concurrent callers can invalidate an estimate. A workload marked CPU-only is trusted as declared; Evo does not inspect its code to verify that it avoids GPU use.
 
 ## Limitations
 
