@@ -65,12 +65,34 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["steps"][1]["status"], "skipped")
 
-    def test_restart_recovery_never_replays_steps(self):
+    def test_restart_recovery_marks_active_step_interrupted_and_skips_future_steps(self):
         orchestration.approve_plan(self.db, self.plan["id"])
         orchestration.attach_run(self.db, self.plan["id"], "run-1")
+        first = self.plan["steps"][0]
+        orchestration.start_step(self.db, self.plan["id"], first["id"])
         self.assertEqual(orchestration.recover_plans(self.db), [self.plan["id"]])
-        self.assertEqual(orchestration.get_plan(self.db, self.plan["id"])["status"], "interrupted")
-        self.assertEqual(orchestration.recover_plans(self.db), [])
+        recovered = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(recovered["steps"][0]["status"], "interrupted")
+        self.assertEqual(recovered["steps"][1]["status"], "skipped")
+
+    def test_model_proposal_is_json_only_and_persisted_only_after_validation(self):
+        class Provider:
+            def chat(self, messages, **kwargs):
+                return {"content": '{"title":"T","summary":"S","steps":['
+                    '{"title":"I","description":"Inspect","expected_outcome":"Know the code",'
+                    '"verification":"Read relevant files"}]}'}
+        proposal = orchestration.propose_with_model(Provider(), "Do work", "/workspace")
+        saved = orchestration.create_plan(self.db, "Do work", "/workspace", proposal)
+        self.assertEqual(saved["status"], "proposed")
+        self.assertEqual(saved["steps"][0]["verification"], "Read relevant files")
+
+    def test_invalid_model_json_is_rejected_without_saving(self):
+        class Provider:
+            def chat(self, messages, **kwargs):
+                return {"content": "not JSON"}
+        with self.assertRaises(ValueError):
+            orchestration.propose_with_model(Provider(), "Do work", "/workspace")
+        self.assertEqual(orchestration.list_plans(self.db), [])
 
 
 if __name__ == "__main__":
