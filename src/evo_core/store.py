@@ -270,7 +270,7 @@ class EvoStore:
                 self.db.execute(
                     """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
                        VALUES(?,?,?,?,?,?)""",
-                    (relation_id,memory_id,new_id,"supersedes",reason.strip(),now))
+                    (relation_id,new_id,memory_id,"supersedes",reason.strip(),now))
                 self.db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?",
                                 (now,memory_id))
                 self.db.commit()
