@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
+from .coding_agent import CodingAgent
 from .config import load_config
 from .store import EvoStore
 
@@ -22,6 +23,22 @@ class ChatRequest(BaseModel):
 
 class ConversationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
+
+
+class MemoryCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    category: str = Field(default="general", max_length=80)
+    source: str = Field(default="user", max_length=80)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+
+
+class AgentCreate(BaseModel):
+    request: str = Field(min_length=1, max_length=20000)
+    workspace: str | None = Field(default=None, max_length=2000)
+
+
+class AgentApproval(BaseModel):
+    approved: bool
 
 
 def create_app(config_path="config.toml", provider_name=None):
@@ -40,6 +57,8 @@ def create_app(config_path="config.toml", provider_name=None):
     conversation_locks = {}
     locks_guard = threading.Lock()
     shutting_down = threading.Event()
+    approval_guard = threading.Lock()
+    pending_approvals = {}
 
     @app.middleware("http")
     async def local_host_only(request, call_next):
@@ -98,8 +117,12 @@ def create_app(config_path="config.toml", provider_name=None):
             "automatic_titles": True,
             "streaming": True,
             "stop_generation": False,
-            "agents": False,
-            "memory_browser": False,
+            "agents": True,
+            "agent_approval": True,
+            "agent_run_history": True,
+            "memory_browser": True,
+            "memory_candidates": True,
+            "memory_archive": True,
             "hardware_dashboard": False,
             "experiments": False,
             "provider_selection": False,
