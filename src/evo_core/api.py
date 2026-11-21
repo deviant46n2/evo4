@@ -860,8 +860,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 final_status = final["status"] if final else "failed"
                 with lab_db.lock:
                     task = background_agent.get(lab_db.connection, run_id)
+                    target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
                     if task and task["status"] not in {"interrupted"}:
-                        target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
                         background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
                     if plan_id and task:
                         plan = orchestration.get_plan(lab_db.connection, plan_id)
