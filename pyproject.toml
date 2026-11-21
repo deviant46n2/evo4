@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+desktop = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
+
 [project.scripts]
 evo = "evo_core.cli:main"
 evo-exp = "evo_experiments.cli:main"
