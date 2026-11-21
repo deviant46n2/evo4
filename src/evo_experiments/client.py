@@ -22,13 +22,38 @@ def list_models(*, base_url, api_key, timeout):
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise ModelRequestError(str(exc)) from exc
 
+def get_runtime_props(*, base_url, api_key, timeout=2):
+    """Return a small allowlisted llama.cpp runtime snapshot, or None if unsupported."""
+    request = _request(f"{base_url}/props", api_key)
+    allowed = ("build_info", "model_path", "model_file", "model_alias", "model_ftype",
+               "n_ctx", "n_batch", "n_ubatch", "n_parallel", "total_slots")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        snapshot = {}
+        for key in allowed:
+            value = payload.get(key)
+            if isinstance(value, (str, int, float, bool)) or (
+                key == "build_info" and isinstance(value, dict)
+            ):
+                snapshot[key] = value
+        return snapshot or None
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
+            OSError, json.JSONDecodeError):
+        return None
+
+
 def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
-                           max_tokens, temperature, timeout):
+                           max_tokens, temperature, timeout, seed=None):
     payload = {"model": model, "messages": [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt}],
         "stream": True, "stream_options": {"include_usage": True},
         "max_tokens": max_tokens, "temperature": temperature}
+    if seed is not None:
+        payload["seed"] = int(seed)
     request = urllib.request.Request(f"{base_url}/v1/chat/completions",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
@@ -36,6 +61,7 @@ def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
     started = time.perf_counter()
     first_content_at, usage, pieces = None, {}, []
     content_type, saw_event = "", False
+    finish_reason = None
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             content_type = response.headers.get("Content-Type", "")
@@ -55,7 +81,10 @@ def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
                     usage = event["usage"]
                 choices = event.get("choices") or []
                 if choices:
-                    delta = choices[0].get("delta") or {}
+                    choice = choices[0]
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = str(choice["finish_reason"])
+                    delta = choice.get("delta") or {}
                     content = delta.get("content")
                     if isinstance(content, list):
                         content = "".join(part.get("text", "") for part in content
@@ -80,4 +109,5 @@ def stream_chat_completion(*, base_url, api_key, model, system_prompt, prompt,
     return {"response": "".join(pieces), "elapsed_seconds": elapsed,
         "time_to_first_token_seconds": first_content_at - started if first_content_at else None,
         "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
-        "tokens_per_second": rate}
+        "tokens_per_second": rate, "finish_reason": finish_reason,
+        "truncated": finish_reason == "length"}
