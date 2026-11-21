@@ -120,6 +120,7 @@ class ResultsDB:
                 "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
                 "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
                 "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
                 "SUM(CASE WHEN status='truncated' THEN 1 ELSE 0 END) AS truncated, "
                 "SUM(CASE WHEN status='incomplete' THEN 1 ELSE 0 END) AS incomplete, "
                 "SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown, "
