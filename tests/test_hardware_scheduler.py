@@ -125,12 +125,14 @@ class WorkloadSchedulerTests(unittest.TestCase):
             path=Path(tmp)/"scheduler.sqlite3"
             db=sqlite3.connect(path);db.row_factory=sqlite3.Row;initialize_scheduler(db)
             job=create_job(db,{"name":"persistent","kind":"cpu","estimated_ram_mib":256},now=self.now)
+            dispatch_jobs(db,{"ram_available_bytes":8*1024**3,"ram_used_percent":40},now=self.now)
+            start_job(db,job["id"],now=self.now)
             db.close()
             reopened=sqlite3.connect(path);reopened.row_factory=sqlite3.Row
             initialize_scheduler(reopened)
             saved=list_jobs(reopened)["jobs"][0]
             self.assertEqual(saved["id"],job["id"])
-            self.assertEqual(saved["status"],"queued")
+            self.assertEqual(saved["status"],"running")
             reopened.close()
 
     def test_rejected_lifecycle_transition_does_not_leave_open_transaction(self):
