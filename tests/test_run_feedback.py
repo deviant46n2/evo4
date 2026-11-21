@@ -1,8 +1,13 @@
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
+
 from evo_core.store import EvoStore
+import evo_core.cli as evo_cli
 
 
 class RunFeedbackTests(unittest.TestCase):
@@ -51,6 +56,33 @@ class RunFeedbackTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.record_run_feedback("missing","failure","bad","lesson")
         self.assertEqual(self.store.list_lessons(),[])
+
+    def test_cli_can_review_a_run_and_create_a_retrievable_lesson(self):
+        run_id=self.make_run()
+        config=Path(self.tmp.name)/"config.toml"
+        config.write_text(
+            f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{self.store.path}"\\n',
+            encoding="utf-8")
+        argv=["evo","--config",str(config),"runs","review",run_id,
+              "--outcome","partial","--feedback","One test remains failing.",
+              "--lesson","Run the complete test suite before declaring success.",
+              "--trigger","coding verification"]
+        with patch.object(sys,"argv",argv), patch("sys.stdout",new=io.StringIO()) as output:
+            evo_cli.main()
+        self.assertIn("Feedback recorded:",output.getvalue())
+        self.assertEqual(len(self.store.search_lessons("complete test suite")),1)
+
+    def test_cli_show_handles_runs_without_tool_events(self):
+        run_id=self.make_run()
+        config=Path(self.tmp.name)/"config.toml"
+        config.write_text(
+            f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{self.store.path}"\\n',
+            encoding="utf-8")
+        argv=["evo","--config",str(config),"runs","show",run_id]
+        with patch.object(sys,"argv",argv), patch("sys.stdout",new=io.StringIO()) as output:
+            evo_cli.main()
+        self.assertIn(run_id,output.getvalue())
+        self.assertIn("Tool events:",output.getvalue())
 
     def test_run_history_and_tool_events_are_inspectable(self):
         run_id=self.make_run()
