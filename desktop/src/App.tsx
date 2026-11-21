@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./style.css";
+import { AgentsWorkspace, MemoryWorkspace } from "./Workspaces";
 
 type Conversation = { id: string; title: string; updated_at?: string; message_count?: number };
 type Message = { role: "user" | "assistant"; content: string; created_at?: string };
@@ -49,6 +50,7 @@ function Markdown({ content }: { content: string }) {
 }
 
 export default function App() {
+  const [view, setView] = useState<"chat" | "agents" | "memory">("chat");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -235,9 +237,9 @@ export default function App() {
       <div className="brand"><div className="brand-mark">E</div><div><strong>Evo</strong><small>PERSONAL AI WORKSPACE</small></div></div>
       <button className="new-chat" onClick={createConversation} disabled={busy}>＋ <span>New conversation</span><kbd>⌘ K</kbd></button>
       <div className="nav-label">WORKSPACE</div>
-      <button className="nav-item selected"><span className="nav-icon">◫</span> Chat <span className="nav-current">CURRENT</span></button>
-      <div className="nav-item unavailable" title="This area is not implemented yet"><span className="nav-icon">⌘</span> Agents <span className="nav-later">Later</span></div>
-      <div className="nav-item unavailable" title="This area is not implemented yet"><span className="nav-icon">◈</span> Memory <span className="nav-later">Later</span></div>
+      <button className={"nav-item " + (view === "chat" ? "selected" : "")} onClick={() => setView("chat")}><span className="nav-icon">◫</span> Chat {view === "chat" && <span className="nav-current">CURRENT</span>}</button>
+      <button className={"nav-item " + (view === "agents" ? "selected" : "")} onClick={() => setView("agents")}><span className="nav-icon">⌘</span> Agents {view === "agents" && <span className="nav-current">CURRENT</span>}</button>
+      <button className={"nav-item " + (view === "memory" ? "selected" : "")} onClick={() => setView("memory")}><span className="nav-icon">◈</span> Memory {view === "memory" && <span className="nav-current">CURRENT</span>}</button>
       <div className="nav-item unavailable" title="This area is not implemented yet"><span className="nav-icon">▥</span> Hardware <span className="nav-later">Later</span></div>
       <div className="nav-item unavailable" title="This area is not implemented yet"><span className="nav-icon">⌁</span> Experiments <span className="nav-later">Later</span></div>
       <div className="history-head"><span>CONVERSATIONS</span><span>{conversations.length}</span></div>
@@ -259,10 +261,10 @@ export default function App() {
     </aside>
     <main className="main">
       <header className="topbar">
-        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>Chat</strong></div>
+        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : "Memory"}</strong></div>
         <div className="topbar-right"><span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div></div>
       </header>
-      <section className="chat-area">
+      {view === "chat" ? <section className="chat-area">
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
         {loadingMessages ? <div className="loading-state">Loading conversation…</div> : messages.length === 0 ? <div className="welcome">
           <div className="welcome-icon">E</div><div className="eyebrow">YOUR PRIVATE WORKSPACE</div><h1>What are we working on?</h1>
@@ -285,7 +287,7 @@ export default function App() {
           </div>
           <div className="composer-footer"><span>Enter to send <b>·</b> Shift + Enter for a new line</span><span>Generation cannot yet be stopped from the desktop client</span></div>
         </div>
-      </section>
+      </section> : view === "agents" ? <AgentsWorkspace/> : <MemoryWorkspace/>}
     </main>
   </div>;
 }
