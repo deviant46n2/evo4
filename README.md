@@ -39,7 +39,7 @@ The repository contains two independently usable applications:
 - Samples NVIDIA GPU utilization, VRAM, temperature, power, compute-process identity/VRAM, CPU utilization, CPU load averages, and system RAM. Telemetry works without NVIDIA hardware for system metrics.
 - Stores experiments and timestamped resource samples in SQLite.
 - Produces per-run and aggregate reports as JSONL or CSV.
-- Preserves failed runs for diagnosis.
+- Preserves failed and incomplete runs for diagnosis; legacy completions without a recorded finish reason are reclassified as unknown during migration.
 
 
 ### Desktop API additions
