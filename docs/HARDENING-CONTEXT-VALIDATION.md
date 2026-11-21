@@ -1,6 +1,6 @@
 # Hardening and context-budget validation handoff
 
-Target branch: `hardening-context-v1`
+Target branch: `audit-fixes-v1` (based on audited commit `80d96a465a44dc3e4ecdf178c1171f8b7ae7cfc8`)
 
 This pass builds on `learning-feedback-v1`. It is intentionally additive and does not modify `main`.
 
@@ -18,20 +18,22 @@ This pass builds on `learning-feedback-v1`. It is intentionally additive and doe
    - Validate that a test command before the latest successful write does not count, and a non-test command after a write does not count.
 
 3. **Workspace boundaries**
-   - Sensitive filename filtering includes common token/password/credential/private-key patterns.
-   - Direct workspace writes to test/spec paths are blocked unless the caller explicitly enables them.
-   - The coding-agent loop enables test-file writes only after the ordinary per-write approval callback; the CLI shows an additional warning.
+   - Sensitive filename filtering includes common secret/password/credential/API-key/private-key/token combinations while avoiding generic source filenames such as `auth_helpers.py`, `private_types.py`, and `tokenizer.py`.
+   - Direct workspace writes to test/spec paths require a one-use, path-scoped approval token.
+   - The coding-agent loop mints that token only after the explicit per-write approval callback succeeds. The token cannot be reused for a second write or a different path.
+   - Detection includes common JavaScript/TypeScript `.test.*`, `.spec.*`, and `__tests__` conventions.
    - Validate both a denied test-file write and an approved test-file write. Confirm normal source writes still work.
 
 4. **Context budgeting**
-   - `assistant.context_window_tokens` controls a conservative character-based input budget.
-   - The base system prompt and current user request are preserved. Retrieved context is retained before older conversation history; history is trimmed oldest-first.
-   - The 3.5 characters/token estimate is not tokenizer-exact. Compare prompt sizes with the configured runtime context and watch for unexpected truncation.
+   - `assistant.context_window_tokens` controls a conservative character-based input budget using 3 characters/token, plus a fixed 512-token safety margin and the configured output reserve.
+   - The base system prompt and current user request are never silently truncated. If they cannot fit, Evo raises a clear `ValueError` before persisting/sending the turn.
+   - Retrieved context is retained as complete blank-line-separated sections; omitted sections receive an explicit notice. History is retained as complete messages only, newest-first selection, without slicing message bodies.
+   - The estimate is still not tokenizer-exact. Validate with code-heavy and non-ASCII prompts against the actual runtime context.
 
 5. **Named provider profiles**
-   - `[providers.NAME]` profiles override endpoint, model, timeout, and optional API-key environment variable.
+   - `[providers.NAME]` profiles override endpoint, model, timeout, and API key. `api_key_env` is preferred; a direct `api_key` value is also supported for compatibility.
    - Select with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`.
-   - Credentials must be supplied through `api_key_env`; no key should be committed to TOML.
+   - Prefer `api_key_env` for credentials; never commit actual secrets to TOML.
    - Backward compatibility with existing `[server]` config must remain intact.
    - This is profile selection for OpenAI-compatible endpoints, not automatic routing/failover and not a native adapter for every provider.
 
@@ -44,7 +46,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q src tests
 ```
 
-New focused coverage is in `tests/test_hardening_features.py`. Existing coding-agent and config tests must continue passing.
+New focused coverage is in `tests/test_hardening_features.py`. Existing coding-agent and config tests must continue passing. The audit-fix pass adds regression coverage for oversized requests, whole-section context omission, output-reserve clamping, JavaScript test paths, secret-filter false positives, one-use test-write approvals, and direct profile API keys.
 
 ## Live validation
 
@@ -57,4 +59,4 @@ New focused coverage is in `tests/test_hardening_features.py`. Existing coding-a
 
 ## Explicitly not claimed
 
-No local test suite or live Qwen run has been executed by this GitHub-only editing pass. Kilo/OpenCode should independently run the automated and live checks above, report exact commands/results, and inspect the diff for regressions. Do not merge into `main` until that review is complete.
+No local test suite or live Qwen run has been executed by this GitHub-only editing pass. The reported 81/81 result belongs to the parent `hardening-context-v1` commit, not this follow-up branch. Kilo/OpenCode should independently run the automated and live checks above, report exact commands/results, and inspect the diff for regressions. Do not merge into `main` until that review is complete.
