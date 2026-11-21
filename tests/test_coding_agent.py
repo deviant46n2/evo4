@@ -155,6 +155,23 @@ class CodingAgentTests(unittest.TestCase):
             self.assertIn("Verification signal: FAILED",result["content"])
             assistant.close()
 
+    def test_lint_only_command_does_not_count_as_test_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print(5)"})]},
+                {"content":"","tool_calls":[call("run_command",{"argv":["ruff","check","."]})]},
+                {"content":"Lint completed; tests were not run.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["ruff","check"]])
+            with patch.object(agent.workspace,"run",return_value={"argv":["ruff","check","."],"returncode":0,"stdout":"All checks passed","stderr":"","elapsed_seconds":0.1}):
+                result=agent.run(cid,"Create and lint main.py",lambda *_:True)
+            self.assertEqual(result["verification"],"not_run")
+            self.assertIn("Verification signal: NOT RUN",result["content"])
+            assistant.close()
+
     def test_write_requires_approval_and_denial_is_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
