@@ -818,7 +818,7 @@ def create_app(config_path="config.toml", provider_name=None):
                     with lab_db.lock:
                         orchestration.start_step(lab_db.connection, plan_id, step["id"])
                     with lab_db.lock:
-                        orchestration._event(lab_db.connection, plan_id, "step_progress",
+                        orchestration.record_event(lab_db.connection, plan_id, "step_progress",
                             {"title": step["title"], "verification": step["verification"]}, step["id"])
                     step_request = (
                         "Execute exactly this approved plan step as part of the user's larger request. "
