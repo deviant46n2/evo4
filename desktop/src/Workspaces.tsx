@@ -270,6 +270,70 @@ function HistoryLine({samples,field,label}:{samples:HardwareHistory[];field:"gpu
   return <div className="history-chart"><div className="history-chart-head"><strong>{label}</strong><small>{values.length} recorded samples{samples.some(item=>item.is_demo)?" · includes samples":""}</small></div>{values.length>1?<svg viewBox="0 0 600 100" preserveAspectRatio="none" role="img" aria-label={label+" history"}><line x1="0" y1="92" x2="600" y2="92"/><polyline points={points}/></svg>:<div className="chart-empty">Run an Evo Lab experiment to record resource history.</div>}</div>;
 }
 
+
+type ScheduledJob = {id:string;name:string;description:string;kind:string;status:string;priority:number;gpu_heavy:boolean|null;estimated_vram_mib:number|null;estimated_ram_mib:number|null;created_at:string;lease_expires_at:string|null;last_decision: {decision?:string;reasons?:string[]};outcome_note:string};
+type SchedulerResponse = {jobs:ScheduledJob[];counts:Record<string,number>;lease_seconds:number;process_control:boolean};
+function WorkloadSchedulerPanel() {
+  const [data,setData]=useState<SchedulerResponse|null>(null);
+  const [name,setName]=useState("");
+  const [kind,setKind]=useState("benchmark");
+  const [priority,setPriority]=useState("10");
+  const [gpuHeavy,setGpuHeavy]=useState("auto");
+  const [vram,setVram]=useState("");
+  const [ram,setRam]=useState("");
+  const [error,setError]=useState("");
+  const [busy,setBusy]=useState(false);
+  const refresh=useCallback(async()=>{try{setData(await api<SchedulerResponse>("/hardware/scheduler"));setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}},[]);
+  useEffect(()=>{void refresh();const id=window.setInterval(()=>void refresh(),5000);return()=>window.clearInterval(id);},[refresh]);
+  async function create(event:FormEvent) {
+    event.preventDefault();if(!name.trim()||busy)return;setBusy(true);setError("");
+    try {
+      await api("/hardware/scheduler/jobs",json({name:name.trim(),kind,priority:Number(priority),
+        gpu_heavy:gpuHeavy==="auto"?null:gpuHeavy==="true",
+        estimated_vram_mib:vram.trim()?Number(vram):null,
+        estimated_ram_mib:ram.trim()?Number(ram):null}));
+      setName("");await refresh();
+    } catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setBusy(false);}
+  }
+  async function action(path:string,body?:unknown) {
+    if(busy)return;setBusy(true);setError("");
+    try{await api(path,body===undefined?{method:"POST"}:json(body));await refresh();}
+    catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setBusy(false);}
+  }
+  const jobs=data?.jobs||[];
+  return <section className="workspace-panel">
+    <div className="panel-toolbar"><div><h2>Workload scheduler</h2><p>Persistent queue, resource reservations and explicit workload lifecycle.</p></div><span className="run-status">RESERVATION ONLY</span></div>
+    <p className="policy-copy">Evo never launches, kills or reconfigures processes. Dispatch reserves capacity using live telemetry; you start the workload yourself and confirm when it finishes. Unstarted reservations expire after five minutes.</p>
+    {error&&<div className="workspace-error" role="alert">{error}</div>}
+    <form className="scheduler-form" onSubmit={create}>
+      <label>Workload name<input value={name} onChange={e=>setName(e.target.value)} maxLength={120} required placeholder="e.g. Memory retrieval benchmark"/></label>
+      <label>Type<select value={kind} onChange={e=>setKind(e.target.value)}><option value="benchmark">Benchmark</option><option value="research">Research</option><option value="agent">Agent</option><option value="maintenance">Maintenance</option><option value="cpu">CPU-only</option><option value="background">General background</option></select></label>
+      <label>Priority (1–100)<input type="number" min="1" max="100" value={priority} onChange={e=>setPriority(e.target.value)}/></label>
+      <label>GPU use<select value={gpuHeavy} onChange={e=>setGpuHeavy(e.target.value)}><option value="auto">Assume GPU-heavy</option><option value="true">GPU-heavy</option><option value="false">CPU-only (declared)</option></select></label>
+      <label>Estimated VRAM (MiB)<input type="number" min="0" max="1000000" value={vram} onChange={e=>setVram(e.target.value)} placeholder="Required for GPU jobs"/></label>
+      <label>Estimated RAM (MiB)<input type="number" min="0" max="1000000" value={ram} onChange={e=>setRam(e.target.value)} placeholder="Required for background jobs"/></label>
+      <div className="inline-actions"><button className="primary-button" type="submit" disabled={busy||!name.trim()}>{busy?"Working…":"Add to queue"}</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void action("/hardware/scheduler/dispatch?limit=5")}>Evaluate queue and reserve</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void refresh()}>Refresh</button></div>
+    </form>
+    <div className="scheduler-counts">{["queued","reserved","running","completed","failed","cancelled"].map(key=><span key={key}><b>{data?.counts[key]||0}</b><small>{key}</small></span>)}</div>
+    <div className="scheduler-jobs">{jobs.map(job=><article className="scheduler-job" key={job.id}>
+      <div className="record-top"><span className={"run-status "+job.status}>{job.status}</span><span>{job.kind}</span><span>Priority {job.priority}</span></div>
+      <strong>{job.name}</strong>
+      <small>VRAM {job.estimated_vram_mib==null?"unknown":mib(job.estimated_vram_mib)} · RAM {job.estimated_ram_mib==null?"unknown":mib(job.estimated_ram_mib)} · GPU {job.gpu_heavy===false?"CPU-only":job.gpu_heavy===true?"yes":"assumed"}</small>
+      {job.last_decision?.reasons?.map((reason,index)=><small key={index}>{reason}</small>)}
+      {job.status==="reserved"&&<small>Reservation expires: {job.lease_expires_at?new Date(job.lease_expires_at).toLocaleTimeString():"—"}</small>}
+      {job.status==="running"&&<small>Running is user-confirmed; Evo does not monitor or control the external process.</small>}
+      <div className="inline-actions">
+        {job.status==="reserved"&&<button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/start")}>Confirm external start</button>}
+        {job.status==="running"&&<><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"completed"})}>Mark completed</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"failed",note:"Marked failed by user"})}>Mark failed</button></>}
+        {(job.status==="queued"||job.status==="reserved")&&<button className="quiet-button danger" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/cancel")}>Cancel queued job</button>}
+      </div>
+    </article>)}
+    {!jobs.length&&<div className="empty-state">No scheduled workloads yet. Add a workload above to begin building a persistent queue.</div>}</div>
+  </section>;
+}
+
 export function HardwareWorkspace() {
   const [data,setData]=useState<HardwareResponse|null>(null);
   const [history,setHistory]=useState<HardwareHistory[]>([]);
@@ -309,7 +373,7 @@ export function HardwareWorkspace() {
     </div>
     <section className="workspace-panel"><div className="panel-toolbar"><div><h2>Active inference runtime</h2><p>Provider identity from Evo configuration; endpoint shown without credentials.</p></div><span className="workspace-count">{data?.runtime.provider||"—"}</span></div><div className="runtime-details"><div><small>MODEL</small><strong>{data?.runtime.model||"—"}</strong></div><div><small>ENDPOINT</small><strong>{data?.runtime.endpoint||"—"}</strong></div></div></section>
     <section className="workspace-panel"><div className="panel-toolbar"><div><h2>Resource policy</h2><p>Observe-first guardrails. No process control is enabled in this milestone.</p></div><span className="run-status">ADVISORY ONLY</span></div><p className="policy-copy">{data?.policy.description||"Waiting for telemetry…"}</p><div className="budget-recommendation"><strong>{data?.budget.background_work==="defer"?"Defer background work":"Limited background work"}</strong><span>{data?.budget.reason||"Waiting for telemetry…"}</span><small>Free VRAM: {mib(data?.budget.vram_free_mib)} · Available RAM: {mib(data?.budget.ram_free_mib)}</small></div>{data?.warnings.length?<div className="warning-list">{data.warnings.map(w=><div className={"resource-warning "+w.level} key={w.code}><strong>{w.level.toUpperCase()}</strong><span>{w.message}</span></div>)}</div>:<div className="healthy-state">No resource pressure thresholds currently triggered.</div>}</section>
-    <div className="history-grid"><HistoryLine samples={history} field="gpu_utilization_percent" label="GPU utilization"/><HistoryLine samples={history} field="gpu_memory_used_mib" label="VRAM allocation"/><HistoryLine samples={history} field="ram_used_mib" label="System RAM"/><HistoryLine samples={history} field="cpu_utilization_percent" label="CPU utilization"/><HistoryLine samples={history} field="gpu_temperature_c" label="GPU temperature"/></div>
+    <WorkloadSchedulerPanel/>\n    <div className="history-grid"><HistoryLine samples={history} field="gpu_utilization_percent" label="GPU utilization"/><HistoryLine samples={history} field="gpu_memory_used_mib" label="VRAM allocation"/><HistoryLine samples={history} field="ram_used_mib" label="System RAM"/><HistoryLine samples={history} field="cpu_utilization_percent" label="CPU utilization"/><HistoryLine samples={history} field="gpu_temperature_c" label="GPU temperature"/></div>
     <section className="workspace-panel"><div className="panel-toolbar"><div><h2>GPU compute processes</h2><p>Process identity, PID, and VRAM reported by NVIDIA's driver. Command-line arguments are intentionally hidden.</p></div><span className="workspace-count">{s?.gpu_processes.length??0} processes</span></div><div className="process-table"><div className="process-row process-header"><span>Process</span><span>PID</span><span>VRAM</span></div>{s?.gpu_processes.map(p=><div className="process-row" key={p.pid}><strong>{p.process_name}</strong><span>{p.pid}</span><span>{mib(p.memory_used_mib)}</span></div>)}{s?.gpu_processes.length===0&&<div className="empty-state">{s?.gpu_available?"No compute processes reported.":"NVIDIA telemetry unavailable; install/use nvidia-smi to expose GPU processes."}</div>}</div></section>
     <div className="policy-note">Live metrics come from this machine. Historical charts may include clearly labeled sample experiment data until you run your own Evo Lab experiments.</div>
   </div>;
