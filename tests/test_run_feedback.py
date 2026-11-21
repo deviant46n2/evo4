@@ -84,6 +84,20 @@ class RunFeedbackTests(unittest.TestCase):
         self.assertIn(run_id,output.getvalue())
         self.assertIn("Tool events:",output.getvalue())
 
+    def test_run_summary_reports_verification_and_feedback_metrics(self):
+        run_id=self.make_run()
+        self.store.update_agent_run_metadata(run_id,{
+            "verification":{"status":"passed"},"tool_calls":4})
+        self.store.finish_agent_run(run_id,"completed","done")
+        self.store.record_run_feedback(run_id,"success","User confirmed behavior.")
+        summary=self.store.agent_run_summary()
+        self.assertEqual(summary["coding_runs"],1)
+        self.assertEqual(summary["run_statuses"],{"completed":1})
+        self.assertEqual(summary["verification_statuses"],{"passed":1})
+        self.assertEqual(summary["reviewed_runs"],1)
+        self.assertEqual(summary["feedback_outcomes"],{"success":1})
+        self.assertEqual(summary["average_tool_calls"],4.0)
+
     def test_run_history_and_tool_events_are_inspectable(self):
         run_id=self.make_run()
         self.store.record_tool_event(run_id,"read_file",{"path":"main.py"},{"ok":True},"completed")
