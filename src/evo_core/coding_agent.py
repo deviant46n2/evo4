@@ -131,6 +131,20 @@ class CodingAgent:
                 if stop_event is not None and stop_event.is_set():
                     raise AgentCancelled("Cancellation requested; provider response returned and the task stopped safely.")
                 calls=result.get("tool_calls") or []
+                if result.get("finish_reason") == "length":
+                    final_text=((result.get("content","") or "") +
+                        "\\n\\nIncomplete response: the model reached its completion token limit. "
+                        "No tool calls from this response were executed.")
+                    store.update_agent_run_metadata(run_id,{"completion_state":"truncated",
+                        "finish_reason":"length","successful_file_writes":successful_writes,
+                        "tool_calls":total_tool_calls})
+                    store.add_message(conversation_id,"assistant",final_text,metadata={
+                        "agent_run_id":run_id,"truncated":True,"finish_reason":"length"})
+                    if finalize_run:
+                        store.finish_agent_run(run_id,"failed",final_text[:1000])
+                    return {"content":final_text,"run_id":run_id,"tool_rounds":round_index+1,
+                            "tool_calls":total_tool_calls,"status":"truncated",
+                            "verification":"not_run"}
                 if not calls:
                     verification=self._verification_state(successful_writes,last_write_call,last_verification)
                     final_text=(result.get("content","") or "")+self._verification_note(verification)
