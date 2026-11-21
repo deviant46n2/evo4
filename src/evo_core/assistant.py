@@ -112,10 +112,10 @@ class EvoAssistant:
         # records) so truncation cannot leave an orphaned title or partial item.
         kept_records=[]
         omitted_records=0
-        for section in dynamic.split("\\n\\n"):
+        for section in dynamic.split("\n\n"):
             if not section:
                 continue
-            rendered=section+"\\n\\n"
+            rendered=section+"\n\n"
             if len(rendered)<=remaining:
                 kept_records.append(rendered)
                 remaining-=len(rendered)
@@ -123,7 +123,7 @@ class EvoAssistant:
                 omitted_records+=1
         if omitted_records:
             marker=(f"[Context notice: {omitted_records} retrieved context section(s) "
-                    "omitted to fit the configured context budget.]\\n")
+                    "omitted to fit the configured context budget.]\n")
             if len(marker)<=remaining:
                 kept_records.append(marker)
                 remaining-=len(marker)
