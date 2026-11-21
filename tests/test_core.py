@@ -17,7 +17,12 @@ from evo_experiments.runner import build_run_manifest, load_tasks, run_tasks
 
 class FakeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        body = json.dumps({"data":[{"id":"fake-model"}]}).encode()
+        if self.path == "/props":
+            payload = {"build_info":{"version":"test-build"},"model_path":"/models/test.gguf",
+                       "model_ftype":"IQ4_XS","n_ctx":102400,"total_slots":1,"secret":"must-not-record"}
+        else:
+            payload = {"data":[{"id":"fake-model"}]}
+        body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type","application/json")
         self.send_header("Content-Length",str(len(body)))
@@ -28,7 +33,8 @@ class FakeHandler(BaseHTTPRequestHandler):
         self.server.last_payload = json.loads(self.rfile.read(length))
         events = [{"choices":[{"delta":{"content":"hello "}}]},
             {"choices":[{"delta":{"content":"world"}}]},
-            {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2}}]
+            {"choices":[{"delta":{},"finish_reason":getattr(self.server,"finish_reason","stop")}],
+             "usage":{"prompt_tokens":8,"completion_tokens":2}}]
         body = "".join("data: "+json.dumps(event)+"\n\n" for event in events)+"data: [DONE]\n\n"
         encoded = body.encode()
         self.send_response(200)
@@ -62,6 +68,7 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(config.model, "test")
             self.assertEqual(config.base_url, "http://127.0.0.1:18997")
             self.assertEqual(config.repetitions, 2)
+            self.assertEqual(config.seed, 42)
             self.assertEqual(build_run_manifest(config)["runtime_manifest"]["context_size"], 49152)
 
     def test_model_file_hash_is_recorded(self):
@@ -112,7 +119,7 @@ class HarnessTests(unittest.TestCase):
             conn.close()
             db = ResultsDB(path)
             columns = {row[1] for row in db.connection.execute("PRAGMA table_info(experiments)")}
-            self.assertTrue({"run_label","evaluation_status","evaluation_details"}.issubset(columns))
+            self.assertTrue({"run_label","evaluation_status","evaluation_details","finish_reason","seed"}.issubset(columns))
             db.close()
 
     def test_legacy_evaluation_details_are_backfilled(self):
@@ -163,8 +170,11 @@ class HarnessTests(unittest.TestCase):
         try:
             self.assertEqual(list_models(base_url=base, api_key="test", timeout=3), ["fake-model"])
             result = stream_chat_completion(base_url=base, api_key="test", model="fake-model",
-                system_prompt="system", prompt="prompt", max_tokens=20, temperature=0, timeout=3)
+                system_prompt="system", prompt="prompt", max_tokens=20, temperature=0, timeout=3, seed=19)
             self.assertEqual(result["response"], "hello world")
+            self.assertEqual(result["finish_reason"], "stop")
+            self.assertFalse(result["truncated"])
+            self.assertEqual(server.last_payload["seed"], 19)
             self.assertEqual(result["prompt_tokens"], 8)
             self.assertEqual(result["completion_tokens"], 2)
             self.assertIsNotNone(result["time_to_first_token_seconds"])
@@ -173,6 +183,76 @@ class HarnessTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_runtime_props_are_snapshotted_with_an_allowlist(self):
+        server = ThreadingHTTPServer(("127.0.0.1",0), FakeHandler)
+        thread = threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "config.toml"
+                path.write_text(f'[server]\\nbase_url="http://127.0.0.1:{server.server_port}"\\n',encoding="utf-8")
+                manifest = build_run_manifest(load_config(path))
+                props = manifest["runtime_manifest"]["server_props"]
+                self.assertTrue(manifest["runtime_manifest"]["server_props_available"])
+                self.assertEqual(props["n_ctx"],102400)
+                self.assertEqual(props["model_ftype"],"IQ4_XS")
+                self.assertNotIn("secret",props)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_length_finish_reason_is_recorded_as_truncated_and_not_scored(self):
+        server = ThreadingHTTPServer(("127.0.0.1",0),FakeHandler)
+        server.finish_reason = "length"
+        thread = threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                config_path = Path(temp) / "config.toml"
+                db_path = Path(temp) / "results.db"
+                tasks_path = Path(temp) / "tasks.jsonl"
+                config_path.write_text(f'[server]\\nbase_url="http://127.0.0.1:{server.server_port}"\\n'
+                    f'[experiment]\\ndatabase="{db_path}"\\nseed=41\\nmax_tokens=20\\n',encoding="utf-8")
+                tasks_path.write_text(json.dumps({"id":"t","prompt":"solve","expected_contains":"world"})+"\\n",
+                                      encoding="utf-8")
+                ids = run_tasks(load_config(config_path),tasks_path,repetitions=2)
+                db = ResultsDB(db_path)
+                try:
+                    rows = db.connection.execute(
+                        "SELECT status,finish_reason,seed,evaluation_status,evaluation_total FROM experiments ORDER BY id"
+                    ).fetchall()
+                    self.assertEqual([row["status"] for row in rows],["truncated","truncated"])
+                    self.assertEqual([row["finish_reason"] for row in rows],["length","length"])
+                    self.assertEqual([row["seed"] for row in rows],[41,42])
+                    self.assertEqual([row["evaluation_status"] for row in rows],
+                                     ["not_run_truncated","not_run_truncated"])
+                    self.assertEqual([row["evaluation_total"] for row in rows],[None,None])
+                    self.assertEqual(db.count_not_completed(ids),2)
+                    self.assertEqual(server.last_payload["seed"],42)
+                finally:
+                    db.close()
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    def test_aggregates_use_only_completed_runs_and_report_median_and_stdev(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = ResultsDB(Path(temp) / "results.db")
+            for index, (status, speed) in enumerate((("completed",10.0),("completed",20.0),
+                                                       ("completed",30.0),("truncated",1000.0)),1):
+                eid = db.create_experiment({"started_at":"now","task_id":"t","category":"test",
+                    "repetition":index,"model":"m","run_label":"baseline","base_url":"local",
+                    "config_json":"{}","prompt":"p","status":"running"})
+                db.finish_experiment(eid,{"status":status,"tokens_per_second":speed,
+                    "elapsed_seconds":float(index),"time_to_first_token_seconds":float(index)/10})
+            aggregate = db.aggregates()[0]
+            self.assertEqual(aggregate["runs"],4)
+            self.assertEqual(aggregate["completed"],3)
+            self.assertEqual(aggregate["truncated"],1)
+            self.assertEqual(aggregate["avg_tokens_per_second"],20.0)
+            self.assertEqual(aggregate["median_tokens_per_second"],20.0)
+            self.assertEqual(aggregate["stdev_tokens_per_second"],10.0)
+            self.assertEqual(aggregate["median_elapsed_seconds"],2.0)
+            db.close()
 
     def test_aggregates_count_individual_checks_not_task_rows(self):
         with tempfile.TemporaryDirectory() as temp:
