@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 try:
     from fastapi import HTTPException
-    from evo_core.api import create_app, SchedulerJobInput, WorkloadExecuteInput
+    from evo_core.api import create_app, SchedulerJobInput, SchedulerFinishInput, WorkloadExecuteInput
     AVAILABLE = True
 except ImportError:
     AVAILABLE = False
@@ -68,7 +68,7 @@ class ManagedExecutionApiTests(unittest.TestCase):
         self.assertEqual(executions[0]["argv"], ["python", "-c", "print('ok')"])
         with self.assertRaises(HTTPException) as finish_error:
             self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/finish", "POST")](
-                job["id"], __import__("evo_core.api", fromlist=["SchedulerFinishInput"]).SchedulerFinishInput(outcome="completed"))
+                job["id"], SchedulerFinishInput(outcome="completed"))
         self.assertEqual(finish_error.exception.status_code, 409)
         caps = self.routes[("/api/v1/capabilities", "GET")]()
         self.assertTrue(caps["hardware_managed_execution"])
