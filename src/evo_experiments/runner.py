@@ -56,6 +56,8 @@ def run_tasks(config, tasks_path, repetitions=None):
     count = repetitions if repetitions is not None else config.repetitions
     if count < 1:
         raise ValueError("Repetitions must be at least one")
+    if config.seed is not None and config.seed + count - 1 > 2147483647:
+        raise ValueError("experiment.seed plus repetitions exceeds the supported 32-bit seed range")
     manifest = build_run_manifest(config)
     run_label = str(config.run_metadata.get("label") or config.model)
     db = ResultsDB(config.database)
