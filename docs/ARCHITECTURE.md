@@ -15,6 +15,7 @@ Increase the useful capabilities of the user's existing workstation through meas
 - `cli.py`: interactive terminal interface and data-management commands.
 - `workspace.py`: constrained project workspace API.
 - `coding_agent.py`: bounded model-directed tool loop with project orientation, explicit verification policy, approval-gated writes and command execution.
+- `run_feedback`: records user assessment of agent outcomes and links reusable lessons to their originating runs.
 
 ### Evo Lab (`src/evo_experiments`)
 
@@ -26,7 +27,7 @@ SQLite is the initial system of record. WAL mode and foreign keys are enabled. M
 
 FTS5 is used for memory retrieval when available. A lexical LIKE fallback keeps the assistant usable when FTS5 is unavailable. Retrieval is not semantic and does not imply perfect recall.
 
-A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts. Saved research documents are also retrieved lexically and injected as source material, with URLs and capture timestamps. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
+A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts. Agent runs and tool events form an append-oriented execution record. The `run_feedback` table links explicit user assessments (success, partial, failure) to a run and, optionally, to a reusable lesson created from that assessment. This makes the experiential loop inspectable: run → observed tool history → user assessment/correction → lesson → later retrieval. Lessons created this way carry `user-run-feedback` provenance. Evo does not infer verified success from a model self-report or autonomously promote generated claims into trusted lessons. Saved research documents are also retrieved lexically and injected as source material, with URLs and capture timestamps. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
 
 ## Provider boundary
 
@@ -54,6 +55,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 ## Deliberately not implemented yet
 
 - Automatic memory extraction, deduplication, contradiction resolution, and consolidation.
+- Automated outcome adjudication or autonomous lesson promotion; current experiential feedback is explicitly user-confirmed.
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
 - Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
