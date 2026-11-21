@@ -278,18 +278,25 @@ class EvoStore:
         if not terms:
             return []
         clauses=[]
-        params=[]
+        where_params=[]
+        score_parts=[]
+        score_params=[]
         for term in terms:
             pattern=_like_pattern(term)
             clauses.append("(s.content LIKE ? ESCAPE '!' OR t.content LIKE ? ESCAPE '!' OR r.evidence LIKE ? ESCAPE '!')")
-            params.extend((pattern,pattern,pattern))
-        params.append(max(1,min(int(limit),50)))
-        sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content
+            where_params.extend((pattern,pattern,pattern))
+            score_parts.append("(CASE WHEN s.content LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
+                               "CASE WHEN t.content LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
+                               "CASE WHEN r.evidence LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
+            score_params.extend((pattern,pattern,pattern))
+        params=score_params+where_params+[max(1,min(int(limit),50))]
+        sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content,
+                ({' + '.join(score_parts)}) AS relevance
                 FROM memory_relations r
                 JOIN memories s ON s.id=r.source_memory_id
                 JOIN memories t ON t.id=r.target_memory_id
                 WHERE {' OR '.join(clauses)}
-                ORDER BY r.created_at DESC LIMIT ?"""
+                ORDER BY relevance DESC,r.created_at DESC LIMIT ?"""
         with self.lock:
             return self.db.execute(sql,params).fetchall()
 
