@@ -264,6 +264,27 @@ class EvoStore:
         with self.lock:
             return self.db.execute(sql,ids+ids).fetchall()
 
+    def search_memory_relations(self, query, limit=5):
+        terms=[term.strip(" \\t\\r\\n.,!?;:\\"'()[]{}") for term in query.split()]
+        terms=[term for term in terms if len(term)>1][:12]
+        if not terms:
+            return []
+        clauses=[]
+        params=[]
+        for term in terms:
+            pattern=_like_pattern(term)
+            clauses.append("(s.content LIKE ? ESCAPE '!' OR t.content LIKE ? ESCAPE '!' OR r.evidence LIKE ? ESCAPE '!')")
+            params.extend((pattern,pattern,pattern))
+        params.append(max(1,min(int(limit),50)))
+        sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content
+                FROM memory_relations r
+                JOIN memories s ON s.id=r.source_memory_id
+                JOIN memories t ON t.id=r.target_memory_id
+                WHERE {' OR '.join(clauses)}
+                ORDER BY r.created_at DESC LIMIT ?"""
+        with self.lock:
+            return self.db.execute(sql,params).fetchall()
+
     def add_task(self, title, description="", priority=3, due_at=None):
         tid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
