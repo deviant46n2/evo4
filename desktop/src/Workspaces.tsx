@@ -96,7 +96,7 @@ export function MemoryWorkspace() {
   async function scanForDuplicates() {
     if (reviewBusy) return;
     setReviewBusy(true); setError(""); setReviewResults(null);
-    try { setReviewResults(await api<MemoryReview>("/memories/reviewResults?limit=30")); }
+    try { setReviewResults(await api<MemoryReview>("/memories/review?limit=30")); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setReviewBusy(false); }
   }
@@ -121,8 +121,8 @@ export function MemoryWorkspace() {
       setReplacing(null); setReplacement(""); setReason(""); await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
-  async function reviewResults(id: string, approved: boolean) {
-    try { await api("/memory-candidates/" + encodeURIComponent(id) + "/reviewResults", json({ approved })); await refresh(); }
+  async function review(id: string, approved: boolean) {
+    try { await api("/memory-candidates/" + encodeURIComponent(id) + "/review", json({ approved })); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   return <div className="workspace-page">
@@ -168,8 +168,8 @@ export function MemoryWorkspace() {
       <div className="record-list">{items.map(item => <article className="record-card" key={item.id}><div className="record-top"><span className="record-category">{item.category}</span><span>{item.source}</span>{item.source==="demo-seed"&&<span className="demo-tag">SAMPLE</span>}<span>{Math.round(item.confidence * 100)}% confidence</span></div><p>{item.content}</p><div className="record-bottom"><small>Added {new Date(item.created_at).toLocaleString()} · Retrieved {item.access_count} times</small>{item.status === "active" && <div className="inline-actions"><button className="quiet-button" onClick={() => { setReplacing(replacing === item.id ? null : item.id); setReplacement(""); setReason(""); }}>Correct / replace</button><button className="quiet-button danger" onClick={() => void archive(item.id)}>Archive</button></div>}</div>{replacing === item.id && <div className="supersede-editor"><textarea value={replacement} onChange={e => setReplacement(e.target.value)} placeholder="Enter the corrected memory…" rows={2}/><input value={reason} onChange={e => setReason(e.target.value)} placeholder="Why is this replacing the old record? (optional)"/><div className="inline-actions"><button className="quiet-button" onClick={() => setReplacing(null)}>Cancel</button><button disabled={!replacement.trim()} onClick={() => void supersede(item.id)}>Save correction</button></div></div>}</article>)}{items.length === 0 && <div className="empty-state">No {status} memories match this view.</div>}</div>
     </section>
     <section className="workspace-panel">
-      <div className="panel-toolbar"><div><h2>Awaiting reviewResults</h2><p>Heuristically detected candidates are not used as trusted memories until accepted.</p></div><span className="workspace-count">{candidates.length} pending</span></div>
-      <div className="record-list">{candidates.map(item => <article className="record-card candidate-card" key={item.id}><div className="record-top"><span className="record-category">{item.category}</span><span>{item.source}</span>{item.source==="demo-seed"&&<span className="demo-tag">SAMPLE</span>}<span>{Math.round(item.confidence * 100)}% candidate confidence</span></div><p>{item.content}</p><div className="record-bottom"><small>Detected {new Date(item.created_at).toLocaleString()}</small><div className="inline-actions"><button className="quiet-button" onClick={() => void reviewResults(item.id, false)}>Reject</button><button onClick={() => void reviewResults(item.id, true)}>Accept</button></div></div></article>)}{candidates.length === 0 && <div className="empty-state">Nothing needs reviewResults.</div>}</div>
+      <div className="panel-toolbar"><div><h2>Awaiting review</h2><p>Heuristically detected candidates are not used as trusted memories until accepted.</p></div><span className="workspace-count">{candidates.length} pending</span></div>
+      <div className="record-list">{candidates.map(item => <article className="record-card candidate-card" key={item.id}><div className="record-top"><span className="record-category">{item.category}</span><span>{item.source}</span>{item.source==="demo-seed"&&<span className="demo-tag">SAMPLE</span>}<span>{Math.round(item.confidence * 100)}% candidate confidence</span></div><p>{item.content}</p><div className="record-bottom"><small>Detected {new Date(item.created_at).toLocaleString()}</small><div className="inline-actions"><button className="quiet-button" onClick={() => void review(item.id, false)}>Reject</button><button onClick={() => void reviewResults(item.id, true)}>Accept</button></div></div></article>)}{candidates.length === 0 && <div className="empty-state">Nothing needs review.</div>}</div>
     </section>
   </div>;
 }
