@@ -182,7 +182,7 @@ def main():
                     print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}; source={row['source']}] Trigger: {row['trigger_text']} | {row['lesson']}")
             elif args.learn_command=="list":
                 for row in store.list_lessons():
-                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
+                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}; source={row['source']}] Trigger: {row['trigger_text']} | {row['lesson']}")
         elif args.command=="runs":
             if args.runs_command=="list":
                 for row in store.list_agent_runs(args.limit,args.status):
