@@ -208,7 +208,7 @@ export function AgentsWorkspace() {
     finally { setBusy(false); }
   }
   async function cancelRun() {
-    if (!detail || !window.confirm("Request cancellation? Evo will stop at the next safe boundary. A provider call already in progress may need to return first.")) return;
+    if (!detail || !window.confirm("Request cancellation? Evo will stop at the next safe boundary. A provider call or tool action already in progress may need to finish or time out first.")) return;
     try { await api("/agents/" + encodeURIComponent(detail.id) + "/cancel", json({})); await refresh(); await refreshDetail(detail.id); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
@@ -229,7 +229,7 @@ export function AgentsWorkspace() {
         <textarea value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the task. Evo will inspect the workspace first, then request approval before writes or commands…"/>
         <div className="agent-launch-footer"><input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="Workspace path (blank uses configured workspace)"/><button disabled={busy || !request.trim()}>{busy ? "Starting…" : "Start agent"}</button></div>
       </form>
-      <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request may finish before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
+      <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request or tool action may finish or time out before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
     </section>
     <div className="agent-layout">
       <section className="workspace-panel run-list-panel"><div className="panel-toolbar"><div><h2>Run history</h2><p>Most recent first</p></div><button className="quiet-button" onClick={() => void refresh()}>Refresh</button></div>
