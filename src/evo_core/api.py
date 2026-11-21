@@ -306,12 +306,14 @@ def create_app(config_path="config.toml", provider_name=None):
     def delete_conversation(conversation_id: str):
         if store.get_conversation(conversation_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        # The reservation check and deletion must be atomic with respect to chat
+        # registration. Queued turns are reserved before executor submission.
         with locks_guard:
             entry = conversation_locks.get(conversation_id)
             if entry and entry["users"]:
                 raise HTTPException(status_code=409, detail="Conversation is currently active")
-        if not store.delete_conversation(conversation_id):
-            raise HTTPException(status_code=404, detail="Conversation not found")
+            if not store.delete_conversation(conversation_id):
+                raise HTTPException(status_code=404, detail="Conversation not found")
         return None
 
     @app.get("/api/v1/conversations/{conversation_id}/messages")
@@ -339,10 +341,13 @@ def create_app(config_path="config.toml", provider_name=None):
         conversation_id = payload.conversation_id
         if conversation_id is None:
             conversation_id = assistant.new_conversation()
-        elif not any(
-            row["id"] == conversation_id for row in store.list_conversations(10000)
-        ):
+        elif store.get_conversation(conversation_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Reserve before the SSE generator queues the worker. This prevents
+        # deletion during the gap between executor submission and worker start.
+        reservation = acquire_conversation_lock(conversation_id)
+        submitted = threading.Event()
 
         async def events():
             loop = asyncio.get_running_loop()
@@ -360,9 +365,8 @@ def create_app(config_path="config.toml", provider_name=None):
                         connected.clear()
 
             def run_turn():
-                entry = acquire_conversation_lock(conversation_id)
                 try:
-                    with entry["lock"]:
+                    with reservation["lock"]:
                         if shutting_down.is_set():
                             raise RuntimeError("Evo is shutting down")
                         result = assistant.turn(
@@ -388,7 +392,7 @@ def create_app(config_path="config.toml", provider_name=None):
                         "data": {"type": type(exc).__name__, "message": str(exc)},
                     })
                 finally:
-                    release_conversation_lock(conversation_id, entry)
+                    release_conversation_lock(conversation_id, reservation)
                     publish(sentinel)
 
             try:
@@ -399,7 +403,9 @@ def create_app(config_path="config.toml", provider_name=None):
                 )
                 try:
                     executor.submit(run_turn)
+                    submitted.set()
                 except Exception as exc:
+                    release_conversation_lock(conversation_id, reservation)
                     yield (
                         "event: error\ndata: "
                         + json.dumps({
@@ -422,6 +428,11 @@ def create_app(config_path="config.toml", provider_name=None):
                 # forwarding tokens to a departed client; the turn may finish
                 # and persist its result in the background.
                 connected.clear()
+                if not submitted.is_set():
+                    with locks_guard:
+                        still_reserved = conversation_locks.get(conversation_id) is reservation
+                    if still_reserved:
+                        release_conversation_lock(conversation_id, reservation)
 
         return StreamingResponse(
             events(),
