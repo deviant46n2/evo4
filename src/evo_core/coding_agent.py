@@ -1,5 +1,5 @@
 import json
-from .workspace import Workspace, WorkspaceError, is_test_path
+from .workspace import Workspace, WorkspaceError
 
 CODING_POLICY = """\n\nCoding-agent operating rules:
 - First inspect the project structure and the relevant source, tests, and project instructions before proposing changes.
@@ -7,7 +7,7 @@ CODING_POLICY = """\n\nCoding-agent operating rules:
 - Make the smallest change that satisfies the user's request. Preserve existing design unless evidence requires changing it.
 - Test/spec files are protected: change them only when the user explicitly approves that specific write. Explain why the test change is necessary. Never weaken, delete, skip, xfail, or relax an assertion merely to make a suite pass.
 - Before editing, communicate a concise plan when useful. Do not edit unrelated files.
-- After editing, run the most relevant available tests, checks, or build commands. A command is verified only when its actual tool result shows exit code 0.
+- After editing, run the most relevant available tests, checks, or build commands. Only an actual test-runner command can produce the test-verification signal; lint/build/format checks are useful but are not substitutes for tests.
 - If checks fail, inspect the failure and make a bounded repair attempt. Do not claim tests passed when they were not run or failed.
 - Never claim a file was changed unless write_file succeeded. Never claim a command ran unless run_command returned its result.
 - Do not run destructive, deployment, network, privilege-escalation, or credential-handling commands. Ask the user to handle those separately.
@@ -110,9 +110,9 @@ class CodingAgent:
         if successful_writes==0:
             return {"status":"not_required","reason":"No file writes were performed."}
         if not last_verification or last_verification["tool_call"]<=last_write_call:
-            return {"status":"not_run","reason":"No recognized verification command ran successfully after the latest file write."}
+            return {"status":"not_run","reason":"No recognized test runner completed after the latest successful file write."}
         if last_verification["status"]=="completed" and last_verification.get("returncode")==0:
-            return {"status":"passed","reason":"A recognized verification command exited with code 0 after the latest file write."}
+            return {"status":"passed","reason":"A recognized test runner exited with code 0 after the latest successful file write."}
         return {"status":"failed","reason":"The latest recognized verification command after the latest file write did not complete successfully."}
 
     @staticmethod
@@ -122,7 +122,7 @@ class CodingAgent:
         if report["status"]=="failed":
             return "\n\nVerification signal: FAILED. Inspect the recorded command output; the change is not verified."
         if report["status"]=="not_run":
-            return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test/check/build command completed successfully after the latest change."
+            return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test runner completed after the latest change."
         return ""
 
     def run(self, conversation_id, request, approval, on_token=None):
