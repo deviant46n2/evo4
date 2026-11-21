@@ -48,6 +48,8 @@ type RecallPreview = { query:string; count:number; retrieval:string; matches:Arr
 type MemoryReview = {count:number;analyzed_records:number;method:string;mutates_memory:boolean;note:string;suggestions:Array<{left:{id:string;content:string;category:string;source:string;confidence:number};right:{id:string;content:string;category:string;source:string;confidence:number};similarity:number;jaccard:number;containment:number;shared_terms:string[];reason:string;method:string}>};
 type Run = { id: string; kind: string; status: string; started_at: string; finished_at?: string; summary?: string; metadata: Record<string, any> };
 type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> }; background_task?: {status:string;cancel_requested:boolean}; background_events?: Array<{id:number;type:string;payload:Record<string,any>;created_at:string}> };
+type AgentPlanSummary = {id:string;title:string;summary:string;status:string;created_at:string;updated_at:string;run_id:string|null;error:string};
+type AgentPlan = AgentPlanSummary & {request:string;workspace:string;steps:Array<{id:string;position:number;title:string;description:string;expected_outcome:string;verification:string;status:string;result:string}>;events:Array<{id:number;step_id:string|null;type:string;payload:Record<string,any>;created_at:string}>};
 
 export function MemoryWorkspace() {
   const [items, setItems] = useState<Memory[]>([]);
@@ -66,6 +68,9 @@ export function MemoryWorkspace() {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
+  const [plan, setPlan] = useState<AgentPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const params = new URLSearchParams({ status, limit: "200" });
@@ -186,17 +191,25 @@ export function AgentsWorkspace() {
     try { setRuns(await api<Run[]>("/agents?limit=100")); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, []);
+  const refreshPlans = useCallback(async () => {
+    try { setPlans(await api<AgentPlanSummary[]>("/agents/plans?limit=30")); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
+  const loadPlan = useCallback(async (id: string) => {
+    try { setPlan(await api<AgentPlan>("/agents/plans/" + encodeURIComponent(id))); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
   const refreshDetail = useCallback(async (id: string) => {
     try { setDetail(await api<RunDetail>("/agents/" + encodeURIComponent(id))); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, []);
   useEffect(() => {
-    void refresh();
-    const changed=()=>{void refresh();if(selected)void refreshDetail(selected);};
+    void refresh(); void refreshPlans();
+    const changed=()=>{void refresh();void refreshPlans();if(selected)void refreshDetail(selected);};
     window.addEventListener("evo-demo-data-changed",changed);
-    const handle = window.setInterval(() => { void refresh(); if (selected) void refreshDetail(selected); }, 1800);
+    const handle = window.setInterval(() => { void refresh(); void refreshPlans(); if (selected) void refreshDetail(selected); if (plan) void loadPlan(plan.id); }, 1800);
     return () => {window.clearInterval(handle);window.removeEventListener("evo-demo-data-changed",changed);};
-  }, [refresh, refreshDetail, selected]);
+  }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan]);
   async function start(event: React.FormEvent) {
     event.preventDefault();
     if (!request.trim() || busy) return;
@@ -205,6 +218,26 @@ export function AgentsWorkspace() {
       const result = await api<{run_id: string}>("/agents", json({ request: request.trim(), workspace: workspace.trim() || null }));
       setRequest(""); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+  async function proposePlan() {
+    if (!request.trim() || planning || busy) return;
+    setPlanning(true); setError(""); setPlan(null);
+    try {
+      const result = await api<AgentPlan>("/agents/plans", json({request:request.trim(),workspace:workspace.trim()||null}));
+      setPlan(result); await refreshPlans();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setPlanning(false); }
+  }
+  async function approveAndExecutePlan() {
+    if (!plan || plan.status !== "proposed" || busy) return;
+    if (!window.confirm("Approve this plan and start sequential execution? File writes and commands will still require separate approval.")) return;
+    setBusy(true); setError("");
+    try {
+      await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve", json({}));
+      const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute", json({}));
+      setSelected(result.run_id); await loadPlan(plan.id); await refresh(); await refreshPlans(); await refreshDetail(result.run_id);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); await loadPlan(plan.id); }
     finally { setBusy(false); }
   }
   async function cancelRun() {
@@ -230,6 +263,18 @@ export function AgentsWorkspace() {
         <div className="agent-launch-footer"><input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="Workspace path (blank uses configured workspace)"/><button disabled={busy || !request.trim()}>{busy ? "Starting…" : "Start agent"}</button></div>
       </form>
       <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request or tool action may finish or time out before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
+    </section>
+    <section className="workspace-panel">
+      <div className="panel-toolbar"><div><h2>Plan first</h2><p>Generate a structured proposal, inspect each step, then explicitly approve execution.</p></div><span className="run-status">HUMAN APPROVAL</span></div>
+      <div className="inline-actions"><button className="quiet-button" type="button" disabled={planning||busy||!request.trim()} onClick={()=>void proposePlan()}>{planning?"Planning…":"Generate plan for this request"}</button></div>
+      <div className="policy-note">The model's plan is untrusted until reviewed. Approval authorizes the listed sequence only; each file write and command still requires its existing per-action approval. Steps run sequentially. Failed steps stop the plan; interrupted plans are not replayed.</div>
+      {plans.length>0&&<div className="run-list">{plans.map(item=><button key={item.id} className={"run-row "+(plan?.id===item.id?"selected":"")} onClick={()=>void loadPlan(item.id)}><span className={"run-status "+item.status}>{item.status}</span><strong>{item.title}</strong><small>{new Date(item.created_at).toLocaleString()}</small></button>)}</div>}
+      {plan&&<div className="run-summary"><div className="record-top"><strong>{plan.title}</strong><span className={"run-status "+plan.status}>{plan.status}</span></div><p>{plan.summary}</p>
+        <div className="event-list">{plan.steps.map(step=><article className="event-card" key={step.id}><div className="event-head"><strong>{step.position+1}. {step.title}</strong><span className={"run-status "+step.status}>{step.status}</span></div><p>{step.description}</p><small>Expected: {step.expected_outcome}</small><small>Verify: {step.verification}</small>{step.result&&<pre>{step.result}</pre>}</article>)}</div>
+        {plan.error&&<p className="failed-note">{plan.error}</p>}
+        {plan.status==="proposed"&&<button disabled={busy||planning} onClick={()=>void approveAndExecutePlan()}>Approve plan and execute</button>}
+        {plan.run_id&&<button className="quiet-button" onClick={()=>{setSelected(plan.run_id!);void refreshDetail(plan.run_id!);}}>Open execution run</button>}
+      </div>}
     </section>
     <div className="agent-layout">
       <section className="workspace-panel run-list-panel"><div className="panel-toolbar"><div><h2>Run history</h2><p>Most recent first</p></div><button className="quiet-button" onClick={() => void refresh()}>Refresh</button></div>
