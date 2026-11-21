@@ -222,3 +222,8 @@ Evaluation reports precision@k and zero-result rate alongside hit rate, recall@k
 ## Hardware Intelligence v1
 
 Hardware intelligence adds runtime discovery, persistent runtime profiles, architecture-aware KV-cache estimates, advisory workload admission, and a persistent reservation-based queue. The scheduler evaluates priority-ordered jobs against telemetry and outstanding reservations, but does not execute or preempt running workloads, apply runtime profiles, start/stop services, signal PIDs, or change GPU/runtime settings. Reservations are advisory rather than hard resource isolation. See [the hardware intelligence notes](docs/HARDWARE-INTELLIGENCE.md) for formulas, scheduler behavior, safety boundaries and limitations.
+
+
+## Managed workload execution
+
+Reserved scheduler jobs can now run explicitly approved commands through Evo's managed worker. Commands are argv arrays (never shell strings), must match workspace.allowed_commands, run in the configured workspace, and have bounded captured output plus a configurable timeout. Evo records execution state and marks unfinished runs interrupted after restart without signalling potentially orphaned processes. This does not attach to or control an existing llama-server. See the hardware intelligence notes in docs/HARDWARE-INTELLIGENCE.md.
