@@ -28,8 +28,14 @@ def evaluate_memory_retrieval(cases_path, top_k=5):
                 raise ValueError(f"Duplicate memory key: {item['key']}")
             if not isinstance(item.get("content"),str) or not item["content"].strip():
                 raise ValueError(f"Memory {item['key']} requires content")
-            ids[item["key"]]=store.add_memory(item["content"],item.get("category","general"),
-                                               item.get("tags",[]),source="benchmark",confidence=1.0)
+            tags=item.get("tags",[])
+            if not isinstance(tags,list) or any(not isinstance(tag,str) for tag in tags):
+                raise ValueError(f"Memory {item['key']} tags must be a list of strings")
+            category=item.get("category","general")
+            if not isinstance(category,str):
+                raise ValueError(f"Memory {item['key']} category must be a string")
+            ids[item["key"]]=store.add_memory(item["content"],category,
+                                               tags,source="benchmark",confidence=1.0)
         results=[]
         reciprocal_ranks=[]
         hits=0
@@ -38,8 +44,8 @@ def evaluate_memory_retrieval(cases_path, top_k=5):
             if not isinstance(case,dict) or not isinstance(case.get("query"),str) or not case["query"].strip():
                 raise ValueError(f"Query #{index+1} requires query text")
             expected=case.get("expected")
-            if not isinstance(expected,list) or not expected:
-                raise ValueError(f"Query #{index+1} requires a nonempty expected key list")
+            if not isinstance(expected,list) or not expected or any(not isinstance(key,str) or not key for key in expected):
+                raise ValueError(f"Query #{index+1} requires a nonempty list of memory keys")
             unknown=[key for key in expected if key not in ids]
             if unknown:
                 raise ValueError(f"Query {case.get('id',index+1)} references unknown memory keys: {unknown}")
