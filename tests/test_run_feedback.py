@@ -1,5 +1,6 @@
 import io
 import sys
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,11 +17,30 @@ class RunFeedbackTests(unittest.TestCase):
         self.store=EvoStore(Path(self.tmp.name)/"evo.db")
 
     def tearDown(self):
-        self.store.close()
+        if self.store is not None:
+            self.store.close()
         self.tmp.cleanup()
 
     def make_run(self):
         return self.store.start_agent_run("coding",{"workspace":"demo"})
+
+    def test_new_learning_tables_are_added_to_an_existing_database(self):
+        database=Path(self.tmp.name)/"evo.db"
+        self.store.close()
+        legacy=sqlite3.connect(database)
+        legacy.execute("DROP TABLE run_feedback")
+        legacy.execute("DROP TABLE memory_relations")
+        legacy.commit()
+        legacy.close()
+        upgraded=EvoStore(database)
+        try:
+            tables={row[0] for row in upgraded.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertIn("run_feedback",tables)
+            self.assertIn("memory_relations",tables)
+        finally:
+            upgraded.close()
+        self.store=None
 
     def test_feedback_and_lesson_are_saved_atomically(self):
         run_id=self.make_run()
