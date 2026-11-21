@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import statistics
 import threading
 from pathlib import Path
 SCHEMA = """
@@ -10,7 +11,7 @@ CREATE TABLE IF NOT EXISTS experiments (
  model TEXT NOT NULL, run_label TEXT, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
  prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
  elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
- completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT, evaluation_details TEXT,
+ completion_tokens INTEGER, tokens_per_second REAL, finish_reason TEXT, seed INTEGER, evaluation_status TEXT, evaluation_details TEXT,
  evaluation_passed INTEGER, evaluation_total INTEGER
 );
 CREATE TABLE IF NOT EXISTS resource_samples (
@@ -41,7 +42,7 @@ class ResultsDB:
         columns = {row[1] for row in self.connection.execute("PRAGMA table_info(experiments)")}
         for name, column_type in (("evaluation_status", "TEXT"), ("evaluation_details", "TEXT"),
                                   ("evaluation_passed", "INTEGER"), ("evaluation_total", "INTEGER"),
-                                  ("run_label", "TEXT")):
+                                  ("run_label", "TEXT"), ("finish_reason", "TEXT"), ("seed", "INTEGER")):
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE experiments ADD COLUMN {name} {column_type}")
         legacy = self.connection.execute(
@@ -101,20 +102,23 @@ class ResultsDB:
         with self.lock:
             return self.connection.execute(
                 "SELECT id,started_at,task_id,category,repetition,model,run_label,status,elapsed_seconds,"
-                "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,"
+                "time_to_first_token_seconds,prompt_tokens,completion_tokens,tokens_per_second,finish_reason,seed,"
                 "evaluation_status,evaluation_details,evaluation_passed,evaluation_total,error FROM experiments "
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     def aggregates(self):
         with self.lock:
-            return self.connection.execute(
+            groups = self.connection.execute(
                 "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
                 "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
                 "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN status='truncated' THEN 1 ELSE 0 END) AS truncated, "
+                "SUM(CASE WHEN status='incomplete' THEN 1 ELSE 0 END) AS incomplete, "
+                "SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown, "
                 "SUM(COALESCE(evaluation_passed,0)) AS checks_passed, "
                 "SUM(COALESCE(evaluation_total,0)) AS checks_scored, "
-                "ROUND(AVG(elapsed_seconds),3) AS avg_elapsed_seconds, "
-                "ROUND(AVG(time_to_first_token_seconds),3) AS avg_ttft_seconds, "
-                "ROUND(AVG(tokens_per_second),2) AS avg_tokens_per_second, "
+                "ROUND(AVG(CASE WHEN status='completed' THEN elapsed_seconds END),3) AS avg_elapsed_seconds, "
+                "ROUND(AVG(CASE WHEN status='completed' THEN time_to_first_token_seconds END),3) AS avg_ttft_seconds, "
+                "ROUND(AVG(CASE WHEN status='completed' THEN tokens_per_second END),2) AS avg_tokens_per_second, "
                 "ROUND(AVG(samples.peak_vram_mib),1) AS avg_peak_vram_mib, "
                 "MAX(samples.peak_vram_mib) AS max_peak_vram_mib, "
                 "ROUND(AVG(samples.avg_gpu_utilization),1) AS avg_gpu_utilization_percent, "
@@ -126,6 +130,28 @@ class ResultsDB:
                 ") AS samples ON samples.experiment_id=experiments.id "
                 "GROUP BY COALESCE(run_label,model), model, category "
                 "ORDER BY configuration, category").fetchall()
+            measurements = self.connection.execute(
+                "SELECT COALESCE(run_label,model) AS configuration,model,category,"
+                "elapsed_seconds,time_to_first_token_seconds,tokens_per_second "
+                "FROM experiments WHERE status='completed'").fetchall()
+        grouped = {}
+        for value in measurements:
+            key = (value["configuration"], value["model"], value["category"])
+            grouped.setdefault(key, []).append(value)
+        result = []
+        for row in groups:
+            item = dict(row)
+            values = grouped.get((row["configuration"], row["model"], row["category"]), [])
+            for field, label, digits in (
+                ("elapsed_seconds", "elapsed_seconds", 3),
+                ("time_to_first_token_seconds", "ttft_seconds", 3),
+                ("tokens_per_second", "tokens_per_second", 2),
+            ):
+                samples = [float(value[field]) for value in values if value[field] is not None]
+                item["median_" + label] = round(statistics.median(samples), digits) if samples else None
+                item["stdev_" + label] = round(statistics.stdev(samples), digits) if len(samples) > 1 else None
+            result.append(item)
+        return result
     def count_failed(self, ids):
         if not ids:
             return 0
@@ -133,6 +159,14 @@ class ResultsDB:
         with self.lock:
             return int(self.connection.execute(
                 f"SELECT COUNT(*) FROM experiments WHERE status='failed' AND id IN ({placeholders})",
+                list(ids)).fetchone()[0])
+    def count_not_completed(self, ids):
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self.lock:
+            return int(self.connection.execute(
+                f"SELECT COUNT(*) FROM experiments WHERE status<>'completed' AND id IN ({placeholders})",
                 list(ids)).fetchone()[0])
     def close(self):
         with self.lock:
