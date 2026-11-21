@@ -233,7 +233,12 @@ def main():
                 print(json.dumps(store.agent_run_summary(),ensure_ascii=False,indent=2))
             elif args.runs_command=="list":
                 for row in store.list_agent_runs(args.limit,args.status):
-                    print(f"{row['id']} [{row['kind']}; {row['status']}; {row['started_at']}] {row['summary'] or ''}")
+                    try:
+                        metadata=json.loads(row["metadata_json"] or "{}")
+                    except json.JSONDecodeError:
+                        metadata={}
+                    verification=(metadata.get("verification") or {}).get("status","unknown")
+                    print(f"{row['id']} [{row['kind']}; {row['status']}; verification={verification}; {row['started_at']}] {row['summary'] or ''}")
             elif args.runs_command=="show":
                 row=store.get_agent_run(args.id)
                 if not row:
