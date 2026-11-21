@@ -183,18 +183,29 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md) and [the learning/mem
 - The lab remains usable to evaluate Evo components from the outside.
 - No unapproved code execution, background autonomous operation, or self-modification is enabled in this version.
 
-## Important limitations
+## Current limitations and boundaries
 
-This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, semantic memory retrieval, robust automatic memory consolidation or contradiction resolution, background task execution, model scheduling/unloading, or a graphical UI. Memory and research retrieval are lexical. Supersession and contradiction links are user-directed; Evo does not automatically decide which conflicting fact is true. Automatic memory capture is a small heuristic that creates tentative candidates; it is not general language understanding. The current assistant sends recent conversation history and selected memories/lessons/research; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting.
+This is a substantial early foundation, not a finished autonomous assistant. Memory and research retrieval are lexical; there is no semantic/vector retrieval, general memory consolidation, automatic contradiction resolution, or source-verifying web research agent. Automatic memory capture is narrow and heuristic. Supersession and contradiction links are user-directed. The memory benchmark is synthetic and does not claim real-world personal-memory recall.
 
-Experiential learning is deliberately user-grounded at this stage: Evo does not decide on its own that a task succeeded or promote its own speculation into trusted lessons. A user can review an agent run and record its outcome; an optional lesson is stored with `user-run-feedback` provenance and linked to the feedback record. This creates a traceable correction loop, not autonomous self-training.
+The coding agent is bounded and approval-gated. Tool-call compatibility depends on the selected model/server; the agent is not an unattended worker. The desktop does not currently support stop-generation, pause/resume/redirect for agents, live plan streaming, or in-app provider switching. Closing the browser stream does not guarantee cancellation of an in-flight provider request.
 
-The coding agent depends on OpenAI-compatible streamed tool-call support. Some llama.cpp builds/models may not support the expected tool-call format; this must be tested on the actual endpoint. The agent is bounded by a tool-round limit; reaching that limit is recorded as a failed/incomplete run rather than success. It is not a background autonomous worker. The streaming client targets common OpenAI-compatible SSE behavior; server-specific quirks must be tested on the actual endpoint. A successful CI run cannot validate the target machine, model, CUDA stack, or real-world response quality.
+Hardware monitoring is observe-only. It reports telemetry and advisory pressure; it does not kill processes, control GPU clocks/power, stop services, load/unload models, or reconfigure the inference server. There is no resource-aware scheduler yet. The desktop is a local web preview, not a packaged native application.
+
+Context budgeting is a conservative character-based estimate rather than tokenizer-exact accounting. A successful automated test/build does not establish live-model response quality, target-machine compatibility, or browser-level usability.
+
+## Documentation map
+
+- [Project status and validated baseline](docs/PROJECT-STATUS.md)
+- [Desktop setup and user guide](docs/DESKTOP-USER-GUIDE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Experiment protocol](docs/EXPERIMENT-PROTOCOL.md)
+- [Learning and memory design](docs/LEARNING-AND-MEMORY.md)
+- [Local handoff and independent review](docs/LOCAL-HANDOFF.md)
 
 ## Validation status
 
-**The base branch at 20a3991 was independently exercised against the user's Qwen3.8-27B llama.cpp server. The additions on this branch have not yet been validated against that live model.** Automated tests and CI are intended to catch basic regressions, not certify compatibility with your exact runtime. The first local validation should cover installation, `evo doctor`, a multi-turn chat, conversation resume, memory retrieval, task persistence, and the experiment smoke suite.
+The `hardware-observability-v1` baseline at `ce0c05b87b6db8060071d015cfb680dc0261e75d` was independently reviewed: 105 Python unit tests passed (0 failures/errors/skips), Python compileall passed, and the frontend TypeScript/Vite production build passed. The reviewer verdict was **PASS WITH ISSUES**, with no critical bugs identified. Non-blocking findings and the scope of that validation are recorded in [Project status](docs/PROJECT-STATUS.md).
 
-The memory benchmark is intentionally synthetic and isolated: it is a regression fixture for comparing retrieval implementations, not a claim about recall over a real user memory collection. The next step is to add user-curated held-out queries and measure retrieval against actual Evo memory records with consent.
+Those results apply only to that exact commit. They do not establish browser visual usability or live-model quality on every configuration. See [the desktop guide](docs/DESKTOP-USER-GUIDE.md) for local run instructions and manual checks.
 
 The research and design rationale is maintained in the [research archive](https://github.com/deviant46n2/airesearchandtesting).
