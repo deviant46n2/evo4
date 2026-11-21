@@ -63,6 +63,20 @@ class EvoCoreTests(unittest.TestCase):
             self.assertIn("Qwen configuration profile B",messages[0]["content"])
             assistant.close()
 
+    def test_memory_relation_history_is_ranked_by_query_relevance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            old=store.add_memory("The service endpoint was port 18997")
+            new=store.add_memory("The service endpoint is now port 18997")
+            store.relate_memories(old,new,"supports","Same endpoint confirmed.")
+            other_old=store.add_memory("The endpoint previously used port 8080")
+            other_new=store.add_memory("The endpoint now uses port 8080")
+            store.relate_memories(other_old,other_new,"supports","Old configuration.")
+            rows=store.search_memory_relations("endpoint 18997",limit=1)
+            self.assertEqual(rows[0]["source_memory_id"],old)
+            self.assertGreater(rows[0]["relevance"],0)
+            store.close()
+
     def test_explicit_contradiction_is_injected_into_assistant_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             config=self.make_config(Path(tmp)/"evo.db")
