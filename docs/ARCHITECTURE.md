@@ -59,7 +59,8 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 
 - A React/Vite desktop application with Chat, Agents, Memory, Hardware, and Experiments workspaces.
 - Runtime discovery, persistent runtime profiles, architecture-derived KV estimates, and conservative workload admission.
-- A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit user-confirmed lifecycle transitions. It does not execute or stop processes.
+- A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit lifecycle transitions.
+- An allowlisted managed-execution worker for explicitly user-launched reserved jobs. It uses argv arrays without a shell, runs in the configured workspace, captures bounded output, enforces timeouts, and records exit status and restart interruption.
 
 ## Deliberately not implemented yet
 
@@ -68,8 +69,8 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
 - Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Agent execution workers, pause/resume, interruption, and restart-safe execution. The workload scheduler tracks and reserves jobs but does not execute them.
-- Model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
+- Coding-agent pause/resume, interruption, and restart-safe continuation. Managed command execution is available for reserved jobs, but it is not yet a general agent worker or resumable task engine.
+- Hard CPU/RAM/VRAM isolation for child workloads, live resource monitoring per managed command, model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
 - Autonomous self-modification or online weight training.
 
 These are future layers, not reasons to discard the current foundation.
