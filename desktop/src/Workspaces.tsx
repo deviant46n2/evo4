@@ -128,7 +128,7 @@ export function MemoryWorkspace() {
       {recallPreview && <div className="record-list">
         <small>{recallPreview.count} results · {recallPreview.retrieval}</small>
         {recallPreview.matches.map((match,index)=><article className="record-card" key={match.id}>
-          <div className="record-top"><span className="record-category">#{index+1} · {match.category}</span><span>{match.source}</span><span>{Math.round(match.score*100)}% match</span></div>
+          <div className="record-top"><span className="record-category">#{index+1} · {match.category}</span><span>{match.source}</span><span>rank score {match.score.toFixed(3)}</span></div>
           <p>{match.content}</p>
           <div className="record-bottom"><small>{match.reason} · {Math.round(match.coverage*100)}% query-term coverage</small></div>
         </article>)}
