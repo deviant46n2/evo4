@@ -53,6 +53,7 @@ class RunFeedbackTests(unittest.TestCase):
         self.assertEqual(feedback[0]["outcome"],"failure")
         self.assertIn("broke an existing test",feedback[0]["feedback"])
         self.assertEqual(feedback[0]["lesson_id"],result["lesson_id"])
+        self.assertIn("full existing test suite",feedback[0]["lesson_text"])
         lessons=self.store.search_lessons("full existing test suite")
         self.assertEqual(len(lessons),1)
         self.assertEqual(lessons[0]["source"],"user-run-feedback")
