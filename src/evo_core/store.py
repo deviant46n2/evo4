@@ -329,6 +329,23 @@ class EvoStore:
                             (status,utc_now(),summary,run_id))
             self.db.commit()
 
+    def update_agent_run_metadata(self, run_id, updates):
+        if not isinstance(updates,dict):
+            raise ValueError("Agent run metadata updates must be an object")
+        with self.lock:
+            row=self.db.execute("SELECT metadata_json FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+            if not row:
+                return False
+            try:
+                metadata=json.loads(row["metadata_json"] or "{}")
+            except json.JSONDecodeError:
+                metadata={}
+            metadata.update(updates)
+            self.db.execute("UPDATE agent_runs SET metadata_json=? WHERE id=?",
+                            (json.dumps(metadata,ensure_ascii=False),run_id))
+            self.db.commit()
+            return True
+
     def record_tool_event(self, run_id, tool_name, arguments, output_summary, status):
         with self.lock:
             self.db.execute("""INSERT INTO tool_events(run_id,tool_name,input_json,output_summary,status,created_at)
