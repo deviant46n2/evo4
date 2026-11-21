@@ -29,11 +29,13 @@ def build_parser():
     return parser
 REPORT_FIELDS = ("id","started_at","task_id","category","repetition","model","run_label","status",
     "elapsed_seconds","time_to_first_token_seconds","prompt_tokens","completion_tokens",
-    "tokens_per_second","evaluation_status","evaluation_details","evaluation_passed",
-    "evaluation_total","error")
-SUMMARY_FIELDS = ("configuration","model","category","runs","completed","failed","checks_passed",
-    "checks_scored","avg_elapsed_seconds","avg_ttft_seconds","avg_tokens_per_second",
-    "avg_peak_vram_mib","max_peak_vram_mib","avg_gpu_utilization_percent","max_sampled_ram_mib")
+    "tokens_per_second","finish_reason","seed","evaluation_status","evaluation_details",
+    "evaluation_passed","evaluation_total","error")
+SUMMARY_FIELDS = ("configuration","model","category","runs","completed","failed","truncated","incomplete",
+    "unknown","checks_passed","checks_scored","avg_elapsed_seconds","median_elapsed_seconds","stdev_elapsed_seconds",
+    "avg_ttft_seconds","median_ttft_seconds","stdev_ttft_seconds","avg_tokens_per_second",
+    "median_tokens_per_second","stdev_tokens_per_second","avg_peak_vram_mib","max_peak_vram_mib",
+    "avg_gpu_utilization_percent","max_sampled_ram_mib")
 
 def _write_rows(rows, csv_output, fieldnames=()):
     if csv_output:
@@ -93,11 +95,12 @@ def main():
         print(f"Database: {config.database}")
         db = ResultsDB(config.database)
         try:
-            failed = db.count_failed(ids)
+            not_completed = db.count_not_completed(ids)
         finally:
             db.close()
-        if failed:
-            print(f"{failed} of {len(ids)} runs failed; inspect `evo-exp report`.", file=sys.stderr)
+        if not_completed:
+            print(f"{not_completed} of {len(ids)} runs were not completed (failed, truncated, incomplete, or unknown); "
+                  "inspect `evo-exp report`.", file=sys.stderr)
             raise SystemExit(1)
         print("Inspect report and summary commands for results.")
 if __name__ == "__main__":
