@@ -112,7 +112,9 @@ class EvoAssistant:
         # records) so truncation cannot leave an orphaned title or partial item.
         kept_records=[]
         omitted_records=0
-        for section in dynamic.split("\n\n"):
+        section_pattern = r"\n\n(?=(?:Relevant persistent memories|Explicit relationships between retrieved memories|Relevant lessons from prior feedback and outcomes|Relevant saved research))"
+        sections = re.split(section_pattern, dynamic)
+        for section in sections:
             if not section:
                 continue
             rendered=section+"\n\n"
