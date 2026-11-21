@@ -59,6 +59,8 @@ def create_job(connection, payload, now=None):
     if not isinstance(priority, int) or isinstance(priority, bool) or not 1 <= priority <= 100:
         raise ValueError("priority must be an integer from 1 to 100")
     gpu_heavy = payload.get("gpu_heavy")
+    if kind == "cpu" and gpu_heavy is None:
+        gpu_heavy = False
     if gpu_heavy is not None and not isinstance(gpu_heavy, bool):
         raise ValueError("gpu_heavy must be true, false, or null")
     values = {}
@@ -179,7 +181,7 @@ def start_job(connection, job_id, now=None):
                lease_expires_at=NULL WHERE id=? AND status='reserved' AND lease_expires_at>?""",
             (now_text,now_text,job_id,now_text))
         if cur.rowcount != 1:
-            connection.rollback()
+            connection.commit()
             raise ValueError("Job is not currently reserved; refresh the queue before starting it")
         connection.commit()
     except Exception:
