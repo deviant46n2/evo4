@@ -20,6 +20,10 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=200000)
 
 
+class ConversationUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
     store = EvoStore(config.database)
@@ -55,7 +59,7 @@ def create_app(config_path="config.toml", provider_name=None):
             "http://localhost:4173",
         ],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type"],
     )
 
@@ -88,6 +92,10 @@ def create_app(config_path="config.toml", provider_name=None):
         return {
             "chat": True,
             "conversation_history": True,
+            "conversation_search": True,
+            "conversation_rename": True,
+            "conversation_delete": True,
+            "automatic_titles": True,
             "streaming": True,
             "stop_generation": False,
             "agents": False,
@@ -98,8 +106,8 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
     @app.get("/api/v1/conversations")
-    def conversations(limit: int = 30):
-        rows = store.list_conversations(min(max(limit, 1), 100))
+    def conversations(limit: int = 30, q: str | None = None):
+        rows = store.list_conversations(min(max(limit, 1), 100), query=q)
         return [
             {
                 "id": row["id"],
@@ -114,11 +122,31 @@ def create_app(config_path="config.toml", provider_name=None):
     def create_conversation():
         return {"id": assistant.new_conversation(), "title": "New conversation"}
 
+    @app.patch("/api/v1/conversations/{conversation_id}")
+    def rename_conversation(conversation_id: str, payload: ConversationUpdate):
+        try:
+            updated = store.rename_conversation(conversation_id, payload.title)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not updated:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"id": conversation_id, "title": payload.title.strip()}
+
+    @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
+    def delete_conversation(conversation_id: str):
+        if store.get_conversation(conversation_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        with locks_guard:
+            entry = conversation_locks.get(conversation_id)
+            if entry and entry["users"]:
+                raise HTTPException(status_code=409, detail="Conversation is currently active")
+        if not store.delete_conversation(conversation_id):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return None
+
     @app.get("/api/v1/conversations/{conversation_id}/messages")
     def messages(conversation_id: str):
-        if not any(
-            row["id"] == conversation_id for row in store.list_conversations(10000)
-        ):
+        if store.get_conversation(conversation_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             {
