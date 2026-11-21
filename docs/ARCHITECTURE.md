@@ -55,16 +55,29 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - New agent actions should create auditable tool-event records.
 - Avoid coupling the lab database schema to internal assistant implementation details.
 
+## Desktop API and client
+
+The React/Vite desktop client is a local web application served by a loopback-only FastAPI service. It currently exposes Chat, Agents, Memory, Hardware, and Experiments workspaces. The CLI remains supported; the browser is not the system of record.
+
+The API provides health/capability discovery, conversation CRUD/search and SSE chat, memory browsing/mutation/candidate review, coding-agent run history and approval, hardware telemetry/history, and experiment summaries. The full route inventory and startup instructions are in the root README and [desktop user guide](DESKTOP-USER-GUIDE.md).
+
+The API uses a bounded thread pool for blocking provider and agent work. Chat conversation reservations synchronize queued/in-flight turns against deletion. Agent writes and allowlisted commands require per-action approval; pending approvals time out and default to denial. The desktop does not currently expose generation cancellation or agent pause/resume/redirect.
+
+Hardware telemetry is read-only. Resource advice is advisory and does not enact scheduling or system-level controls. The API initializes Evo Lab tables in the configured SQLite database and applies additive telemetry migrations so prior experiment samples remain available.
+
 ## Deliberately not implemented yet
 
-- Automatic memory extraction, deduplication, contradiction resolution, and consolidation.
-- Automated outcome adjudication or autonomous lesson promotion; current experiential feedback is explicitly user-confirmed.
-- Semantic embeddings/vector retrieval or reranking.
-- Browser/web research agent and source verification pipeline.
-- Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Background jobs, task interruption/resumption, and agent scheduler.
-- Model loading/unloading and GPU arbitration.
-- GUI/web application.
+- Semantic/vector memory retrieval, robust consolidation, deduplication, or automatic contradiction resolution.
+- General automatic memory understanding; current candidate extraction is a narrow heuristic.
+- Automated outcome adjudication or autonomous lesson promotion; experiential feedback is user-confirmed.
+- Browser/web research agent and source-verification pipeline.
+- Unattended coding-agent operation, pause/resume/redirect, or background-job scheduler.
+- Resource-aware scheduling, GPU arbitration, model loading/unloading, or process/service control.
+- Stop-generation and in-app provider switching.
+- Automatic provider routing/fallback or capability-based model selection.
+- Packaged native desktop application.
 - Autonomous self-modification or online weight training.
+
+These are future layers, not existing behavior.
 
 These are future layers, not reasons to discard the current foundation.
