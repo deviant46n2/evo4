@@ -32,6 +32,11 @@ class MemoryCreate(BaseModel):
     confidence: float = Field(default=1.0, ge=0, le=1)
 
 
+class MemorySupersede(BaseModel):
+    content: str = Field(min_length=1, max_length=12000)
+    reason: str = Field(default="", max_length=2000)
+
+
 class AgentCreate(BaseModel):
     request: str = Field(min_length=1, max_length=20000)
     workspace: str | None = Field(default=None, max_length=2000)
@@ -180,6 +185,19 @@ def create_app(config_path="config.toml", provider_name=None):
         if result is None:
             raise HTTPException(status_code=404, detail="Pending memory candidate not found")
         return {"accepted": bool(payload.approved), "memory_id": result if payload.approved else None}
+
+
+    @app.post("/api/v1/memories/{memory_id}/supersede")
+    def supersede_memory(memory_id: str, payload: MemorySupersede):
+        try:
+            replacement_id = store.supersede_memory(
+                memory_id, payload.content, source="user", confidence=1.0,
+                reason=payload.reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404 if "not found" in str(exc).lower() else 422,
+                                detail=str(exc)) from exc
+        return {"id": replacement_id, "supersedes": memory_id}
 
     @app.post("/api/v1/memories/{memory_id}/archive")
     def archive_memory(memory_id: str):
