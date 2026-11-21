@@ -31,8 +31,11 @@ The repository contains two independently usable applications:
 - Calls an OpenAI-compatible local chat-completions endpoint.
 - `evo-exp doctor` checks server model discovery.
 - Runs repeatable JSONL task suites.
-- Records prompts, responses, model/server identity, runtime manifest, status, timing, token usage, and deterministic evaluation.
-- Captures optional model-file SHA-256.
+- Records prompts, responses, model/server identity, runtime manifest, termination reason, status, timing, token usage, and deterministic evaluation.
+- Captures optional model-file SHA-256 and allowlisted live llama.cpp /props metadata when the endpoint supports it; manually entered launch/KV settings remain explicitly labeled user-supplied.
+- Sends a configurable sampling seed (when set), incremented deterministically per repetition.
+- Classifies token-limit responses as truncated and unknown/non-success finish reasons separately; only explicit stop completions are scored as completed.
+- Reports mean, median, and sample standard deviation for elapsed time, TTFT, and generation speed; incomplete runs are excluded from those performance aggregates.
 - Samples NVIDIA GPU utilization, VRAM, temperature, power, compute-process identity/VRAM, CPU utilization, CPU load averages, and system RAM. Telemetry works without NVIDIA hardware for system metrics.
 - Stores experiments and timestamped resource samples in SQLite.
 - Produces per-run and aggregate reports as JSONL or CSV.
@@ -71,7 +74,7 @@ python -m pip install -e .
 cp config.example.toml config.toml
 ```
 
-Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
+Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. Evo Lab automatically snapshots an allowlisted subset of live llama.cpp /props metadata when available; launch arguments and KV-cache settings that the server does not expose remain manually supplied and are not inferred.
 
 
 ## Desktop interface (0.1 development milestone)
