@@ -183,6 +183,23 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(len(assistant.store.search_lessons("coding tests")),1)
             assistant.close()
 
+    def test_database_backup_preserves_memory_relationships(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source=EvoStore(Path(tmp)/"source.db")
+            old_id=source.add_memory("The endpoint used to be port 8080")
+            new_id=source.supersede_memory(old_id,"The endpoint now uses port 18997",
+                                           reason="User verified the new server port.")
+            destination=source.backup(Path(tmp)/"backup.sqlite3")
+            backup=EvoStore(destination)
+            try:
+                relation=backup.get_memory_relations([new_id])[0]
+                self.assertEqual(relation["source_memory_id"],old_id)
+                self.assertEqual(relation["target_memory_id"],new_id)
+                self.assertEqual(relation["relation_type"],"supersedes")
+            finally:
+                backup.close()
+                source.close()
+
     def test_database_backup_preserves_memories(self):
         with tempfile.TemporaryDirectory() as tmp:
             source=EvoStore(Path(tmp)/"source.db")
