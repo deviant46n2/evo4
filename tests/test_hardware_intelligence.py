@@ -1,6 +1,8 @@
 import sqlite3
+import tempfile
+from pathlib import Path
 import unittest
-from evo_experiments.intelligence import assess_workload, estimate_runtime, initialize_profiles, kv_cache_estimate_mib, list_profiles, save_profile
+from evo_experiments.intelligence import assess_workload, discover_runtimes, estimate_runtime, initialize_profiles, kv_cache_estimate_mib, list_profiles, save_profile
 
 class HardwareIntelligenceTests(unittest.TestCase):
     def test_kv_formula_includes_k_and_v_and_margin(self):
@@ -22,6 +24,15 @@ class HardwareIntelligenceTests(unittest.TestCase):
     def test_interactive_priority_does_not_preempt(self):
         result=assess_workload({},{"kind":"chat"})
         self.assertEqual(result["priority"],100); self.assertFalse(result["preemption"])
+    def test_runtime_discovery_uses_process_name_and_correlates_gpu_pid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"4242"; root.mkdir()
+            (root/"comm").write_text("llama-server")
+            result=discover_runtimes([{"pid":4242,"memory_used_mib":700}],{"model":"qwen"},tmp)
+            self.assertEqual(result["processes"][0]["runtime"],"llama.cpp")
+            self.assertEqual(result["processes"][0]["gpu_memory_used_mib"],700)
+            self.assertNotIn("argv",result["processes"][0])
+
     def test_profiles_persist_and_validate(self):
         db=sqlite3.connect(":memory:"); db.row_factory=sqlite3.Row; initialize_profiles(db)
         saved=save_profile(db,{"name":"Qwen baseline","model":"qwen","context_size":49152})
