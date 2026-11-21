@@ -15,7 +15,7 @@ The repository contains two independently usable applications:
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
 - Includes a deterministic synthetic memory-retrieval benchmark reporting hit rate, recall@k, and mean reciprocal rank without touching the live database. It can compare SQLite FTS5 against the relevance-ranked LIKE fallback.
-- Supports explicit memory creation, search, listing, and archival.
+- Supports explicit memory creation, search, listing, and archival. User-directed supersession preserves replaced records and links; explicit supports/contradicts relationships are surfaced when related memories are retrieved.
 - Stores user corrections and lessons with trigger phrases, provenance, category, and confidence; relevant lessons are retrieved into future conversations.
 - Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
 - Persists lightweight tasks with priority and status.
@@ -71,6 +71,9 @@ evo memory candidates
 evo memory accept CANDIDATE_ID
 evo memory reject CANDIDATE_ID
 evo memory archive MEMORY_ID
+evo memory supersede OLD_ID "Replacement fact" --reason "User corrected the previous fact."
+evo memory relate MEMORY_ID OTHER_ID --relation contradicts --evidence "Conflicting user-provided records."
+evo memory relations MEMORY_ID
 evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend auto
 # Compare the LIKE fallback independently:
 evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend fallback
@@ -113,7 +116,7 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
 
 ## Important limitations
 
-This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, semantic memory retrieval, robust automatic memory consolidation or contradiction resolution, background task execution, model scheduling/unloading, or a graphical UI. Memory and research retrieval are lexical. Automatic memory capture is a small heuristic that creates tentative candidates; it is not general language understanding. The current assistant sends recent conversation history and selected memories/lessons/research; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting.
+This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, semantic memory retrieval, robust automatic memory consolidation or contradiction resolution, background task execution, model scheduling/unloading, or a graphical UI. Memory and research retrieval are lexical. Supersession and contradiction links are user-directed; Evo does not automatically decide which conflicting fact is true. Automatic memory capture is a small heuristic that creates tentative candidates; it is not general language understanding. The current assistant sends recent conversation history and selected memories/lessons/research; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting.
 
 Experiential learning is deliberately user-grounded at this stage: Evo does not decide on its own that a task succeeded or promote its own speculation into trusted lessons. A user can review an agent run and record its outcome; an optional lesson is stored with `user-run-feedback` provenance and linked to the feedback record. This creates a traceable correction loop, not autonomous self-training.
 
