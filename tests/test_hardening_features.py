@@ -127,6 +127,36 @@ class HardeningFeatureTests(unittest.TestCase):
             config=load_config(path,"local")
             self.assertEqual(config.api_key,"direct-secret")
 
+    def test_retrieved_context_sections_are_kept_or_omitted_as_a_unit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=EvoConfig("http://localhost","no-key","fake",30,Path(tmp)/"state.db",128,0.0,
+                "BASE POLICY",8,8,context_window_tokens=4096)
+            assistant=EvoAssistant(config,EvoStore(config.database),provider=object())
+            try:
+                oversized_section="\n\nResearch record title\n"+"payload-"*1800
+                fitted=assistant._fit_context([
+                    {"role":"system","content":"BASE POLICY"+oversized_section},
+                    {"role":"user","content":"current request"}])
+                system=fitted[0]["content"]
+                self.assertNotIn("Research record title",system)
+                self.assertNotIn("payload-",system)
+                self.assertIn("Context notice",system)
+            finally:
+                assistant.close()
+
+    def test_output_reserve_cannot_consume_entire_context_silently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=EvoConfig("http://localhost","no-key","fake",30,Path(tmp)/"state.db",4096,0.0,
+                "BASE POLICY",8,8,context_window_tokens=4096)
+            assistant=EvoAssistant(config,EvoStore(config.database),provider=object())
+            try:
+                with self.assertRaisesRegex(ValueError,"configured context budget"):
+                    assistant._fit_context([
+                        {"role":"system","content":"BASE POLICY"},
+                        {"role":"user","content":"small request"}])
+            finally:
+                assistant.close()
+
 
 if __name__=="__main__":
     unittest.main()
