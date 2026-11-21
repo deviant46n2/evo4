@@ -358,7 +358,12 @@ def create_app(config_path="config.toml", provider_name=None):
 
         conversation_id = payload.conversation_id
         if conversation_id is None:
-            conversation_id = assistant.new_conversation()
+            # Create and reserve in the same critical section too, so even a
+            # second local client cannot delete the new conversation in between.
+            with locks_guard:
+                conversation_id = assistant.new_conversation()
+                reservation = {"lock": threading.Lock(), "users": 1}
+                conversation_locks[conversation_id] = reservation
         else:
             # Existence validation and reservation share the deletion lock. A
             # delete can therefore happen either before this check or after the
@@ -372,10 +377,8 @@ def create_app(config_path="config.toml", provider_name=None):
                     conversation_locks[conversation_id] = reservation
                 reservation["users"] += 1
 
-        # Reserve before the SSE generator queues the worker. This prevents
-        # deletion during the gap between executor submission and worker start.
-        if payload.conversation_id is None:
-            reservation = acquire_conversation_lock(conversation_id)
+        # Reserve before the SSE generator queues the worker, protecting queued
+        # work as well as provider calls already in progress.
         submitted = threading.Event()
 
         async def events():
