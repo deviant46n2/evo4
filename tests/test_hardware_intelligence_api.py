@@ -5,6 +5,7 @@ from unittest.mock import patch
 from evo_experiments.intelligence import discover_runtimes
 
 try:
+    from fastapi import HTTPException
     from evo_core.api import create_app, RuntimeProfileInput, WorkloadAssessment, SchedulerJobInput, SchedulerFinishInput
     AVAILABLE = True
 except ImportError:
@@ -85,8 +86,9 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         create=self.routes[("/api/v1/hardware/scheduler/jobs","POST")]
         saved=create(SchedulerJobInput(name="Managed job",kind="cpu",gpu_heavy=False,
             estimated_ram_mib=256))
-        with self.assertRaises(Exception):
+        with self.assertRaises(HTTPException) as raised:
             self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/start","POST")](saved["id"])
+        self.assertEqual(raised.exception.status_code,409)
         with patch("evo_core.api.sample_nvidia_smi",return_value={
             "ram_available_bytes":8*1024**3,"ram_used_percent":40}):
             self.routes[("/api/v1/hardware/scheduler/dispatch","POST")](limit=5)
