@@ -1,5 +1,6 @@
 """Loopback-only HTTP API for the Evo desktop client."""
 import asyncio
+from datetime import datetime, timezone
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,7 @@ from evo_experiments.monitor import sample_nvidia_smi
 from evo_experiments.db import ResultsDB
 from evo_experiments.intelligence import assess_workload, discover_runtimes, estimate_runtime, initialize_profiles, list_profiles, save_profile
 from evo_experiments.scheduler import initialize_scheduler, create_job, list_jobs, dispatch_jobs, start_job, finish_job, cancel_job
+from evo_experiments.execution import initialize_execution, register_execution, list_executions, run_execution, recover_interrupted_executions
 
 
 class ChatRequest(BaseModel):
@@ -94,6 +96,11 @@ class SchedulerFinishInput(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class WorkloadExecuteInput(BaseModel):
+    argv: list[str] = Field(min_items=1, max_items=128)
+    timeout_seconds: int = Field(default=300, ge=1, le=900)
+
+
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
     store = EvoStore(config.database)
@@ -106,11 +113,16 @@ def create_app(config_path="config.toml", provider_name=None):
     app.state.assistant = assistant
     initialize_profiles(lab_db.connection)
     initialize_scheduler(lab_db.connection)
+    initialize_execution(lab_db.connection)
+    with lab_db.lock:
+        recover_interrupted_executions(lab_db.connection)
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
     # Shutdown waits for active turns before closing the shared SQLite store.
     executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="evo-chat")
     app.state.chat_executor = executor
+    execution_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evo-workload")
+    app.state.execution_executor = execution_executor
     conversation_locks = {}
     locks_guard = threading.Lock()
     shutting_down = threading.Event()
@@ -338,6 +350,34 @@ def create_app(config_path="config.toml", provider_name=None):
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    @app.get("/api/v1/hardware/executions")
+    def hardware_executions(limit: int = 50):
+        with lab_db.lock:
+            return list_executions(lab_db.connection, limit)
+
+    @app.post("/api/v1/hardware/scheduler/jobs/{job_id}/execute", status_code=202)
+    def hardware_scheduler_execute(job_id: str, payload: WorkloadExecuteInput):
+        if shutting_down.is_set():
+            raise HTTPException(status_code=503, detail="Evo is shutting down")
+        try:
+            with lab_db.lock:
+                execution = register_execution(
+                    lab_db.connection, job_id, payload.argv, config.allowed_commands,
+                    config.workspace_root.resolve(), payload.timeout_seconds)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+            execution_executor.submit(run_execution, lab_db.connection, lab_db.lock, execution["id"])
+        except Exception as exc:
+            with lab_db.lock:
+                lab_db.connection.execute(
+                    "UPDATE workload_executions SET status='failed',finished_at=?,error=? WHERE id=?",
+                    (datetime.now(timezone.utc).isoformat(), "Unable to queue execution worker", execution["id"]))
+                finish_job(lab_db.connection, job_id, "failed", "Unable to queue execution worker")
+                lab_db.connection.commit()
+            raise HTTPException(status_code=503, detail="Unable to queue execution worker") from exc
+        return {"execution_id": execution["id"], "job_id": job_id, "status": "queued"}
+
     @app.get("/api/v1/hardware/history")
     def hardware_history(limit: int = 180):
         bounded = min(max(limit, 1), 1000)
@@ -438,6 +478,7 @@ def create_app(config_path="config.toml", provider_name=None):
             "hardware_resource_estimates": True,
             "hardware_workload_admission": True,
             "hardware_workload_scheduler": True,
+            "hardware_managed_execution": True,
             "hardware_process_control": False,
             "provider_selection": False,
         }
@@ -825,6 +866,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 item["approved"] = False
                 item["decision"].set()
             pending_approvals.clear()
+        execution_executor.shutdown(wait=True, cancel_futures=False)
         executor.shutdown(wait=True, cancel_futures=False)
         assistant.close()
         lab_db.close()
