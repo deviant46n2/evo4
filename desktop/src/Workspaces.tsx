@@ -209,7 +209,7 @@ export function AgentsWorkspace() {
     window.addEventListener("evo-demo-data-changed",changed);
     const handle = window.setInterval(() => { void refresh(); void refreshPlans(); if (selected) void refreshDetail(selected); if (plan) void loadPlan(plan.id); }, 1800);
     return () => {window.clearInterval(handle);window.removeEventListener("evo-demo-data-changed",changed);};
-  }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan]);
+  }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan?.id]);
   async function start(event: React.FormEvent) {
     event.preventDefault();
     if (!request.trim() || busy) return;
@@ -230,11 +230,11 @@ export function AgentsWorkspace() {
     finally { setPlanning(false); }
   }
   async function approveAndExecutePlan() {
-    if (!plan || plan.status !== "proposed" || busy) return;
+    if (!plan || !["proposed","approved"].includes(plan.status) || busy) return;
     if (!window.confirm("Approve this plan and start sequential execution? File writes and commands will still require separate approval.")) return;
     setBusy(true); setError("");
     try {
-      await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve", json({}));
+      if (plan.status === "proposed") await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve", json({}));
       const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute", json({}));
       setSelected(result.run_id); await loadPlan(plan.id); await refresh(); await refreshPlans(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await loadPlan(plan.id); }
@@ -272,7 +272,7 @@ export function AgentsWorkspace() {
       {plan&&<div className="run-summary"><div className="record-top"><strong>{plan.title}</strong><span className={"run-status "+plan.status}>{plan.status}</span></div><p>{plan.summary}</p>
         <div className="event-list">{plan.steps.map(step=><article className="event-card" key={step.id}><div className="event-head"><strong>{step.position+1}. {step.title}</strong><span className={"run-status "+step.status}>{step.status}</span></div><p>{step.description}</p><small>Expected: {step.expected_outcome}</small><small>Verify: {step.verification}</small>{step.result&&<pre>{step.result}</pre>}</article>)}</div>
         {plan.error&&<p className="failed-note">{plan.error}</p>}
-        {plan.status==="proposed"&&<button disabled={busy||planning} onClick={()=>void approveAndExecutePlan()}>Approve plan and execute</button>}
+        {["proposed","approved"].includes(plan.status)&&<button disabled={busy||planning} onClick={()=>void approveAndExecutePlan()}>{plan.status==="proposed"?"Approve plan and execute":"Execute approved plan"}</button>}
         {plan.run_id&&<button className="quiet-button" onClick={()=>{setSelected(plan.run_id!);void refreshDetail(plan.run_id!);}}>Open execution run</button>}
       </div>}
     </section>
