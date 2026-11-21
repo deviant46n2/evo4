@@ -52,6 +52,7 @@ def build_parser():
     rsub=runs.add_subparsers(dest="runs_command",required=True)
     rlist=rsub.add_parser("list"); rlist.add_argument("--limit",type=int,default=30); rlist.add_argument("--status")
     rshow=rsub.add_parser("show"); rshow.add_argument("id")
+    rsub.add_parser("summary",help="Summarize coding runs, verification signals, and user feedback")
     rreview=rsub.add_parser("review"); rreview.add_argument("id")
     rreview.add_argument("--outcome",required=True,choices=["success","partial","failure"])
     rreview.add_argument("--feedback",default="")
@@ -196,7 +197,9 @@ def main():
                 for row in store.list_lessons():
                     print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}; source={row['source']}] Trigger: {row['trigger_text']} | {row['lesson']}")
         elif args.command=="runs":
-            if args.runs_command=="list":
+            if args.runs_command=="summary":
+                print(json.dumps(store.agent_run_summary(),ensure_ascii=False,indent=2))
+            elif args.runs_command=="list":
                 for row in store.list_agent_runs(args.limit,args.status):
                     print(f"{row['id']} [{row['kind']}; {row['status']}; {row['started_at']}] {row['summary'] or ''}")
             elif args.runs_command=="show":
