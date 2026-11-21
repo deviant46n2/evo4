@@ -39,6 +39,21 @@ class MemoryEvaluationTests(unittest.TestCase):
             self.assertTrue(all(row["relevant_retrieved"] for row in report["results"]))
             self.assertIn("Synthetic isolated benchmark",report["note"])
 
+    def test_fallback_backend_is_measured_separately(self):
+        fixture=Path(__file__).resolve().parents[1]/"tasks"/"memory-retrieval.json"
+        report=evaluate_memory_retrieval(fixture,top_k=5,backend="fallback")
+        self.assertEqual(report["backend"],"fallback")
+        self.assertEqual(report["hit_rate_at_k"],1.0)
+        self.assertEqual(report["mean_recall_at_k"],1.0)
+
+    def test_invalid_backend_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=self.write_cases(tmp,{
+                "version":1,"memories":[{"key":"known","content":"Known fact"}],
+                "queries":[{"query":"known fact","expected":["known"]}]})
+            with self.assertRaisesRegex(ValueError,"backend"):
+                evaluate_memory_retrieval(path,backend="vector")
+
     def test_unknown_expected_key_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=self.write_cases(tmp,{
