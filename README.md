@@ -14,6 +14,7 @@ The repository contains two independently usable applications:
 - Retrieves relevant persistent memories, user lessons, and saved research notes into the model context.
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
+- Includes a deterministic synthetic memory-retrieval benchmark reporting hit rate, recall@k, and mean reciprocal rank without touching the live database.
 - Supports explicit memory creation, search, listing, and archival.
 - Stores user corrections and lessons with trigger phrases, provenance, category, and confidence; relevant lessons are retrieved into future conversations.
 - Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
@@ -114,5 +115,7 @@ The coding agent depends on OpenAI-compatible streamed tool-call support. Some l
 ## Validation status
 
 **The base branch at 20a3991 was independently exercised against the user's Qwen3.8-27B llama.cpp server. The additions on this branch have not yet been validated against that live model.** Automated tests and CI are intended to catch basic regressions, not certify compatibility with your exact runtime. The first local validation should cover installation, `evo doctor`, a multi-turn chat, conversation resume, memory retrieval, task persistence, and the experiment smoke suite.
+
+The memory benchmark is intentionally synthetic and isolated: it is a regression fixture for comparing retrieval implementations, not a claim about recall over a real user memory collection. The next step is to add user-curated held-out queries and measure retrieval against actual Evo memory records with consent.
 
 The research and design rationale is maintained in the [research archive](https://github.com/deviant46n2/airesearchandtesting).
