@@ -44,6 +44,16 @@ def build_parser():
     la.add_argument("--confidence",type=float,default=1.0)
     lq=ls.add_parser("search"); lq.add_argument("query"); lq.add_argument("--limit",type=int,default=5)
     ls.add_parser("list")
+    runs=sub.add_parser("runs",parents=[config_parent],help="Inspect agent runs and record outcome feedback")
+    rsub=runs.add_subparsers(dest="runs_command",required=True)
+    rlist=rsub.add_parser("list"); rlist.add_argument("--limit",type=int,default=30); rlist.add_argument("--status")
+    rshow=rsub.add_parser("show"); rshow.add_argument("id")
+    rreview=rsub.add_parser("review"); rreview.add_argument("id")
+    rreview.add_argument("--outcome",required=True,choices=["success","partial","failure"])
+    rreview.add_argument("--feedback",default="")
+    rreview.add_argument("--lesson",default="")
+    rreview.add_argument("--trigger",default="")
+    rreview.add_argument("--category",default="coding")
     research=sub.add_parser("research",parents=[config_parent],help="Store and search sourced research notes")
     rs=research.add_subparsers(dest="research_command",required=True)
     ra=rs.add_parser("add"); ra.add_argument("title"); ra.add_argument("--content",required=True)
@@ -173,6 +183,31 @@ def main():
             elif args.learn_command=="list":
                 for row in store.list_lessons():
                     print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
+        elif args.command=="runs":
+            if args.runs_command=="list":
+                for row in store.list_agent_runs(args.limit,args.status):
+                    print(f"{row['id']} [{row['kind']}; {row['status']}; {row['started_at']}] {row['summary'] or ''}")
+            elif args.runs_command=="show":
+                row=store.get_agent_run(args.id)
+                if not row:
+                    print("Agent run not found.")
+                else:
+                    print(f"Run: {row['id']}\\nKind: {row['kind']}\\nStatus: {row['status']}\\nStarted: {row['started_at']}\\nFinished: {row['finished_at'] or 'still running'}\\nSummary: {row['summary'] or ''}")
+                    print("Tool events:")
+                    for event in store.get_run_events(args.id):
+                        print(f"  #{event['id']} {event['tool_name']} [{event['status']}] {event['output_summary'] or ''}")
+                    for feedback in store.list_run_feedback(args.id):
+                        print(f"Feedback: {feedback['outcome']} | {feedback['feedback']}")
+            elif args.runs_command=="review":
+                try:
+                    result=store.record_run_feedback(args.id,args.outcome,args.feedback,
+                        args.lesson,args.trigger,args.category)
+                except ValueError as exc:
+                    print(f"Error: {exc}",file=sys.stderr)
+                    raise SystemExit(2)
+                print(f"Feedback recorded: {result['feedback_id']}")
+                if result["lesson_id"]:
+                    print(f"Reusable lesson saved: {result['lesson_id']}")
         elif args.command=="research":
             if args.research_command=="add":
                 doc_id=store.add_research_document(args.title,args.content,args.url,args.source_type)
