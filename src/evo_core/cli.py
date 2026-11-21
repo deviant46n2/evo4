@@ -144,7 +144,7 @@ def main():
         provider=OpenAICompatibleProvider(config.base_url,config.api_key,config.model,config.timeout_seconds)
         try:
             models=provider.list_models()
-            print(f"Endpoint: {config.base_url}\nConfigured model: {config.model}\nAvailable models:")
+            print(f"Provider: {config.provider_name}\nEndpoint: {config.base_url}\nConfigured model: {config.model}\nAvailable models:")
             for model in models: print(f"  {model}")
             if models and config.model not in models: raise SystemExit(2)
             if args.test_tools:
