@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
-from . import background_agent
+from . import background_agent, orchestration
 from .config import load_config
 from .store import EvoStore
 from .memory_review import find_duplicate_candidates
@@ -55,6 +55,11 @@ class AgentCreate(BaseModel):
 
 class AgentApproval(BaseModel):
     approved: bool
+
+
+class AgentPlanCreate(BaseModel):
+    request: str = Field(min_length=1, max_length=12000)
+    workspace: str | None = Field(default=None, max_length=2000)
 
 class RuntimeProfileInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -116,9 +121,11 @@ def create_app(config_path="config.toml", provider_name=None):
     initialize_scheduler(lab_db.connection)
     initialize_execution(lab_db.connection)
     background_agent.initialize(lab_db.connection)
+    orchestration.initialize(lab_db.connection)
     with lab_db.lock:
         recover_interrupted_executions(lab_db.connection)
         recovered_agent_tasks = background_agent.recover(lab_db.connection)
+        orchestration.recover_plans(lab_db.connection)
         for recovered_id in recovered_agent_tasks:
             store.finish_agent_run(recovered_id, "interrupted", "Evo restarted; in-flight work was not resumed.")
 
@@ -137,6 +144,7 @@ def create_app(config_path="config.toml", provider_name=None):
     pending_approvals = {}
     agent_stop_events = {}
     agent_futures = {}
+    agent_registry_guard = threading.RLock()
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 
@@ -486,6 +494,11 @@ def create_app(config_path="config.toml", provider_name=None):
             "background_agent_event_history": True,
             "background_agent_restart_recovery": True,
             "background_agent_resume": False,
+            "agent_plan_proposals": True,
+            "agent_plan_approval": True,
+            "agent_plan_step_tracking": True,
+            "agent_plan_step_retry": False,
+            "agent_plan_resource_admission": False,
             "memory_browser": True,
             "memory_candidates": True,
             "memory_archive": True,
@@ -651,6 +664,79 @@ def create_app(config_path="config.toml", provider_name=None):
                  for key, value in pending_approvals.items() if value["run_id"] == run_id), None)
         return result
 
+    @app.get("/api/v1/agents/plans")
+    def agent_plans(limit: int = 50):
+        with lab_db.lock:
+            return orchestration.list_plans(lab_db.connection, limit)
+
+    @app.post("/api/v1/agents/plans", status_code=201)
+    def propose_agent_plan(payload: AgentPlanCreate):
+        if shutting_down.is_set():
+            raise HTTPException(status_code=503, detail="Evo is shutting down")
+        workspace = Path(payload.workspace).expanduser().resolve() if payload.workspace else config.workspace_root.resolve()
+        try:
+            proposal = orchestration.propose_with_model(
+                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000))
+            with lab_db.lock:
+                plan = orchestration.create_plan(lab_db.connection, payload.request, str(workspace), proposal)
+            return plan
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Unable to generate a plan: {type(exc).__name__}: {str(exc)[:300]}") from exc
+
+    @app.get("/api/v1/agents/plans/{plan_id}")
+    def agent_plan_detail(plan_id: str):
+        with lab_db.lock:
+            plan = orchestration.get_plan(lab_db.connection, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Agent plan not found")
+        return plan
+
+    @app.post("/api/v1/agents/plans/{plan_id}/approve")
+    def approve_agent_plan(plan_id: str):
+        try:
+            with lab_db.lock:
+                return orchestration.approve_plan(lab_db.connection, plan_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/agents/plans/{plan_id}/execute", status_code=202)
+    def execute_agent_plan(plan_id: str):
+        if shutting_down.is_set():
+            raise HTTPException(status_code=503, detail="Evo is shutting down")
+        with lab_db.lock:
+            plan = orchestration.get_plan(lab_db.connection, plan_id)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="Agent plan not found")
+            if plan["status"] != "approved":
+                raise HTTPException(status_code=409, detail="Approve the plan before execution")
+            request_text = plan["request"]
+            workspace = Path(plan["workspace"]).expanduser().resolve()
+            run_id = store.start_agent_run("orchestrated", {
+                "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+                "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
+            })
+            background_agent.create(lab_db.connection, run_id)
+            orchestration.attach_run(lab_db.connection, plan_id, run_id)
+        stop_event = threading.Event()
+        with agent_registry_guard:
+            with agent_registry_guard:
+            agent_stop_events[run_id] = stop_event
+        try:
+            future = executor.submit(run_agent, run_id, request_text, workspace, stop_event, plan_id)
+            with agent_registry_guard:
+                agent_futures[run_id] = future
+        except Exception as exc:
+            store.finish_agent_run(run_id, "failed", "Unable to start orchestrated worker")
+            with lab_db.lock:
+                background_agent.transition(lab_db.connection, run_id, "failed", {"error": "Unable to start worker"})
+                orchestration.finish_plan(lab_db.connection, plan_id, "failed", "Unable to start worker")
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+            raise HTTPException(status_code=503, detail="Unable to start orchestrated worker") from exc
+        return {"plan_id": plan_id, "run_id": run_id, "status": "running"}
+
     @app.post("/api/v1/agents", status_code=202)
     def start_agent(payload: AgentCreate):
         if shutting_down.is_set():
@@ -665,23 +751,27 @@ def create_app(config_path="config.toml", provider_name=None):
         with lab_db.lock:
             background_agent.create(lab_db.connection, run_id)
         try:
-            agent_futures[run_id] = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
+            future = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
+            with agent_registry_guard:
+                agent_futures[run_id] = future
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
             with lab_db.lock:
                 background_agent.transition(lab_db.connection, run_id, "failed", {"error": "Unable to start agent worker"})
-            agent_stop_events.pop(run_id, None)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
         return {"run_id": run_id, "status": "running"}
 
-    def run_agent(run_id, request_text, workspace, stop_event):
+    def run_agent(run_id, request_text, workspace, stop_event, plan_id=None):
         import uuid
         worker_token = uuid.uuid4().hex
         with lab_db.lock:
             claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
         if not claimed:
-            agent_stop_events.pop(run_id, None)
-            agent_futures.pop(run_id, None)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
             return
         def progress(event_type, payload):
             with lab_db.lock:
@@ -716,8 +806,41 @@ def create_app(config_path="config.toml", provider_name=None):
             conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
             agent = CodingAgent(assistant, workspace, config.allowed_commands)
-            agent.run(conversation_id, request_text, approval, run_id=run_id,
-                      stop_event=stop_event, on_progress=progress)
+            if plan_id is None:
+                agent.run(conversation_id, request_text, approval, run_id=run_id,
+                          stop_event=stop_event, on_progress=progress)
+            else:
+                with lab_db.lock:
+                    plan = orchestration.get_plan(lab_db.connection, plan_id)
+                for step in plan["steps"]:
+                    if stop_event.is_set() or shutting_down.is_set():
+                        raise RuntimeError("Orchestrated plan cancelled at a safe step boundary")
+                    with lab_db.lock:
+                        orchestration.start_step(lab_db.connection, plan_id, step["id"])
+                    with lab_db.lock:
+                        orchestration._event(lab_db.connection, plan_id, "step_progress",
+                            {"title": step["title"], "verification": step["verification"]}, step["id"])
+                    step_request = (
+                        "Execute exactly this approved plan step as part of the user's larger request. "
+                        "Do not perform work belonging to later steps.\n\n"
+                        "Original user request:\n" + request_text[:12000] +
+                        "\n\nApproved step " + str(step["position"] + 1) + ": " + step["title"] +
+                        "\nDescription: " + step["description"] +
+                        "\nExpected outcome: " + step["expected_outcome"] +
+                        "\nVerification required: " + step["verification"] +
+                        "\n\nInspect before changing files. Every write and command still requires user approval."
+                    )
+                    step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
+                        stop_event=stop_event, on_progress=progress)
+                    step_status = step_result.get("status")
+                    step_outcome = "completed" if step_status == "completed" else "interrupted" if step_status == "cancelled" else "failed"
+                    with lab_db.lock:
+                        orchestration.finish_step(lab_db.connection, plan_id, step["id"], step_outcome,
+                            step_result.get("content", step_status or "No result"))
+                    if step_outcome != "completed":
+                        raise RuntimeError("Plan stopped because step '" + step["title"] + "' did not complete")
+                with lab_db.lock:
+                    orchestration.finish_plan(lab_db.connection, plan_id, "completed")
             final = store.get_agent_run(run_id)
             final_status = final["status"] if final else "failed"
             with lab_db.lock:
@@ -725,15 +848,27 @@ def create_app(config_path="config.toml", provider_name=None):
                 if task and task["status"] not in {"interrupted"}:
                     target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
                     background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
+                if plan_id and task and target != "completed":
+                    plan = orchestration.get_plan(lab_db.connection, plan_id)
+                    if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
+                        outcome = "cancelled" if target == "cancelled" else "failed"
+                        orchestration.finish_plan(lab_db.connection, plan_id, outcome, final["summary"] if final else "")
         except Exception as exc:
-            store.finish_agent_run(run_id, "failed", f"{type(exc).__name__}: {exc}")
+            store.finish_agent_run(run_id, "cancelled" if stop_event.is_set() else "failed", f"{type(exc).__name__}: {exc}")
             with lab_db.lock:
                 task = background_agent.get(lab_db.connection, run_id)
                 if task and task["status"] not in {"interrupted"}:
-                    background_agent.transition(lab_db.connection, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"})
+                    target = "cancelled" if stop_event.is_set() else "failed"
+                    background_agent.transition(lab_db.connection, run_id, target, {"error": f"{type(exc).__name__}: {exc}"})
+                if plan_id:
+                    plan = orchestration.get_plan(lab_db.connection, plan_id)
+                    if plan and plan["status"] not in {"completed", "failed", "cancelled", "interrupted"}:
+                        orchestration.finish_plan(lab_db.connection, plan_id,
+                            "cancelled" if stop_event.is_set() else "failed", str(exc))
         finally:
-            agent_stop_events.pop(run_id, None)
-            agent_futures.pop(run_id, None)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
 
     @app.post("/api/v1/agents/{run_id}/cancel")
     def cancel_agent(run_id: str):
@@ -747,7 +882,8 @@ def create_app(config_path="config.toml", provider_name=None):
             if previous_status == "queued":
                 background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
                 store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
-        stop_event = agent_stop_events.get(run_id)
+        with agent_registry_guard:
+            stop_event = agent_stop_events.get(run_id)
         if stop_event:
             stop_event.set()
         with approval_guard:
@@ -958,7 +1094,9 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.on_event("shutdown")
     def shutdown():
         shutting_down.set()
-        for stop_event in list(agent_stop_events.values()):
+        with agent_registry_guard:
+            stop_events = list(agent_stop_events.values())
+        for stop_event in stop_events:
             stop_event.set()
         # Never leave an agent worker blocked on a browser approval while the
         # executor is waiting to drain during application shutdown.
