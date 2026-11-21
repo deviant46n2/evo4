@@ -61,6 +61,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - Runtime discovery, persistent runtime profiles, architecture-derived KV estimates, and conservative workload admission.
 - A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit lifecycle transitions.
 - An allowlisted managed-execution worker for explicitly user-launched reserved jobs. It uses argv arrays without a shell, runs in the configured workspace, captures bounded output, enforces timeouts, and records exit status and restart interruption.
+- A durable background coding-agent task ledger with atomic worker claims, append-only lifecycle events, safe-boundary cancellation, approval-state visibility, and conservative restart recovery. Existing coding-agent tool calls remain individually approval-gated; interrupted tasks are recorded rather than replayed.
 
 ## Deliberately not implemented yet
 
@@ -69,7 +70,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
 - Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Coding-agent pause/resume, interruption, and restart-safe continuation. Managed command execution is available for reserved jobs, but it is not yet a general agent worker or resumable task engine.
+- Checkpointed coding-agent pause/resume, redirect, durable approval recovery, per-step retry, and restart-safe continuation. Background Agent Execution v1 records lifecycle and interruption, but does not replay or resume in-flight model/tool calls.
 - Hard CPU/RAM/VRAM isolation for child workloads, live resource monitoring per managed command, model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
 - Autonomous self-modification or online weight training.
 
