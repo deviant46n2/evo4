@@ -208,7 +208,7 @@ class EvoStore:
             self.db.commit()
         return mid
 
-    def search_memories(self, query, limit=8, category=None):
+    def search_memories(self, query, limit=8, category=None, record_access=True):
         """Hybrid lexical retrieval with inspectable evidence; embeddings are not used."""
         raw_query = (query or "").strip()
         if not raw_query:
@@ -291,7 +291,7 @@ class EvoStore:
                 ranked.append(item)
             ranked.sort(key=lambda item:(item["retrieval_score"],float(item["confidence"] or 0),item["updated_at"]),reverse=True)
             selected = ranked[:bounded]
-            if selected:
+            if selected and record_access:
                 now = utc_now()
                 self.db.executemany("UPDATE memories SET access_count=access_count+1,last_accessed_at=? WHERE id=?",
                                     [(now,item["id"]) for item in selected])
