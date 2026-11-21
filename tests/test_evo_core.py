@@ -53,7 +53,13 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(relation["relation_type"],"supersedes")
             self.assertEqual(relation["source_memory_id"],old_id)
             self.assertIn("User corrected",relation["evidence"])
-            store.close()
+            config=self.make_config(Path(tmp)/"evo.db")
+            assistant=EvoAssistant(config,store,StubProvider())
+            cid=assistant.new_conversation()
+            messages=assistant._build_messages(cid,"older model runtime setting")
+            self.assertIn("supersedes an older memory",messages[0]["content"])
+            self.assertIn("updated model runtime setting",messages[0]["content"])
+            assistant.close()
 
     def test_explicit_contradiction_is_injected_into_assistant_context(self):
         with tempfile.TemporaryDirectory() as tmp:
