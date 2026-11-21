@@ -46,6 +46,8 @@ def evaluate_memory_retrieval(cases_path, top_k=5, backend='auto'):
         reciprocal_ranks=[]
         hits=0
         recalls=[]
+        precisions=[]
+        empty_results=0
         for index,case in enumerate(queries):
             if not isinstance(case,dict) or not isinstance(case.get("query"),str) or not case["query"].strip():
                 raise ValueError(f"Query #{index+1} requires query text")
@@ -59,6 +61,9 @@ def evaluate_memory_retrieval(cases_path, top_k=5, backend='auto'):
             ranked=[row["id"] for row in rows]
             relevant={ids[key] for key in expected}
             found=[memory_id for memory_id in ranked if memory_id in relevant]
+            if not ranked:
+                empty_results += 1
+            precisions.append(len(set(found))/int(top_k))
             rank=next((i+1 for i,memory_id in enumerate(ranked) if memory_id in relevant),None)
             reciprocal_ranks.append(1.0/rank if rank else 0.0)
             recalls.append(len(set(found))/len(relevant))
@@ -83,6 +88,8 @@ def evaluate_memory_retrieval(cases_path, top_k=5, backend='auto'):
             "backend":backend if backend!="auto" else ("fts" if store.fts_available else "fallback"),
             "hit_rate_at_k":hits/total,
             "mean_recall_at_k":sum(recalls)/total,
+            "mean_precision_at_k":sum(precisions)/total,
+            "zero_result_rate":empty_results/total,
             "mean_reciprocal_rank":sum(reciprocal_ranks)/total,
             "results":results,
             "note":"Synthetic isolated benchmark. It measures this retrieval implementation against these fixtures, not recall over a user's real memory collection.",
