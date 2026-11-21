@@ -95,6 +95,9 @@ class CodingAgentTests(unittest.TestCase):
         self.assertTrue(is_verification_command(["npm","run","test:unit"]))
         self.assertFalse(is_verification_command(["python","main.py"]))
         self.assertFalse(is_verification_command(["git","status"]))
+        self.assertFalse(is_verification_command(["python","script.py","/tmp/build"]))
+        self.assertTrue(is_verification_command(["git","diff","--check"]))
+        self.assertTrue(is_verification_command(["npx","eslint","."]))
 
     def test_successful_post_edit_check_is_reported_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
