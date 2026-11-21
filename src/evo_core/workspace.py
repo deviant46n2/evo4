@@ -19,7 +19,7 @@ def _looks_sensitive_name(name):
     # "auth", "private", or "token" that commonly occur in source filenames.
     tokens={part for part in re.split(r"[^a-z0-9]+",lowered) if part}
     joined="_".join(tokens)
-    if tokens & {"secret","secrets","credential","credentials","password","passwd"}:
+    if tokens & {"secret","secrets","clientsecret","credential","credentials","password","passwd","apikey","privatekey"}:
         return True
     if {"api","key"}.issubset(tokens) or {"private","key"}.issubset(tokens):
         return True
