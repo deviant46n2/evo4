@@ -155,12 +155,23 @@ class EvoStore:
                 except sqlite3.OperationalError:
                     rows = []
             if not rows:
-                clauses = " OR ".join("content LIKE ? ESCAPE '!'" for _ in terms)
-                params = [_like_pattern(term) for term in terms]
-                sql = f"SELECT * FROM memories WHERE status='active' AND ({clauses})"
+                where_clauses=[]
+                where_params=[]
+                score_parts=[]
+                score_params=[]
+                for term in terms:
+                    pattern=_like_pattern(term)
+                    where_clauses.append("(content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')")
+                    where_params.extend((pattern,pattern,pattern))
+                    score_parts.append("(CASE WHEN content LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
+                                       "CASE WHEN tags_json LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
+                                       "CASE WHEN category LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
+                    score_params.extend((pattern,pattern,pattern))
+                sql = f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM memories WHERE status='active' AND ({' OR '.join(where_clauses)})"
+                params=score_params+where_params
                 if category:
                     sql += " AND category=?"; params.append(category)
-                sql += " ORDER BY confidence DESC,updated_at DESC LIMIT ?"; params.append(max(1,limit))
+                sql += " ORDER BY relevance DESC,confidence DESC,updated_at DESC LIMIT ?"; params.append(max(1,limit))
                 rows = self.db.execute(sql, params).fetchall()
             if rows:
                 self.db.executemany("UPDATE memories SET access_count=access_count+1,last_accessed_at=? WHERE id=?",
