@@ -26,6 +26,22 @@ class WorkspaceTests(unittest.TestCase):
             ws.write_file("new.txt","x")
             self.assertEqual(ws.read_file("new.txt"),"x")
 
+    def test_project_overview_is_bounded_and_filters_sensitive_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/"README.md").write_text("# Example\\n",encoding="utf-8")
+            (root/"app.py").write_text("print('ok')\\n",encoding="utf-8")
+            (root/".env").write_text("TOKEN=secret-value",encoding="utf-8")
+            (root/".git").mkdir()
+            (root/".git"/"config").write_text("secret remote",encoding="utf-8")
+            ws=Workspace(root)
+            overview=ws.project_overview()
+            self.assertIn("README.md",overview["project_instructions_and_manifests"])
+            self.assertIn("app.py",overview["files"])
+            self.assertNotIn(".env",[entry["name"] for entry in overview["top_level"]])
+            self.assertNotIn("secret-value",str(overview))
+            self.assertNotIn(".git/config",overview["files"])
+
     def test_paths_cannot_escape_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws=Workspace(tmp)
