@@ -37,6 +37,46 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(store.search_memories("coding recommendations"),[])
             store.close()
 
+    def test_memory_supersession_preserves_old_record_and_retrieves_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            old_id=store.add_memory("The project uses an older model runtime setting","environment")
+            new_id=store.supersede_memory(old_id,
+                "The project now uses the updated model runtime setting",
+                reason="User corrected the previous configuration.")
+            old=store.db.execute("SELECT status FROM memories WHERE id=?",(old_id,)).fetchone()
+            new=store.db.execute("SELECT status FROM memories WHERE id=?",(new_id,)).fetchone()
+            self.assertEqual(old["status"],"superseded")
+            self.assertEqual(new["status"],"active")
+            self.assertEqual([row["id"] for row in store.search_memories("updated model runtime")],[new_id])
+            relation=store.get_memory_relations([new_id])[0]
+            self.assertEqual(relation["relation_type"],"supersedes")
+            self.assertEqual(relation["source_memory_id"],old_id)
+            self.assertIn("User corrected",relation["evidence"])
+            store.close()
+
+    def test_explicit_contradiction_is_injected_into_assistant_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            assistant=EvoAssistant(config,EvoStore(config.database),StubProvider())
+            cid=assistant.new_conversation()
+            first=assistant.store.add_memory("The local server uses port 18997","environment")
+            second=assistant.store.add_memory("The local server uses port 8080","environment")
+            assistant.store.relate_memories(first,second,"contradicts","The user supplied conflicting endpoint values.")
+            messages=assistant._build_messages(cid,"local server port")
+            self.assertIn("explicitly marked as contradictory",messages[0]["content"])
+            self.assertIn("18997",messages[0]["content"])
+            self.assertIn("8080",messages[0]["content"])
+            assistant.close()
+
+    def test_superseding_unknown_memory_does_not_create_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            with self.assertRaisesRegex(ValueError,"Active memory not found"):
+                store.supersede_memory("missing","Replacement content")
+            self.assertEqual(store.list_memories(),[])
+            store.close()
+
     def test_lexical_fallback_ranks_relevant_memories_before_recent_noise(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
