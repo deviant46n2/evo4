@@ -128,6 +128,153 @@ def create_app(config_path="config.toml", provider_name=None):
             "provider_selection": False,
         }
 
+
+    @app.get("/api/v1/memories")
+    def memories(q: str | None = None, status: str = "active", limit: int = 100):
+        bounded = min(max(limit, 1), 200)
+        if status not in {"active", "archived", "superseded"}:
+            raise HTTPException(status_code=422, detail="Invalid memory status")
+        with store.lock:
+            if q and q.strip():
+                pattern = "%" + q.strip().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+                rows = store.db.execute(
+                    """SELECT * FROM memories WHERE status=? AND
+                       (content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')
+                       ORDER BY updated_at DESC LIMIT ?""",
+                    (status, pattern, pattern, pattern, bounded),
+                ).fetchall()
+            else:
+                rows = store.db.execute(
+                    "SELECT * FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?",
+                    (status, bounded),
+                ).fetchall()
+        return [{
+            "id": row["id"], "content": row["content"], "category": row["category"],
+            "tags": json.loads(row["tags_json"] or "[]"), "source": row["source"],
+            "confidence": row["confidence"], "status": row["status"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+            "access_count": row["access_count"],
+        } for row in rows]
+
+    @app.post("/api/v1/memories", status_code=201)
+    def create_memory(payload: MemoryCreate):
+        try:
+            memory_id = store.add_memory(payload.content, payload.category, source=payload.source,
+                                         confidence=payload.confidence)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"id": memory_id}
+
+    @app.get("/api/v1/memory-candidates")
+    def memory_candidates(limit: int = 100):
+        rows = store.list_memory_candidates("pending", min(max(limit, 1), 200))
+        return [{
+            "id": row["id"], "content": row["content"], "category": row["category"],
+            "source": row["source"], "confidence": row["confidence"],
+            "created_at": row["created_at"], "conversation_id": row["conversation_id"],
+        } for row in rows]
+
+    @app.post("/api/v1/memory-candidates/{candidate_id}/review")
+    def review_memory_candidate(candidate_id: str, payload: AgentApproval):
+        result = store.review_memory_candidate(candidate_id, payload.approved)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Pending memory candidate not found")
+        return {"accepted": bool(payload.approved), "memory_id": result if payload.approved else None}
+
+    @app.post("/api/v1/memories/{memory_id}/archive")
+    def archive_memory(memory_id: str):
+        if not store.archive_memory(memory_id):
+            raise HTTPException(status_code=404, detail="Active memory not found")
+        return {"archived": True, "id": memory_id}
+
+    def serialize_run(row):
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        return {
+            "id": row["id"], "kind": row["kind"], "status": row["status"],
+            "started_at": row["started_at"], "finished_at": row["finished_at"],
+            "summary": row["summary"], "metadata": metadata,
+        }
+
+    @app.get("/api/v1/agents")
+    def agent_runs(limit: int = 50, status: str | None = None):
+        return [serialize_run(row) for row in store.list_agent_runs(min(max(limit, 1), 100), status)]
+
+    @app.get("/api/v1/agents/{run_id}")
+    def agent_run(run_id: str):
+        row = store.get_agent_run(run_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Agent run not found")
+        result = serialize_run(row)
+        result["events"] = [{
+            "id": event["id"], "tool_name": event["tool_name"],
+            "input": json.loads(event["input_json"] or "{}"),
+            "output": event["output_summary"], "status": event["status"],
+            "created_at": event["created_at"],
+        } for event in store.get_run_events(run_id, 200)]
+        with approval_guard:
+            result["pending_approval"] = next(
+                ({"id": key, "tool_name": value["tool_name"], "arguments": value["arguments"]}
+                 for key, value in pending_approvals.items() if value["run_id"] == run_id), None)
+        return result
+
+    @app.post("/api/v1/agents", status_code=202)
+    def start_agent(payload: AgentCreate):
+        if shutting_down.is_set():
+            raise HTTPException(status_code=503, detail="Evo is shutting down")
+        workspace = Path(payload.workspace).expanduser().resolve() if payload.workspace else config.workspace_root.resolve()
+        run_id = store.start_agent_run("coding", {
+            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "request": payload.request[:2000], "source": "desktop",
+        })
+        try:
+            executor.submit(run_agent, run_id, payload.request, workspace)
+        except Exception as exc:
+            store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
+            raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
+        return {"run_id": run_id, "status": "running"}
+
+    def run_agent(run_id, request_text, workspace):
+        conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
+        store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
+
+        def approval(name, arguments):
+            import uuid
+            approval_id = uuid.uuid4().hex
+            decision = threading.Event()
+            item = {"run_id": run_id, "tool_name": name, "arguments": arguments,
+                    "decision": decision, "approved": False}
+            with approval_guard:
+                pending_approvals[approval_id] = item
+            store.update_agent_run_metadata(run_id, {"lifecycle": "awaiting_approval",
+                                                      "pending_approval_id": approval_id})
+            decision.wait(timeout=600)
+            with approval_guard:
+                pending_approvals.pop(approval_id, None)
+            store.update_agent_run_metadata(run_id, {"lifecycle": "executing",
+                                                      "pending_approval_id": None})
+            return bool(item["approved"])
+
+        try:
+            agent = CodingAgent(assistant, workspace, config.allowed_commands)
+            agent.run(conversation_id, request_text, approval, run_id=run_id)
+        except Exception as exc:
+            store.finish_agent_run(run_id, "failed", f"{type(exc).__name__}: {exc}")
+
+    @app.post("/api/v1/agents/{run_id}/approval")
+    def decide_agent_approval(run_id: str, payload: AgentApproval):
+        with approval_guard:
+            match = next(((key, value) for key, value in pending_approvals.items()
+                          if value["run_id"] == run_id), None)
+            if match is None:
+                raise HTTPException(status_code=404, detail="No pending approval for this run")
+            _, item = match
+            item["approved"] = payload.approved
+            item["decision"].set()
+        return {"decided": True, "approved": payload.approved}
+
     @app.get("/api/v1/conversations")
     def conversations(limit: int = 30, q: str | None = None):
         rows = store.list_conversations(min(max(limit, 1), 100), query=q)
