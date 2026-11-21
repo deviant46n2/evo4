@@ -121,6 +121,12 @@ def _interactive(args,config):
                 else:
                     result=assistant.turn(cid,user_text,on_token=stream)
                     print(f"\n[{result['elapsed_seconds']:.1f}s]",flush=True)
+                    if result.get("truncated"):
+                        print("[warning: model response was truncated at its token limit]",flush=True)
+                    elif result.get("finish_reason") not in (None,"stop"):
+                        print(f"[warning: model response ended with finish_reason={result.get('finish_reason')!r}]",flush=True)
+                    elif result.get("finish_reason") is None:
+                        print("[warning: server did not report whether the response completed]",flush=True)
             except Exception as exc:
                 print(f"\nEvo error: {type(exc).__name__}: {exc}",file=sys.stderr)
         print(f"Conversation ID: {cid}")
