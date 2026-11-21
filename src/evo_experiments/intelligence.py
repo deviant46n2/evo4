@@ -52,30 +52,54 @@ def estimate_runtime(profile,sample):
       "warnings":["Weights are not equivalent to GPU residency; runtime buffers, CUDA allocations, fragmentation, offload distribution and overhead are excluded."]}
 
 def assess_workload(sample,workload,reserve_vram_mib=1024,reserve_ram_mib=2048):
+    """Conservative advisory gate: unknown background demand is never treated as free."""
     kind=workload.get("kind","background")
+    interactive=kind in {"chat","interactive"}
     gpu_value=workload.get("gpu_heavy")
-    gpu=bool(kind in {"inference","benchmark","training"} if gpu_value is None else gpu_value)
-    demand=workload.get("estimated_vram_mib"); ram_demand=workload.get("estimated_ram_mib")
+    # Unless explicitly declared CPU-only, background work is assumed GPU-heavy.
+    gpu=bool(not interactive if gpu_value is None else gpu_value)
+    demand=workload.get("estimated_vram_mib")
+    ram_demand=workload.get("estimated_ram_mib")
+    total=sample.get("gpu_memory_total_mib")
+    used=sample.get("gpu_memory_used_mib")
     free_vram=None
-    if sample.get("gpu_memory_total_mib") is not None and sample.get("gpu_memory_used_mib") is not None:
-        free_vram=max(0,sample["gpu_memory_total_mib"]-sample["gpu_memory_used_mib"])
-    free_ram=sample.get("ram_available_bytes")
-    free_ram=free_ram/1048576 if isinstance(free_ram,(int,float)) else None
-    reasons=[]; decision="allow"
-    if gpu and (free_vram is None or not isinstance(demand,(int,float))):
-        decision="unknown"; reasons.append("GPU headroom or workload VRAM estimate is unknown.")
-    elif gpu and free_vram-reserve_vram_mib<demand:
-        decision="defer"; reasons.append("Estimated VRAM demand would consume the protected reserve.")
-    elif ram_demand is not None and (free_ram is None or free_ram-reserve_ram_mib<ram_demand):
-        decision="unknown" if free_ram is None else "defer"
-        reasons.append("Host RAM headroom is unknown or below the protected reserve.")
-    elif sample.get("gpu_temperature_c") is not None and sample["gpu_temperature_c"]>=85:
-        decision="defer"; reasons.append("GPU temperature is at or above 85°C.")
-    elif sample.get("ram_used_percent") is not None and sample["ram_used_percent"]>=90:
-        decision="defer"; reasons.append("System RAM usage is at or above 90%.")
-    elif kind in {"chat","interactive"}: reasons.append("Interactive work receives priority; no process is preempted.")
-    else: reasons.append("Telemetry clears the configured reserve; this is advisory, not a guarantee.")
-    return {"decision":decision,"priority":100 if kind in {"chat","interactive"} else 10,
+    if (isinstance(total,(int,float)) and not isinstance(total,bool) and total>0
+            and isinstance(used,(int,float)) and not isinstance(used,bool) and used>=0):
+        free_vram=max(0,total-used)
+    ram_bytes=sample.get("ram_available_bytes")
+    free_ram=(ram_bytes/1048576 if isinstance(ram_bytes,(int,float))
+              and not isinstance(ram_bytes,bool) and ram_bytes>=0 else None)
+    reasons=[]
+    decision="allow"
+    if interactive:
+        reasons.append("Interactive work is prioritized; this advisory check never preempts other processes.")
+    else:
+        # Host RAM is relevant to every background workload, including CPU-only work.
+        if free_ram is None or not isinstance(ram_demand,(int,float)) or isinstance(ram_demand,bool):
+            decision="unknown"
+            reasons.append("Host RAM headroom or workload RAM estimate is unknown.")
+        elif free_ram-reserve_ram_mib<ram_demand:
+            decision="defer"
+            reasons.append("Estimated RAM demand would consume the protected reserve.")
+        if decision=="allow" and gpu:
+            if free_vram is None or not isinstance(demand,(int,float)) or isinstance(demand,bool):
+                decision="unknown"
+                reasons.append("GPU headroom or workload VRAM estimate is unknown.")
+            elif free_vram-reserve_vram_mib<demand:
+                decision="defer"
+                reasons.append("Estimated VRAM demand would consume the protected reserve.")
+        if decision=="allow":
+            temperature=sample.get("gpu_temperature_c")
+            ram_percent=sample.get("ram_used_percent")
+            if isinstance(temperature,(int,float)) and temperature>=85:
+                decision="defer"
+                reasons.append("GPU temperature is at or above 85°C.")
+            elif isinstance(ram_percent,(int,float)) and ram_percent>=90:
+                decision="defer"
+                reasons.append("System RAM usage is at or above 90%.")
+            else:
+                reasons.append("Observed headroom clears configured reserves; this remains advisory, not a guarantee.")
+    return {"decision":decision,"priority":100 if interactive else 10,
       "preemption":False,"process_actions":False,"reasons":reasons,
       "observed_vram_free_mib":free_vram,"observed_ram_free_mib":free_ram}
 
