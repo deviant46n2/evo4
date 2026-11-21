@@ -49,7 +49,7 @@ class EvoCoreTests(unittest.TestCase):
             new=store.db.execute("SELECT status FROM memories WHERE id=?",(new_id,)).fetchone()
             self.assertEqual(old["status"],"superseded")
             self.assertEqual(new["status"],"active")
-            self.assertEqual([row["id"] for row in store.search_memories("updated model runtime")],[new_id])
+            self.assertEqual([row["id"] for row in store.search_memories("Qwen configuration profile")],[new_id])
             relation=store.get_memory_relations([new_id])[0]
             self.assertEqual(relation["relation_type"],"supersedes")
             self.assertEqual(relation["source_memory_id"],old_id)
