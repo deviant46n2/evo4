@@ -1,9 +1,14 @@
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
+
 from evo_core.memory_eval import evaluate_memory_retrieval
+import evo_core.cli as evo_cli
 
 
 class MemoryEvaluationTests(unittest.TestCase):
@@ -49,6 +54,23 @@ class MemoryEvaluationTests(unittest.TestCase):
                 "queries":[{"query":"known fact","expected":["known"]}]})
             with self.assertRaisesRegex(ValueError,"top_k"):
                 evaluate_memory_retrieval(path,0)
+
+    def test_cli_evaluation_does_not_create_the_configured_database(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cases=self.write_cases(tmp,{
+                "version":1,
+                "memories":[{"key":"one","content":"local GPU inference"}],
+                "queries":[{"query":"GPU inference","expected":["one"]}]})
+            database=Path(tmp)/"state"/"evo.sqlite3"
+            config=Path(tmp)/"config.toml"
+            config.write_text(
+                f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{database}"\\n',
+                encoding="utf-8")
+            argv=["evo","--config",str(config),"memory","evaluate","--cases",str(cases)]
+            with patch.object(sys,"argv",argv), patch("sys.stdout",new=io.StringIO()) as output:
+                evo_cli.main()
+            self.assertIn("hit_rate_at_k",output.getvalue())
+            self.assertFalse(database.exists())
 
     def test_empty_or_wrong_version_fixture_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
