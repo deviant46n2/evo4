@@ -45,7 +45,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     api_key_env=str(profile.get("api_key_env","")).strip()
     if api_key_env and api_key_env not in os.environ:
         raise ValueError(f"Provider profile {selected_provider!r} requires environment variable {api_key_env}")
-    profile_api_key=os.environ.get(api_key_env) if api_key_env else None
+    profile_api_key=os.environ.get(api_key_env) if api_key_env else profile.get("api_key")
     raw_commands = workspace.get("allowed_commands", [])
     if not isinstance(raw_commands, list):
         raise ValueError("workspace.allowed_commands must be a list of argv lists")
