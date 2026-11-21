@@ -56,7 +56,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
         allowed_commands.append(tuple(command))
     allowed_commands = tuple(allowed_commands)
     return EvoConfig(
-        base_url=str(profile.get("base_url",server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
+        base_url=str(profile.get("base_url",server.get("base_url", "http://127.0.0.1:18997"))).rstrip("/"),
         api_key=str(profile_api_key if profile_api_key is not None else server.get("api_key", "no-key")),
         model=str(profile.get("model",server.get("model", "local-model"))),
         timeout_seconds=max(1, int(profile.get("timeout_seconds",server.get("timeout_seconds", 600)))),
