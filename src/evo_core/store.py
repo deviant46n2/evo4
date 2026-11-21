@@ -54,6 +54,8 @@ class EvoStore:
               CHECK(source_memory_id <> target_memory_id));
             CREATE INDEX IF NOT EXISTS idx_memory_relations_source ON memory_relations(source_memory_id);
             CREATE INDEX IF NOT EXISTS idx_memory_relations_target ON memory_relations(target_memory_id);
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              name TEXT PRIMARY KEY, applied_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS memory_candidates (
               id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general',
               source TEXT NOT NULL, conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
@@ -96,6 +98,25 @@ class EvoStore:
                 self.fts_available = True
             except sqlite3.OperationalError:
                 self.fts_available = False
+            # Older Evo builds stored supersession edges from the obsolete
+            # record to its replacement, while retrieval interprets edges as
+            # current record -> superseded record. Normalize existing history
+            # once so provenance remains accurate after this upgrade.
+            migration = "supersedes_direction_current_to_old_v1"
+            applied = self.db.execute(
+                "SELECT 1 FROM schema_migrations WHERE name=?", (migration,)
+            ).fetchone()
+            if not applied:
+                self.db.execute(
+                    """UPDATE memory_relations
+                       SET source_memory_id=target_memory_id,
+                           target_memory_id=source_memory_id
+                       WHERE relation_type='supersedes'"""
+                )
+                self.db.execute(
+                    "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+                    (migration, utc_now()),
+                )
             self.db.commit()
 
     def create_conversation(self, title="New conversation"):
