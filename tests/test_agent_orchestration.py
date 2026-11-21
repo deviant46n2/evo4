@@ -59,6 +59,8 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(orchestration.get_plan(self.db, self.plan["id"])["steps"][1]["status"], "completed")
 
     def test_failed_plan_skips_remaining_steps(self):
+        orchestration.approve_plan(self.db, self.plan["id"])
+        orchestration.attach_run(self.db, self.plan["id"], "run-1")
         step = self.plan["steps"][0]
         orchestration.start_step(self.db, self.plan["id"], step["id"])
         orchestration.finish_step(self.db, self.plan["id"], step["id"], "failed", "No access")
