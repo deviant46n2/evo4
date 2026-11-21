@@ -1,5 +1,4 @@
 """Safe, advisory-only resource intelligence for Evo."""
-import os
 from pathlib import Path
 import time
 
