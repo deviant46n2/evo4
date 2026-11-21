@@ -116,34 +116,40 @@ class ResultsDB:
                 "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     def aggregates(self):
         with self.lock:
-            groups = self.connection.execute(
-                "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
-                "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
-                "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
-                "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
-                "SUM(CASE WHEN status='truncated' THEN 1 ELSE 0 END) AS truncated, "
-                "SUM(CASE WHEN status='incomplete' THEN 1 ELSE 0 END) AS incomplete, "
-                "SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown, "
-                "SUM(COALESCE(evaluation_passed,0)) AS checks_passed, "
-                "SUM(COALESCE(evaluation_total,0)) AS checks_scored, "
-                "ROUND(AVG(CASE WHEN status='completed' THEN elapsed_seconds END),3) AS avg_elapsed_seconds, "
-                "ROUND(AVG(CASE WHEN status='completed' THEN time_to_first_token_seconds END),3) AS avg_ttft_seconds, "
-                "ROUND(AVG(CASE WHEN status='completed' THEN tokens_per_second END),2) AS avg_tokens_per_second, "
-                "ROUND(AVG(samples.peak_vram_mib),1) AS avg_peak_vram_mib, "
-                "MAX(samples.peak_vram_mib) AS max_peak_vram_mib, "
-                "ROUND(AVG(samples.avg_gpu_utilization),1) AS avg_gpu_utilization_percent, "
-                "MAX(samples.peak_ram_mib) AS max_sampled_ram_mib "
-                "FROM experiments LEFT JOIN ("
-                "SELECT experiment_id, MAX(gpu_memory_used_mib) AS peak_vram_mib, "
-                "AVG(gpu_utilization_percent) AS avg_gpu_utilization, "
-                "MAX(ram_used_mib) AS peak_ram_mib FROM resource_samples GROUP BY experiment_id"
-                ") AS samples ON samples.experiment_id=experiments.id "
-                "GROUP BY COALESCE(run_label,model), model, category "
-                "ORDER BY configuration, category").fetchall()
-            measurements = self.connection.execute(
-                "SELECT COALESCE(run_label,model) AS configuration,model,category,"
-                "elapsed_seconds,time_to_first_token_seconds,tokens_per_second "
-                "FROM experiments WHERE status='completed'").fetchall()
+            self.connection.execute("BEGIN")
+            try:
+                groups = self.connection.execute(
+                    "SELECT COALESCE(run_label,model) AS configuration, model, category, COUNT(*) AS runs, "
+                    "SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, "
+                    "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+                    "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
+                    "SUM(CASE WHEN status='truncated' THEN 1 ELSE 0 END) AS truncated, "
+                    "SUM(CASE WHEN status='incomplete' THEN 1 ELSE 0 END) AS incomplete, "
+                    "SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown, "
+                    "SUM(COALESCE(evaluation_passed,0)) AS checks_passed, "
+                    "SUM(COALESCE(evaluation_total,0)) AS checks_scored, "
+                    "ROUND(AVG(CASE WHEN status='completed' THEN elapsed_seconds END),3) AS avg_elapsed_seconds, "
+                    "ROUND(AVG(CASE WHEN status='completed' THEN time_to_first_token_seconds END),3) AS avg_ttft_seconds, "
+                    "ROUND(AVG(CASE WHEN status='completed' THEN tokens_per_second END),2) AS avg_tokens_per_second, "
+                    "ROUND(AVG(samples.peak_vram_mib),1) AS avg_peak_vram_mib, "
+                    "MAX(samples.peak_vram_mib) AS max_peak_vram_mib, "
+                    "ROUND(AVG(samples.avg_gpu_utilization),1) AS avg_gpu_utilization_percent, "
+                    "MAX(samples.peak_ram_mib) AS max_sampled_ram_mib "
+                    "FROM experiments LEFT JOIN ("
+                    "SELECT experiment_id, MAX(gpu_memory_used_mib) AS peak_vram_mib, "
+                    "AVG(gpu_utilization_percent) AS avg_gpu_utilization, "
+                    "MAX(ram_used_mib) AS peak_ram_mib FROM resource_samples GROUP BY experiment_id"
+                    ") AS samples ON samples.experiment_id=experiments.id "
+                    "GROUP BY COALESCE(run_label,model), model, category "
+                    "ORDER BY configuration, category").fetchall()
+                measurements = self.connection.execute(
+                    "SELECT COALESCE(run_label,model) AS configuration,model,category,"
+                    "elapsed_seconds,time_to_first_token_seconds,tokens_per_second "
+                    "FROM experiments WHERE status='completed'").fetchall()
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
         grouped = {}
         for value in measurements:
             key = (value["configuration"], value["model"], value["category"])

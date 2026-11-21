@@ -123,9 +123,13 @@ class EvoStore:
     def create_conversation(self, title="New conversation"):
         cid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
-            self.db.execute("INSERT INTO conversations(id,title,created_at,updated_at) VALUES(?,?,?,?)",
-                            (cid, title[:120], now, now))
-            self.db.commit()
+            try:
+                self.db.execute("INSERT INTO conversations(id,title,created_at,updated_at) VALUES(?,?,?,?)",
+                                (cid, title[:120], now, now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
         return cid
 
     def list_conversations(self, limit=20, query=None):
@@ -169,19 +173,23 @@ class EvoStore:
     def add_message(self, conversation_id, role, content, metadata=None):
         now = utc_now()
         with self.lock:
-            cur = self.db.execute("INSERT INTO messages(conversation_id,role,content,created_at,metadata_json) VALUES(?,?,?,?,?)",
-                                  (conversation_id, role, content, now, json.dumps(metadata or {}, ensure_ascii=False)))
-            if role == "user":
-                row = self.db.execute("SELECT title FROM conversations WHERE id=?", (conversation_id,)).fetchone()
-                if row and row["title"] == "New conversation":
-                    title = " ".join(content.strip().split())
-                    if len(title) > 57:
-                        title = title[:54].rstrip() + "..."
-                    if title:
-                        self.db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conversation_id))
-            self.db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conversation_id))
-            self.db.commit()
-            return cur.lastrowid
+            try:
+                cur = self.db.execute("INSERT INTO messages(conversation_id,role,content,created_at,metadata_json) VALUES(?,?,?,?,?)",
+                                      (conversation_id, role, content, now, json.dumps(metadata or {}, ensure_ascii=False)))
+                if role == "user":
+                    row = self.db.execute("SELECT title FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+                    if row and row["title"] == "New conversation":
+                        title = " ".join(content.strip().split())
+                        if len(title) > 57:
+                            title = title[:54].rstrip() + "..."
+                        if title:
+                            self.db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conversation_id))
+                self.db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conversation_id))
+                self.db.commit()
+                return cur.lastrowid
+            except Exception:
+                self.db.rollback()
+                raise
 
     def get_messages(self, conversation_id, limit=16):
         with self.lock:
@@ -295,9 +303,13 @@ class EvoStore:
             selected = ranked[:bounded]
             if selected and record_access:
                 now = utc_now()
-                self.db.executemany("UPDATE memories SET access_count=access_count+1,last_accessed_at=? WHERE id=?",
-                                    [(now,item["id"]) for item in selected])
-                self.db.commit()
+                try:
+                    self.db.executemany("UPDATE memories SET access_count=access_count+1,last_accessed_at=? WHERE id=?",
+                                        [(now,item["id"]) for item in selected])
+                    self.db.commit()
+                except Exception:
+                    self.db.rollback()
+                    raise
             return selected
 
     def list_memories(self, limit=50):
@@ -467,20 +479,24 @@ class EvoStore:
             if not row:
                 return None
             memory_id = None
-            if accept:
-                memory_id = str(uuid.uuid4())
-                now = utc_now()
-                self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
-                                   VALUES(?,?,?,?,?,?,?,?,?)""",
-                                (memory_id,row["content"],row["category"],"[]",row["source"],
-                                 row["confidence"],now,now,json.dumps({"candidate_id":candidate_id})))
-                if self.fts_available:
-                    self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
-                                    (memory_id,row["content"],row["category"],""))
-            self.db.execute("UPDATE memory_candidates SET status=?,reviewed_at=?,memory_id=? WHERE id=?",
-                            ("accepted" if accept else "rejected",utc_now(),memory_id,candidate_id))
-            self.db.commit()
-            return memory_id if accept else False
+            try:
+                if accept:
+                    memory_id = str(uuid.uuid4())
+                    now = utc_now()
+                    self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
+                                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                                    (memory_id,row["content"],row["category"],"[]",row["source"],
+                                     row["confidence"],now,now,json.dumps({"candidate_id":candidate_id})))
+                    if self.fts_available:
+                        self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
+                                        (memory_id,row["content"],row["category"],""))
+                self.db.execute("UPDATE memory_candidates SET status=?,reviewed_at=?,memory_id=? WHERE id=?",
+                                ("accepted" if accept else "rejected",utc_now(),memory_id,candidate_id))
+                self.db.commit()
+                return memory_id if accept else False
+            except Exception:
+                self.db.rollback()
+                raise
 
     def add_lesson(self, lesson, trigger_text="", category="general", source="user", confidence=1.0):
         if not lesson.strip():
