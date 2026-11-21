@@ -15,6 +15,11 @@ class EvoAssistant:
     def _build_messages(self, conversation_id, user_text):
         memories = self.store.search_memories(user_text,self.config.memory_limit)
         memory_relations = self.store.get_memory_relations([row["id"] for row in memories])
+        known_relation_ids={row["id"] for row in memory_relations}
+        for relation in self.store.search_memory_relations(user_text,5):
+            if relation["id"] not in known_relation_ids:
+                memory_relations.append(relation)
+                known_relation_ids.add(relation["id"])
         lessons = self.store.search_lessons(user_text,5)
         research = self.store.search_research(user_text,3)
         history = self.store.get_messages(conversation_id,self.config.history_messages)
