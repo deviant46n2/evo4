@@ -97,6 +97,9 @@ def get_job(connection, job_id):
 
 def list_jobs(connection, limit=100):
     bounded = min(max(int(limit), 1), 200)
+    # Lazy lease reaping keeps GET refreshes truthful without a background thread.
+    if _expire_reservations(connection, _stamp()):
+        connection.commit()
     rows = connection.execute(
         """SELECT * FROM workload_jobs
         ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'reserved' THEN 1
