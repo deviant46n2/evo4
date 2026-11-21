@@ -239,7 +239,7 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.post("/api/v1/hardware/profiles", status_code=201)
     def hardware_profile_create(payload: RuntimeProfileInput):
         try:
-            return save_profile(lab_db.connection, payload.model_dump())
+            return save_profile(lab_db.connection, payload.dict())
         except (ValueError, sqlite3.IntegrityError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -249,7 +249,7 @@ def create_app(config_path="config.toml", provider_name=None):
             sample = sample_nvidia_smi()
         except Exception:
             sample = {}
-        profile = payload.model_dump()
+        profile = payload.dict()
         if profile.get("model_file"):
             try:
                 profile["model_file_bytes"] = Path(profile["model_file"]).expanduser().stat().st_size
@@ -263,7 +263,7 @@ def create_app(config_path="config.toml", provider_name=None):
             sample = sample_nvidia_smi()
         except Exception:
             sample = {}
-        return assess_workload(sample, payload.model_dump())
+        return assess_workload(sample, payload.dict())
 
     @app.get("/api/v1/hardware/history")
     def hardware_history(limit: int = 180):
