@@ -36,6 +36,8 @@ class MemoryEvaluationTests(unittest.TestCase):
             self.assertEqual(report["hit_rate_at_k"],1.0)
             self.assertEqual(report["mean_recall_at_k"],1.0)
             self.assertEqual(report["mean_reciprocal_rank"],1.0)
+            self.assertGreater(report["mean_precision_at_k"],0)
+            self.assertEqual(report["zero_result_rate"],0.0)
             self.assertTrue(all(row["relevant_retrieved"] for row in report["results"]))
             self.assertIn("Synthetic isolated benchmark",report["note"])
 
