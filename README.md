@@ -48,6 +48,9 @@ The desktop API exposes:
 - `GET/POST /api/v1/hardware/profiles` — save and list named runtime configurations.
 - `POST /api/v1/hardware/estimate` — conservative model-file and architecture-derived KV-cache estimates; fit remains unknown without full runtime allocation data.
 - `POST /api/v1/hardware/admission` — advisory allow/defer/unknown resource check with protected VRAM/RAM reserves.
+- `GET/POST /api/v1/hardware/scheduler` — inspect the persistent workload queue and create workload entries.
+- `POST /api/v1/hardware/scheduler/dispatch` — evaluate queued work and reserve capacity without launching it.
+- `POST /api/v1/hardware/scheduler/jobs/{id}/start|finish|cancel` — explicitly confirm externally started work, record completion, or cancel queued/reserved work.
 - `GET /api/v1/experiments` — recent experiment runs and grouped performance aggregates.
 
 The desktop API initializes/migrates the Evo Lab tables in the same SQLite database used by the assistant. Older experiment databases gain the expanded telemetry columns in place; existing samples are preserved. Hardware polling is read-only. The dashboard deliberately does not expose process command-line arguments, which can contain credentials.
@@ -86,7 +89,7 @@ The desktop now includes functional Agents, Memory, Hardware, and Experiments wo
 - Agents can launch the existing bounded coding agent in the configured workspace (or an explicitly entered workspace path), inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default.
 - Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.\n- Hardware shows live CPU/RAM/GPU metrics, NVIDIA compute processes, pressure warnings, and recorded resource history. Process command-line arguments are deliberately not exposed because they can contain credentials.\n- Experiments displays Evo Lab run history and configuration aggregates, including tokens/sec, time-to-first-token, evaluation outcomes, and sampled VRAM/RAM peaks.
 - Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
-- Hardware resource management is observe-only in this milestone: Evo recommends deferring work under resource pressure but does not kill processes, change GPU clocks/power limits, stop services, or modify runtime settings. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
+- Hardware resource management now includes a persistent reservation-based workload queue. Evo can reserve estimated RAM/VRAM capacity and track user-confirmed external work, but it does not launch or stop processes, change GPU clocks/power limits, stop services, or modify runtime settings. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 
