@@ -119,6 +119,8 @@ class CodingAgentTests(unittest.TestCase):
             metadata=json.loads(run["metadata_json"])
             self.assertEqual(metadata["verification"]["status"],"passed")
             self.assertEqual(metadata["workspace"],str(root.resolve()))
+            self.assertEqual(metadata["model"],"fake")
+            self.assertEqual(metadata["conversation_id"],cid)
             assistant.close()
 
     def test_file_change_without_post_edit_check_is_explicitly_unverified(self):
