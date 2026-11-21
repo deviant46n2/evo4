@@ -244,7 +244,12 @@ def main():
                 if not row:
                     print("Agent run not found.")
                 else:
-                    print(f"Run: {row['id']}\nKind: {row['kind']}\nStatus: {row['status']}\nStarted: {row['started_at']}\nFinished: {row['finished_at'] or 'still running'}\nSummary: {row['summary'] or ''}")
+                    try:
+                        metadata=json.loads(row["metadata_json"] or "{}")
+                    except json.JSONDecodeError:
+                        metadata={}
+                    verification=(metadata.get("verification") or {}).get("status","unknown")
+                    print(f"Run: {row['id']}\nKind: {row['kind']}\nStatus: {row['status']}\nModel: {metadata.get('model','unknown')}\nWorkspace: {metadata.get('workspace','unknown')}\nVerification: {verification}\nStarted: {row['started_at']}\nFinished: {row['finished_at'] or 'still running'}\nSummary: {row['summary'] or ''}")
                     print("Tool events:")
                     for event in store.get_run_events(args.id):
                         print(f"  #{event['id']} {event['tool_name']} [{event['status']}]")
