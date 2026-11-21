@@ -74,6 +74,12 @@ class EvoStore:
               id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, tool_name TEXT NOT NULL,
               input_json TEXT NOT NULL, output_summary TEXT, status TEXT NOT NULL,
               created_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS run_feedback (
+              id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+              outcome TEXT NOT NULL CHECK(outcome IN ('success','partial','failure')),
+              feedback TEXT NOT NULL DEFAULT '', lesson_id TEXT REFERENCES lessons(id) ON DELETE SET NULL,
+              created_at TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id,created_at);
             """)
             try:
                 self.db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(memory_id UNINDEXED, content, category, tags)")
@@ -330,6 +336,61 @@ class EvoStore:
                             (run_id,tool_name,json.dumps(arguments,ensure_ascii=False),
                              str(output_summary)[:4000],status,utc_now()))
             self.db.commit()
+
+    def get_agent_run(self, run_id):
+        with self.lock:
+            return self.db.execute("SELECT * FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+
+    def list_agent_runs(self, limit=30, status=None):
+        with self.lock:
+            if status:
+                return self.db.execute(
+                    "SELECT * FROM agent_runs WHERE status=? ORDER BY started_at DESC LIMIT ?",
+                    (status,max(1,min(int(limit),500)))).fetchall()
+            return self.db.execute(
+                "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?",
+                (max(1,min(int(limit),500)),)).fetchall()
+
+    def get_run_events(self, run_id, limit=100):
+        with self.lock:
+            return self.db.execute(
+                "SELECT * FROM tool_events WHERE run_id=? ORDER BY id LIMIT ?",
+                (run_id,max(1,min(int(limit),500)))).fetchall()
+
+    def record_run_feedback(self, run_id, outcome, feedback="", lesson=None,
+                            trigger_text="", category="coding"):
+        if outcome not in {"success","partial","failure"}:
+            raise ValueError("outcome must be success, partial, or failure")
+        feedback=(feedback or "").strip()
+        lesson=(lesson or "").strip()
+        if not feedback and not lesson:
+            raise ValueError("Provide feedback or a reusable lesson")
+        now=utc_now()
+        feedback_id=str(uuid.uuid4())
+        lesson_id=None
+        with self.lock:
+            run=self.db.execute("SELECT id FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                raise ValueError(f"Unknown agent run: {run_id}")
+            if lesson:
+                lesson_id=str(uuid.uuid4())
+                confidence={"success":0.85,"partial":0.7,"failure":0.8}[outcome]
+                self.db.execute(
+                    """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (lesson_id,trigger_text.strip(),lesson,category,"user-run-feedback",confidence,now))
+            self.db.execute(
+                """INSERT INTO run_feedback(id,run_id,outcome,feedback,lesson_id,created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (feedback_id,run_id,outcome,feedback,lesson_id,now))
+            self.db.commit()
+        return {"feedback_id":feedback_id,"lesson_id":lesson_id}
+
+    def list_run_feedback(self, run_id, limit=20):
+        with self.lock:
+            return self.db.execute(
+                "SELECT * FROM run_feedback WHERE run_id=? ORDER BY created_at DESC LIMIT ?",
+                (run_id,max(1,min(int(limit),100)))).fetchall()
 
     def backup(self, destination):
         target=Path(destination).expanduser()
