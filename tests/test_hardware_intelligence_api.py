@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from evo_experiments.intelligence import discover_runtimes
 
 try:
     from evo_core.api import create_app, RuntimeProfileInput, WorkloadAssessment
@@ -40,7 +41,7 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         self.assertEqual(result["fit_assessment"],"unknown")
 
     def test_admission_api_defers_when_reserve_would_be_breached(self):
-        payload=WorkloadAssessment(kind="benchmark",estimated_vram_mib=4000)
+        payload=WorkloadAssessment(kind="benchmark",estimated_vram_mib=4000,estimated_ram_mib=512)
         sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":12000,"ram_available_bytes":8*1024**3}
         with patch("evo_core.api.sample_nvidia_smi",return_value=sample):
             result=self.routes[("/api/v1/hardware/admission","POST")](payload)
@@ -48,10 +49,17 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         self.assertFalse(result["process_actions"])
 
     def test_runtime_discovery_reports_config_separately(self):
-        with patch("evo_core.api.sample_nvidia_smi",return_value={"gpu_processes":[]}):
-            result=self.routes[("/api/v1/hardware/runtimes","GET")]()
+        with tempfile.TemporaryDirectory() as tmp:
+            process=Path(tmp)/"4242"
+            process.mkdir()
+            (process/"comm").write_text("llama-server")
+            with patch("evo_core.api.sample_nvidia_smi",return_value={"gpu_processes":[{"pid":4242,"memory_used_mib":700}]}):
+                with patch("evo_core.api.discover_runtimes",side_effect=lambda gpu_processes,configured: discover_runtimes(gpu_processes,configured,proc_root=tmp)):
+                    result=self.routes[("/api/v1/hardware/runtimes","GET")]()
         self.assertEqual(result["configured_endpoint"]["model"],"test-model")
-        self.assertEqual(result["processes"],[])
+        self.assertEqual(len(result["processes"]),1)
+        self.assertEqual(result["processes"][0]["runtime"],"llama.cpp")
+        self.assertEqual(result["processes"][0]["gpu_memory_used_mib"],700)
 
     def test_capabilities_disclose_no_process_control(self):
         caps=self.routes[("/api/v1/capabilities","GET")]()
