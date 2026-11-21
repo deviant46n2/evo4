@@ -67,24 +67,19 @@ cp config.example.toml config.toml
 Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
 
 
-## Desktop interface (0.1 development milestone)
+## Desktop interface
 
-The desktop client is a React/Vite application backed by Evo's local Python API. The CLI remains fully supported. This milestone provides:
+The React/Vite desktop client is a local web application backed by Evo's loopback-only Python API. The CLI remains fully supported. Current workspaces are Chat, Agents, Memory, Hardware, and Experiments. See [the desktop user guide](docs/DESKTOP-USER-GUIDE.md) for complete setup and behavior.
 
-- Persistent conversations with automatic first-message titles.
-- Search across conversation titles and message bodies.
-- Conversation rename and deletion (including message cleanup).
-- Streaming chat with Markdown, GitHub-flavored tables/lists, and readable code blocks.
-- Copy-response controls, keyboard send behavior, a new-chat shortcut, loading/error states, and a responsive narrow-window layout.
-- Provider/model identity and API connection status.
+- **Chat:** persistent conversations, automatic first-message titles, search, rename/delete, streamed Markdown responses, copy controls, keyboard shortcuts, and provider/model/connection status.
+- **Agents:** launch the bounded coding agent, inspect run/event history, and approve or deny every write and allowlisted command. Read-only inspection is automatic. Pending approvals expire after ten minutes and default to denial.
+- **Memory:** browse/search active, archived, and superseded records; add, archive, supersede, and review tentative candidates. Candidates are not trusted context until accepted.
+- **Hardware:** live CPU/RAM/GPU telemetry, GPU compute-process identity/VRAM, warnings, resource-headroom advice, and recorded sample history. Raw process command-line arguments are not exposed.
+- **Experiments:** view Evo Lab run history and grouped performance aggregates.
 
-The desktop now includes functional Agents, Memory, Hardware, and Experiments workspaces:
-- Agents can launch the existing bounded coding agent in the configured workspace (or an explicitly entered workspace path), inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default.
-- Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.\n- Hardware shows live CPU/RAM/GPU metrics, NVIDIA compute processes, pressure warnings, and recorded resource history. Process command-line arguments are deliberately not exposed because they can contain credentials.\n- Experiments displays Evo Lab run history and configuration aggregates, including tokens/sec, time-to-first-token, evaluation outcomes, and sampled VRAM/RAM peaks.
-- Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
-- Hardware resource management is observe-only in this milestone: Evo recommends deferring work under resource pressure but does not kill processes, change GPU clocks/power limits, stop services, or modify runtime settings. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
+The API binds to `127.0.0.1:8765`, restricts Host headers to loopback names, and allows the local development/preview origins. Provider credentials remain in the Python process and are not sent to the browser. Hardware management is observe-only. Agent pause/resume/redirect, stop-generation, live plan streaming, and in-app provider switching are not implemented; disconnecting the browser does not cancel an in-flight provider request.
 
-Install the optional API dependencies and frontend packages:
+Install optional API dependencies and frontend packages:
 
 ```bash
 python -m pip install -e '.[desktop]'
@@ -92,36 +87,35 @@ cd desktop
 npm install
 ```
 
-In one terminal, from the repository root, start the API:
+From the repository root, start the backend in one terminal:
 
 ```bash
 evo serve
 ```
 
-In another terminal:
+In another terminal, run the frontend from `desktop/`:
 
 ```bash
 cd desktop
 npm run dev
 ```
 
-Open the local Vite address shown in the terminal (normally `http://127.0.0.1:5173`). The API binds only to `127.0.0.1:8765`, restricts Host headers to loopback names, and allows only the local development/preview origins. Provider credentials remain in the Python process and are never sent to the browser.
+Open the local Vite address printed in the terminal (normally `http://127.0.0.1:5173`). If the API is already running, do not start a duplicate backend.
 
 ### Desktop API
 
-The API is versioned under `/api/v1`. Current routes:
+All routes are under `/api/v1`:
 
-- `GET /health` and `GET /capabilities`
-- `GET /conversations?limit=100&q=...`
-- `POST /conversations`
-- `GET /conversations/{id}/messages`
-- `PATCH /conversations/{id}` with a `title`
-- `DELETE /conversations/{id}` (returns conflict while that conversation is active)
-- `POST /chat` as a server-sent event stream
-- `GET/POST /memories`, `POST /memories/{id}/archive`, `POST /memories/{id}/supersede`, `GET /memory-candidates`, and `POST /memory-candidates/{id}/review`
-- `GET /agents`, `GET /agents/{run_id}`, `POST /agents`, and `POST /agents/{run_id}/approval`
+- `GET /health`, `GET /capabilities`
+- `GET /conversations?limit=100&q=...`, `POST /conversations`
+- `GET /conversations/{id}/messages`, `PATCH /conversations/{id}`, `DELETE /conversations/{id}`
+- `POST /chat` — server-sent event stream
+- `GET/POST /memories`, `POST /memories/{id}/archive`, `POST /memories/{id}/supersede`
+- `GET /memory-candidates`, `POST /memory-candidates/{id}/review`
+- `GET /agents`, `GET /agents/{run_id}`, `POST /agents`, `POST /agents/{run_id}/approval`
+- `GET /hardware/current`, `GET /hardware/history`, `GET /experiments`
 
-The capabilities endpoint is the source of truth for which future workspace areas the running backend actually supports. The browser is a presentation/client layer; conversation persistence, prompts, memory retrieval, provider calls, and assistant orchestration remain in Python/SQLite.
+The capabilities endpoint reports the current feature contract. The browser is a presentation/client layer; persistence, prompts, memory retrieval, provider calls, and orchestration remain in Python/SQLite.
 
 ## Evo assistant commands
 
