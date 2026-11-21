@@ -43,6 +43,7 @@ class OpenAICompatibleProvider:
         tool_call_parts = {}
         content_type = ""
         saw_event = False
+        finish_reason = None
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 content_type = response.headers.get("Content-Type","")
@@ -63,7 +64,10 @@ class OpenAICompatibleProvider:
                     choices = event.get("choices") or []
                     if not choices:
                         continue
-                    delta = choices[0].get("delta") or {}
+                    choice = choices[0]
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = str(choice["finish_reason"])
+                    delta = choice.get("delta") or {}
                     for call in delta.get("tool_calls") or []:
                         index = call.get("index",0)
                         part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
@@ -103,4 +107,5 @@ class OpenAICompatibleProvider:
         return {"content":"".join(pieces),"tool_calls":parsed_calls,"elapsed_seconds":elapsed,
                 "ttft_seconds":first_token-started if first_token else None,
                 "prompt_tokens":usage.get("prompt_tokens"),"completion_tokens":completion_tokens,
-                "tokens_per_second":(completion_tokens/generation_time if completion_tokens and generation_time and generation_time>0 else None)}
+                "tokens_per_second":(completion_tokens/generation_time if completion_tokens and generation_time and generation_time>0 else None),
+                "finish_reason":finish_reason,"truncated":finish_reason=="length"}
