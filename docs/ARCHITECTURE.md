@@ -62,6 +62,7 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit lifecycle transitions.
 - An allowlisted managed-execution worker for explicitly user-launched reserved jobs. It uses argv arrays without a shell, runs in the configured workspace, captures bounded output, enforces timeouts, and records exit status and restart interruption.
 - A durable background coding-agent task ledger with atomic worker claims, append-only lifecycle events, safe-boundary cancellation, approval-state visibility, and conservative restart recovery. Existing coding-agent tool calls remain individually approval-gated; interrupted tasks are recorded rather than replayed.
+- Approval-first agent orchestration: model-generated structured plans, durable ordered steps, explicit plan approval, sequential execution through the existing coding-agent boundary, per-step outcomes, and restart interruption without replay.
 
 ## Deliberately not implemented yet
 
@@ -70,7 +71,8 @@ Workspace paths are resolved beneath a configured root. Reads are bounded by fil
 - Semantic embeddings/vector retrieval or reranking.
 - Browser/web research agent and source verification pipeline.
 - Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Checkpointed coding-agent pause/resume, redirect, durable approval recovery, per-step retry, and restart-safe continuation. Background Agent Execution v1 records lifecycle and interruption, but does not replay or resume in-flight model/tool calls.
+- Checkpointed coding-agent pause/resume, redirect, durable approval recovery, per-step retry, and restart-safe continuation. Background Agent Execution v1 and Agent Orchestration v1 record lifecycle and interruption, but do not replay or resume in-flight model/tool calls.
+- Automatic resource admission for agent plans. The current hardware scheduler requires reliable per-job RAM/VRAM estimates; orchestration does not invent those estimates or pretend unknown demand is safe.
 - Hard CPU/RAM/VRAM isolation for child workloads, live resource monitoring per managed command, model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
 - Autonomous self-modification or online weight training.
 
