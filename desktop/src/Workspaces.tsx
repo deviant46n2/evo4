@@ -273,6 +273,7 @@ function HistoryLine({samples,field,label}:{samples:HardwareHistory[];field:"gpu
 
 type ScheduledJob = {id:string;name:string;description:string;kind:string;status:string;priority:number;gpu_heavy:boolean|null;estimated_vram_mib:number|null;estimated_ram_mib:number|null;created_at:string;lease_expires_at:string|null;last_decision: {decision?:string;reasons?:string[]};outcome_note:string};
 type SchedulerResponse = {jobs:ScheduledJob[];counts:Record<string,number>;lease_seconds:number;process_control:boolean};
+type WorkloadExecution = {id:string;job_id:string;argv:string[];workspace:string;status:string;timeout_seconds:number;pid:number|null;started_at:string|null;finished_at:string|null;returncode:number|null;elapsed_seconds:number|null;stdout:string;stderr:string;error:string};
 function WorkloadSchedulerPanel() {
   const [data,setData]=useState<SchedulerResponse|null>(null);
   const [name,setName]=useState("");
@@ -281,9 +282,12 @@ function WorkloadSchedulerPanel() {
   const [gpuHeavy,setGpuHeavy]=useState("auto");
   const [vram,setVram]=useState("");
   const [ram,setRam]=useState("");
+  const [commandArgs,setCommandArgs]=useState("");
+  const [timeout,setTimeout]=useState("300");
+  const [executions,setExecutions]=useState<WorkloadExecution[]>([]);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
-  const refresh=useCallback(async()=>{try{setData(await api<SchedulerResponse>("/hardware/scheduler"));setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}},[]);
+  const refresh=useCallback(async()=>{try{const [queue,history]=await Promise.all([api<SchedulerResponse>("/hardware/scheduler"),api<WorkloadExecution[]>("/hardware/executions?limit=30")]);setData(queue);setExecutions(history);setError("");}catch(e){setError(e instanceof Error?e.message:String(e));}},[]);
   useEffect(()=>{void refresh();const id=window.setInterval(()=>void refresh(),5000);return()=>window.clearInterval(id);},[refresh]);
   async function create(event:FormEvent) {
     event.preventDefault();if(!name.trim()||busy)return;setBusy(true);setError("");
@@ -302,6 +306,16 @@ function WorkloadSchedulerPanel() {
     catch(e){setError(e instanceof Error?e.message:String(e));}
     finally{setBusy(false);}
   }
+  async function execute(job:ScheduledJob) {
+    if(busy)return;
+    const argv=commandArgs.split("\\n").map(part=>part.trim()).filter(Boolean);
+    if(!argv.length){setError("Enter an allowlisted command, one argument per line.");return;}
+    if(!window.confirm("Execute this command inside Evo's configured workspace?\\n\\n"+JSON.stringify(argv)+"\\n\\nOnly configured command prefixes are accepted."))return;
+    setBusy(true);setError("");
+    try{await api("/hardware/scheduler/jobs/"+job.id+"/execute",json({argv,timeout_seconds:Number(timeout)}));await refresh();}
+    catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setBusy(false);}
+  }
   const jobs=data?.jobs||[];
   return <section className="workspace-panel">
     <div className="panel-toolbar"><div><h2>Workload scheduler</h2><p>Persistent queue, resource reservations and explicit workload lifecycle.</p></div><span className="run-status">RESERVATION ONLY</span></div>
@@ -314,8 +328,11 @@ function WorkloadSchedulerPanel() {
       <label>GPU use<select value={gpuHeavy} onChange={e=>setGpuHeavy(e.target.value)}><option value="auto">Assume GPU-heavy</option><option value="true">GPU-heavy</option><option value="false">CPU-only (declared)</option></select></label>
       <label>Estimated VRAM (MiB)<input type="number" min="0" max="1000000" value={vram} onChange={e=>setVram(e.target.value)} placeholder="Required for GPU jobs"/></label>
       <label>Estimated RAM (MiB)<input type="number" min="0" max="1000000" value={ram} onChange={e=>setRam(e.target.value)} placeholder="Required for background jobs"/></label>
+      <label className="scheduler-command">Execution command (one argv item per line)<textarea value={commandArgs} onChange={e=>setCommandArgs(e.target.value)} rows={3} placeholder={"python\\n-m\\nunittest\\ndiscover\\n-s\\ntests"}/></label>
+      <label>Execution timeout (seconds)<input type="number" min="1" max="900" value={timeout} onChange={e=>setTimeout(e.target.value)}/></label>
       <div className="inline-actions"><button className="quiet-button" type="submit" disabled={busy||!name.trim()}>{busy?"Working…":"Add to queue"}</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void action("/hardware/scheduler/dispatch?limit=5")}>Evaluate queue and reserve</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void refresh()}>Refresh</button></div>
     </form>
+    <p className="policy-copy">Execution uses argv exactly as entered—never a shell string. It is accepted only when it matches a command prefix in workspace.allowed_commands. Launching requires a separate confirmation. Evo runs only its own child process, captures bounded output, and enforces the timeout. It does not attach to your model server.</p>
     <div className="scheduler-counts">{["queued","reserved","running","completed","failed","cancelled"].map(key=><span key={key}><b>{data?.counts[key]||0}</b><small>{key}</small></span>)}</div>
     <div className="scheduler-jobs">{jobs.map(job=><article className="scheduler-job" key={job.id}>
       <div className="record-top"><span className={"run-status "+job.status}>{job.status}</span><span>{job.kind}</span><span>Priority {job.priority}</span></div>
@@ -325,12 +342,21 @@ function WorkloadSchedulerPanel() {
       {job.status==="reserved"&&<small>Reservation expires: {job.lease_expires_at?new Date(job.lease_expires_at).toLocaleTimeString():"—"}</small>}
       {job.status==="running"&&<small>Running is user-confirmed; Evo does not monitor or control the external process.</small>}
       <div className="inline-actions">
-        {job.status==="reserved"&&<button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/start")}>Confirm external start</button>}
-        {job.status==="running"&&<><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"completed"})}>Mark completed</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"failed",note:"Marked failed by user"})}>Mark failed</button></>}
+        {job.status==="reserved"&&<><button className="quiet-button" disabled={busy} onClick={()=>void execute(job)}>Execute allowlisted command</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/start")}>Confirm external start</button></>}
+        {job.status==="running"&&<><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"completed"})}>Mark external job completed</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"failed",note:"Marked failed by user"})}>Mark external job failed</button></>}
         {(job.status==="queued"||job.status==="reserved")&&<button className="quiet-button danger" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/cancel")}>Cancel queued job</button>}
       </div>
     </article>)}
     {!jobs.length&&<div className="empty-state">No scheduled workloads yet. Add a workload above to begin building a persistent queue.</div>}</div>
+    <div className="panel-toolbar execution-history-head"><div><h3>Managed execution history</h3><p>Commands started by Evo, including captured output and restart recovery.</p></div><span className="workspace-count">{executions.length} records</span></div>
+    <div className="execution-list">{executions.map(item=><article className="execution-card" key={item.id}>
+      <div className="record-top"><span className={"run-status "+item.status}>{item.status}</span><span>Job {item.job_id.slice(0,8)}</span><span>{item.elapsed_seconds==null?"—":item.elapsed_seconds+"s"}</span>{item.returncode!==null&&<span>Exit {item.returncode}</span>}</div>
+      <code>{item.argv.join(" ")}</code>
+      <small>Workspace: {item.workspace} · PID: {item.pid??"—"} · Timeout: {item.timeout_seconds}s</small>
+      {item.error&&<p className="failed-note">{item.error}</p>}
+      {item.stdout&&<details><summary>Standard output</summary><pre>{item.stdout}</pre></details>}
+      {item.stderr&&<details><summary>Standard error</summary><pre>{item.stderr}</pre></details>}
+    </article>)}{!executions.length&&<div className="empty-state">No Evo-managed commands have been executed.</div>}</div>
   </section>;
 }
 
