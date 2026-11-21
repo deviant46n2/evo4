@@ -374,7 +374,9 @@ class EvoStore:
                 raise ValueError(f"Unknown agent run: {run_id}")
             if lesson:
                 lesson_id=str(uuid.uuid4())
-                confidence={"success":0.85,"partial":0.7,"failure":0.8}[outcome]
+                # The lesson text is explicitly supplied by the user; do not
+                # fabricate different confidence scores from the run outcome.
+                confidence=1.0
                 self.db.execute(
                     """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
                        VALUES(?,?,?,?,?,?,?)""",
