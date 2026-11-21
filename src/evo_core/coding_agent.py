@@ -1,5 +1,5 @@
 import json
-from .workspace import Workspace, WorkspaceError
+from .workspace import Workspace, WorkspaceError, is_test_path
 
 CODING_POLICY = """\n\nCoding-agent operating rules:
 - First inspect the project structure and the relevant source, tests, and project instructions before proposing changes.
@@ -23,9 +23,6 @@ TOOL_SPECS = [
  {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120}},"required":["argv"],"additionalProperties":False}}}
 ]
 
-_DIRECT_VERIFICATION_TOOLS={"pytest","tox","nox","ruff","mypy","pyright","eslint","tsc","pre-commit"}
-_TEST_SUBCOMMANDS={"test","tests","check","lint","build","clippy","vet"}
-
 def is_test_command(argv):
     """Return true only for commands that explicitly invoke a test runner."""
     if not isinstance(argv,(list,tuple)) or not argv:
@@ -37,49 +34,16 @@ def is_test_command(argv):
     if executable.startswith("python") and len(args)>=3:
         return args[1]=="-m" and args[2] in {"pytest","unittest","tox","nox"}
     if executable in {"npm","pnpm","yarn","bun"}:
-        return any(token in {"test","tests","jest","vitest"} or token.startswith("test:")
-                   for token in args[1:5])
+        return any(token in {"test","tests","jest","vitest"} or token.startswith("test:") for token in args[1:6])
+    if executable=="npx":
+        return any(token in {"jest","vitest"} for token in args[1:5])
     if executable=="cargo":
         return len(args)>1 and args[1]=="test"
-    if executable=="go":
-        return len(args)>1 and args[1]=="test"
-    if executable=="dotnet":
+    if executable in {"go","dotnet"}:
         return len(args)>1 and args[1]=="test"
     if executable in {"make","gmake"}:
         return "test" in args[1:4] or "tests" in args[1:4]
     return False
-
-
-def is_verification_command(argv):
-    """Recognize common test/check tools without scanning arbitrary path arguments."""
-    if not isinstance(argv,(list,tuple)) or not argv:
-        return False
-    args=[str(value).strip().lower() for value in argv]
-    executable=args[0].rsplit("/",1)[-1]
-    if executable in _DIRECT_VERIFICATION_TOOLS:
-        return True
-    if executable.startswith("python") and len(args)>=3:
-        if args[1]=="-m" and args[2] in {"pytest","unittest","tox","nox","ruff","mypy","pyright"}:
-            return True
-        if args[1]=="-m" and args[2]=="compileall":
-            return True
-    if executable in {"npm","pnpm","yarn","bun","npx"}:
-        return any(token in _TEST_SUBCOMMANDS or token.startswith("test:") or
-                   token in {"jest","vitest","eslint","tsc"} for token in args[1:4])
-    if executable=="cargo":
-        return len(args)>1 and args[1] in {"test","check","build","clippy"}
-    if executable=="go":
-        return len(args)>1 and args[1] in {"test","vet"}
-    if executable in {"make","gmake"}:
-        return any(token in _TEST_SUBCOMMANDS for token in args[1:])
-    if executable=="cmake":
-        return "--build" in args
-    if executable=="dotnet":
-        return len(args)>1 and args[1] in {"test","build"}
-    if executable=="git":
-        return len(args)>2 and args[1:3]==["diff","--check"]
-    return False
-
 
 
 class CodingAgent:
@@ -90,7 +54,7 @@ class CodingAgent:
         self.workspace=Workspace(root,allowed_commands=allowed_commands)
         self.max_tool_rounds=max(1,min(int(max_tool_rounds),20))
 
-    def _execute(self, name, args):
+    def _execute(self, name, args, test_approval=None):
         if name=="inspect_project":
             return self.workspace.project_overview()
         if name=="list_files":
@@ -100,7 +64,7 @@ class CodingAgent:
         if name=="search_text":
             return self.workspace.search_text(args["query"],args.get("path","."))
         if name=="write_file":
-            return {"written":self.workspace.write_file(args["path"],args["content"],bool(args.get("overwrite",False)),allow_test_changes=True)}
+            return {"written":self.workspace.write_file(args["path"],args["content"],bool(args.get("overwrite",False)),test_approval=test_approval)}
         if name=="run_command":
             return self.workspace.run(args["argv"],args.get("timeout_seconds",120))
         raise WorkspaceError(f"Unknown tool: {name}")
@@ -178,7 +142,10 @@ class CodingAgent:
                                 output={"error":"User denied this action; no changes or command execution were performed."}
                                 status="denied"
                             else:
-                                output=self._execute(name,args)
+                                test_approval=None
+                                if name=="write_file" and is_test_path(args.get("path","")):
+                                    test_approval=self.workspace.approve_test_write(args["path"])
+                                output=self._execute(name,args,test_approval=test_approval)
                                 status="completed"
                         else:
                             output=self._execute(name,args)
