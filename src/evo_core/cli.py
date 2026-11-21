@@ -29,6 +29,16 @@ def build_parser():
     search=ms.add_parser("search"); search.add_argument("query"); search.add_argument("--limit",type=int,default=10)
     ms.add_parser("list")
     archive=ms.add_parser("archive"); archive.add_argument("id")
+    supersede=ms.add_parser("supersede",help="Replace an active memory while preserving its history")
+    supersede.add_argument("id"); supersede.add_argument("content")
+    supersede.add_argument("--reason",default=""); supersede.add_argument("--category")
+    supersede.add_argument("--source",default="user"); supersede.add_argument("--confidence",type=float,default=1.0)
+    supersede.add_argument("--tag",action="append",default=[])
+    relate=ms.add_parser("relate",help="Explicitly link two memories as supporting or contradicting")
+    relate.add_argument("source_id"); relate.add_argument("target_id")
+    relate.add_argument("--relation",choices=["supports","contradicts"],required=True)
+    relate.add_argument("--evidence",default="")
+    relations=ms.add_parser("relations"); relations.add_argument("id")
     ms.add_parser("candidates",help="List tentative memories awaiting review")
     accept=ms.add_parser("accept"); accept.add_argument("id")
     reject=ms.add_parser("reject"); reject.add_argument("id")
@@ -171,6 +181,27 @@ def main():
                 for row in store.list_memories(): print(f"{row['id']} [{row['category']}] {row['content']}")
             elif args.memory_command=="archive":
                 print("Archived." if store.archive_memory(args.id) else "Memory not found.")
+            elif args.memory_command=="supersede":
+                try:
+                    new_id=store.supersede_memory(args.id,args.content,args.category,args.tag,
+                                                  args.source,args.confidence,args.reason)
+                except ValueError as exc:
+                    print(f"Error: {exc}",file=sys.stderr)
+                    raise SystemExit(2)
+                print(f"New active memory: {new_id} (supersedes {args.id})")
+            elif args.memory_command=="relate":
+                try:
+                    relation_id=store.relate_memories(args.source_id,args.target_id,args.relation,args.evidence)
+                except ValueError as exc:
+                    print(f"Error: {exc}",file=sys.stderr)
+                    raise SystemExit(2)
+                print(f"Memory relationship recorded: {relation_id}")
+            elif args.memory_command=="relations":
+                for relation in store.get_memory_relations([args.id]):
+                    print(f"{relation['relation_type']}: {relation['source_memory_id']} -> {relation['target_memory_id']}")
+                    print(f"  evidence: {relation['evidence']}")
+                    print(f"  source: {relation['source_content']}")
+                    print(f"  target: {relation['target_content']}")
             elif args.memory_command=="candidates":
                 for row in store.list_memory_candidates():
                     print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['content']}")
