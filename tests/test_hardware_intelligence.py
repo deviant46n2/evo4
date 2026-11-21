@@ -21,6 +21,9 @@ class HardwareIntelligenceTests(unittest.TestCase):
     def test_reserve_prevents_oversubscription(self):
         sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":12000,"ram_available_bytes":8*1024**3,"ram_used_percent":50}
         self.assertEqual(assess_workload(sample,{"kind":"benchmark","gpu_heavy":True,"estimated_vram_mib":4000})["decision"],"defer")
+    def test_default_benchmark_is_gpu_heavy_and_unknown_fails_closed(self):
+        result=assess_workload({},{"kind":"benchmark","estimated_vram_mib":2048})
+        self.assertEqual(result["decision"],"unknown")
     def test_interactive_priority_does_not_preempt(self):
         result=assess_workload({},{"kind":"chat"})
         self.assertEqual(result["priority"],100); self.assertFalse(result["preemption"])
