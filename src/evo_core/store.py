@@ -44,6 +44,14 @@ class EvoStore:
               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_accessed_at TEXT,
               access_count INTEGER NOT NULL DEFAULT 0, metadata_json TEXT NOT NULL DEFAULT '{}');
             CREATE INDEX IF NOT EXISTS idx_memories_status_category ON memories(status,category);
+            CREATE TABLE IF NOT EXISTS memory_relations (
+              id TEXT PRIMARY KEY, source_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+              target_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+              relation_type TEXT NOT NULL CHECK(relation_type IN ('supersedes','contradicts','supports')),
+              evidence TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+              CHECK(source_memory_id <> target_memory_id));
+            CREATE INDEX IF NOT EXISTS idx_memory_relations_source ON memory_relations(source_memory_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_relations_target ON memory_relations(target_memory_id);
             CREATE TABLE IF NOT EXISTS memory_candidates (
               id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general',
               source TEXT NOT NULL, conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
@@ -190,6 +198,71 @@ class EvoStore:
                                   (utc_now(), memory_id))
             self.db.commit()
             return cur.rowcount == 1
+
+    def supersede_memory(self, memory_id, content, category=None, tags=None,
+                         source="user", confidence=1.0, reason=""):
+        content=(content or "").strip()
+        if not content:
+            raise ValueError("Replacement memory content cannot be empty")
+        if not 0 <= float(confidence) <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        new_id,relation_id,now=str(uuid.uuid4()),str(uuid.uuid4()),utc_now()
+        with self.lock:
+            old=self.db.execute("SELECT * FROM memories WHERE id=? AND status='active'",
+                                (memory_id,)).fetchone()
+            if not old:
+                raise ValueError("Active memory not found")
+            metadata={"supersedes_memory_id":memory_id}
+            if reason.strip():
+                metadata["supersession_reason"]=reason.strip()
+            self.db.execute(
+                """INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (new_id,content,category or old["category"],json.dumps(tags or []),source,
+                 float(confidence),now,now,json.dumps(metadata,ensure_ascii=False)))
+            if self.fts_available:
+                self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
+                                (new_id,content,category or old["category"]," ".join(tags or [])))
+            self.db.execute(
+                """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (relation_id,memory_id,new_id,"supersedes",reason.strip(),now))
+            self.db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?",
+                            (now,memory_id))
+            self.db.commit()
+        return new_id
+
+    def relate_memories(self, source_id, target_id, relation_type, evidence=""):
+        if relation_type not in {"contradicts","supports"}:
+            raise ValueError("relation_type must be contradicts or supports")
+        if source_id==target_id:
+            raise ValueError("A memory cannot be related to itself")
+        relation_id,now=str(uuid.uuid4()),utc_now()
+        with self.lock:
+            found=self.db.execute(
+                "SELECT COUNT(*) FROM memories WHERE id IN (?,?)",(source_id,target_id)).fetchone()[0]
+            if found!=2:
+                raise ValueError("Both memory IDs must exist")
+            self.db.execute(
+                """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (relation_id,source_id,target_id,relation_type,(evidence or "").strip(),now))
+            self.db.commit()
+        return relation_id
+
+    def get_memory_relations(self, memory_ids):
+        ids=list(dict.fromkeys(memory_ids or []))
+        if not ids:
+            return []
+        placeholders=",".join("?" for _ in ids)
+        sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content
+                FROM memory_relations r
+                JOIN memories s ON s.id=r.source_memory_id
+                JOIN memories t ON t.id=r.target_memory_id
+                WHERE r.source_memory_id IN ({placeholders}) OR r.target_memory_id IN ({placeholders})
+                ORDER BY r.created_at DESC"""
+        with self.lock:
+            return self.db.execute(sql,ids+ids).fetchall()
 
     def add_task(self, title, description="", priority=3, due_at=None):
         tid, now = str(uuid.uuid4()), utc_now()
