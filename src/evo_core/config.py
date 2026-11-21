@@ -17,6 +17,7 @@ class EvoConfig:
     workspace_root: Path = Path(".")
     allowed_commands: tuple = ()
     max_history_chars: int = 40000
+    context_window_tokens: int = 49152
 
 def load_config(path: str | Path = "config.toml") -> EvoConfig:
     source = Path(path)
@@ -52,4 +53,5 @@ def load_config(path: str | Path = "config.toml") -> EvoConfig:
         workspace_root=Path(workspace.get("root", ".")),
         allowed_commands=allowed_commands,
         max_history_chars=max(2000,int(assistant.get("max_history_chars",40000))),
+        context_window_tokens=max(4096,int(assistant.get("context_window_tokens",49152))),
     )
