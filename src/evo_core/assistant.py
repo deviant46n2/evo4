@@ -27,10 +27,10 @@ class EvoAssistant:
         used_chars = 0
         for row in reversed(history):
             content = row["content"]
-            if used_chars and used_chars + len(content) > self.config.max_history_chars:
+            # Retain complete recent messages only; never splice an old response
+            # into a fragment that could be mistaken for a complete answer.
+            if used_chars + len(content) > self.config.max_history_chars:
                 break
-            if len(content) > self.config.max_history_chars:
-                content = content[-self.config.max_history_chars:]
             selected_history.append({"role":row["role"],"content":content})
             used_chars += len(content)
         selected_history.reverse()
@@ -107,19 +107,23 @@ class EvoAssistant:
             )
         remaining=budget_chars-fixed_chars
 
-        # Retrieved context is assembled as newline-delimited records. Keep only
-        # complete records and make omissions explicit rather than cutting a
-        # memory/research record in the middle.
+        # Retrieved context is assembled into blank-line-separated sections.
+        # Keep complete sections (including their headers and all contained
+        # records) so truncation cannot leave an orphaned title or partial item.
         kept_records=[]
         omitted_records=0
-        for record in dynamic.splitlines(keepends=True):
-            if len(record)<=remaining:
-                kept_records.append(record)
-                remaining-=len(record)
+        for section in dynamic.split("\\n\\n"):
+            if not section:
+                continue
+            rendered=section+"\\n\\n"
+            if len(rendered)<=remaining:
+                kept_records.append(rendered)
+                remaining-=len(rendered)
             else:
                 omitted_records+=1
         if omitted_records:
-            marker=f"\n[Context notice: {omitted_records} retrieved context record(s) omitted to fit the configured context budget.]\n"
+            marker=(f"[Context notice: {omitted_records} retrieved context section(s) "
+                    "omitted to fit the configured context budget.]\\n")
             if len(marker)<=remaining:
                 kept_records.append(marker)
                 remaining-=len(marker)
