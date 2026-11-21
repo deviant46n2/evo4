@@ -41,6 +41,22 @@ class HardwareApiTests(unittest.TestCase):
         self.assertIn("content:", payload["matches"][0]["reason"])
         self.assertGreater(payload["matches"][0]["coverage"], 0)
 
+    def test_memory_review_endpoint_is_read_only_and_labels_lexical_suggestions(self):
+        store = self.app.state.assistant.store
+        first = store.add_memory("RTX 5070 Ti has 16 GB VRAM and CUDA support",
+                                 category="hardware", source="user")
+        second = store.add_memory("RTX 5070 Ti has 16 GB VRAM with CUDA support",
+                                  category="hardware", source="user")
+        before = {row["id"]: row["access_count"] for row in store.list_memories(10)}
+        payload = self.routes["/api/v1/memories/review"](limit=10)
+        self.assertFalse(payload["mutates_memory"])
+        self.assertIn("no embeddings", payload["method"])
+        self.assertEqual(payload["count"], 1)
+        pair = payload["suggestions"][0]
+        self.assertEqual({pair["left"]["id"], pair["right"]["id"]}, {first, second})
+        after = {row["id"]: row["access_count"] for row in store.list_memories(10)}
+        self.assertEqual(before, after)
+
     def test_hardware_endpoint_is_observe_only_and_surfaces_pressure(self):
         sample = {
             "sampled_at": "2026-11-21T12:00:00+00:00",
