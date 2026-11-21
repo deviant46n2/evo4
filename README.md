@@ -198,3 +198,8 @@ The coding agent depends on OpenAI-compatible streamed tool-call support. Some l
 The memory benchmark is intentionally synthetic and isolated: it is a regression fixture for comparing retrieval implementations, not a claim about recall over a real user memory collection. The next step is to add user-curated held-out queries and measure retrieval against actual Evo memory records with consent.
 
 The research and design rationale is maintained in the [research archive](https://github.com/deviant46n2/airesearchandtesting).
+
+
+## Sample workspace data
+
+Fresh installations can load reversible, clearly labeled sample memories, agent history, experiment results, and historical telemetry from the Memory, Agents, Hardware, and Experiments workspaces. Sample records are persisted in the configured SQLite database with explicit demo provenance; they are not real user activity or live hardware measurements. Use the workspace banner to load or remove them. See [the sample-data guide](docs/DEMO-DATA.md).

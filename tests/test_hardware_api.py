@@ -80,6 +80,44 @@ class HardwareApiTests(unittest.TestCase):
         payload = self.routes["/api/v1/hardware/history"](limit=180)
         self.assertEqual(payload, [])
 
+    def test_hardware_probe_exception_returns_partial_dashboard_payload(self):
+        with patch("evo_core.api.sample_nvidia_smi", side_effect=RuntimeError("probe unavailable")):
+            payload = self.routes["/api/v1/hardware/current"]()
+        self.assertFalse(payload["sample"]["gpu_available"])
+        self.assertIn("RuntimeError", payload["telemetry_error"])
+        self.assertEqual(payload["budget"]["background_work"], "unknown")
+
+    def test_cpu_ram_only_telemetry_is_not_reported_as_unknown(self):
+        sample = {
+            "sampled_at": "2026-11-21T12:00:00+00:00",
+            "gpu_available": False, "gpu_processes": [],
+            "ram_used_percent": 42, "ram_available_bytes": 8 * 1024**3,
+            "cpu_utilization_percent": 18,
+        }
+        with patch("evo_core.api.sample_nvidia_smi", return_value=sample):
+            payload = self.routes["/api/v1/hardware/current"]()
+        self.assertEqual(payload["budget"]["background_work"], "limited")
+        self.assertIn("GPU headroom is unknown", payload["budget"]["reason"])
+
+    def test_demo_seed_endpoints_are_reversible_and_label_experiment_data(self):
+        seed_endpoint = next(route.endpoint for route in self.app.routes
+                             if route.path == "/api/v1/demo/seed" and "POST" in route.methods)
+        clear_endpoint = next(route.endpoint for route in self.app.routes
+                              if route.path == "/api/v1/demo/seed" and "DELETE" in route.methods)
+        seeded = seed_endpoint()
+        self.assertGreater(seeded["seeded"]["memories"], 0)
+        status = self.routes["/api/v1/demo/status"]()
+        self.assertTrue(status["active"])
+        experiments = self.routes["/api/v1/experiments"](limit=30)
+        self.assertTrue(all(row["is_demo"] for row in experiments["runs"]))
+        self.assertTrue(all(row["is_demo"] for row in experiments["aggregates"]))
+        history = self.routes["/api/v1/hardware/history"](limit=180)
+        self.assertTrue(history)
+        self.assertTrue(all(row["is_demo"] for row in history))
+        removed = clear_endpoint()
+        self.assertGreater(removed["removed"]["agent_runs"], 0)
+        self.assertFalse(self.routes["/api/v1/demo/status"]()["active"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
 from .config import load_config
 from .store import EvoStore
+from .demo_data import seed_demo_data, demo_data_status, clear_demo_data
 from evo_experiments.monitor import sample_nvidia_smi
 from evo_experiments.db import ResultsDB
 
@@ -109,9 +110,34 @@ def create_app(config_path="config.toml", provider_name=None):
                 del conversation_locks[conversation_id]
 
 
+    @app.get("/api/v1/demo/status")
+    def demo_status():
+        return demo_data_status(store, lab_db)
+
+    @app.post("/api/v1/demo/seed")
+    def demo_seed():
+        return seed_demo_data(store, lab_db)
+
+    @app.delete("/api/v1/demo/seed")
+    def demo_clear():
+        return clear_demo_data(store, lab_db)
+
     @app.get("/api/v1/hardware/current")
     def hardware_current():
-        sample = sample_nvidia_smi()
+        telemetry_error = None
+        try:
+            sample = sample_nvidia_smi()
+        except Exception as exc:
+            # Keep the dashboard usable even if an optional platform probe fails.
+            sample = {"sampled_at": None, "gpu_name": None, "gpu_available": False,
+                      "gpu_utilization_percent": None, "gpu_memory_used_mib": None,
+                      "gpu_memory_total_mib": None, "gpu_memory_used_percent": None,
+                      "gpu_temperature_c": None, "gpu_power_w": None, "gpu_processes": [],
+                      "cpu_utilization_percent": None, "cpu_logical_cores": None,
+                      "load_average_1m": None, "load_average_5m": None, "load_average_15m": None,
+                      "ram_used_mib": None, "ram_used_percent": None,
+                      "ram_total_bytes": None, "ram_available_bytes": None}
+            telemetry_error = f"{type(exc).__name__}: {str(exc)[:240]}"
         warnings = []
         if sample.get("gpu_available"):
             vram = sample.get("gpu_memory_used_percent")
@@ -136,11 +162,13 @@ def create_app(config_path="config.toml", provider_name=None):
         ram_free_mib = (sample["ram_available_bytes"] / (1024 * 1024)
                         if sample.get("ram_available_bytes") is not None else None)
         pressure = bool(warnings)
-        telemetry_known = sample.get("ram_used_percent") is not None and sample.get("gpu_available")
+        telemetry_known = sample.get("ram_used_percent") is not None
         background_work = "defer" if pressure else "limited" if telemetry_known else "unknown"
         budget_reason = ("Resource pressure detected; protect interactive inference." if pressure
-                         else "No configured pressure threshold is currently exceeded." if telemetry_known
-                         else "GPU or system telemetry is incomplete; available headroom is unknown.")
+                         else "System RAM telemetry is available; GPU headroom is " +
+                              ("also available." if sample.get("gpu_available") else "unknown because NVIDIA telemetry is unavailable.")
+                         if telemetry_known
+                         else "System resource telemetry is unavailable; available headroom is unknown.")
         parsed_endpoint = urlsplit(config.base_url)
         hostname = parsed_endpoint.hostname or ""
         if ":" in hostname and not hostname.startswith("["):
@@ -150,6 +178,7 @@ def create_app(config_path="config.toml", provider_name=None):
         safe_endpoint = urlunsplit((parsed_endpoint.scheme, hostname, parsed_endpoint.path, "", ""))
         return {
             "sample": sample,
+            "telemetry_error": telemetry_error,
             "runtime": {"provider": config.provider_name, "model": config.model,
                         "endpoint": safe_endpoint},
             "budget": {"vram_free_mib": vram_free, "ram_free_mib": ram_free_mib,
@@ -165,11 +194,13 @@ def create_app(config_path="config.toml", provider_name=None):
         try:
             with store.lock:
                 rows = store.db.execute(
-                    """SELECT id,experiment_id,sampled_at,gpu_utilization_percent,
-                       gpu_memory_used_mib,gpu_memory_total_mib,gpu_memory_used_percent,
-                       gpu_temperature_c,gpu_power_w,ram_used_mib,ram_used_percent,
-                       cpu_utilization_percent,load_average_1m FROM resource_samples
-                       ORDER BY id DESC LIMIT ?""", (bounded,)
+                    """SELECT rs.id,rs.experiment_id,rs.sampled_at,rs.gpu_utilization_percent,
+                       rs.gpu_memory_used_mib,rs.gpu_memory_total_mib,rs.gpu_memory_used_percent,
+                       rs.gpu_temperature_c,rs.gpu_power_w,rs.ram_used_mib,rs.ram_used_percent,
+                       rs.cpu_utilization_percent,rs.load_average_1m,
+                       CASE WHEN json_extract(e.config_json,'$.demo_seed')=1 THEN 1 ELSE 0 END AS is_demo
+                       FROM resource_samples rs LEFT JOIN experiments e ON e.id=rs.experiment_id
+                       ORDER BY rs.id DESC LIMIT ?""", (bounded,)
                 ).fetchall()
             return [dict(row) for row in reversed(rows)]
         except sqlite3.OperationalError:
@@ -184,11 +215,12 @@ def create_app(config_path="config.toml", provider_name=None):
                     """SELECT id,started_at,finished_at,task_id,category,repetition,
                        model,run_label,status,error,elapsed_seconds,
                        time_to_first_token_seconds,prompt_tokens,completion_tokens,
-                       tokens_per_second,evaluation_status,evaluation_passed,evaluation_total
+                       tokens_per_second,evaluation_status,evaluation_passed,evaluation_total,config_json
                        FROM experiments ORDER BY id DESC LIMIT ?""", (bounded,)
                 ).fetchall()
                 aggregates = store.db.execute(
                     """SELECT COALESCE(run_label,model) AS configuration,model,category,
+                       MAX(CASE WHEN json_extract(experiments.config_json,'$.demo_seed')=1 THEN 1 ELSE 0 END) AS is_demo,
                        COUNT(*) AS runs,
                        SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed,
                        SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
@@ -204,7 +236,8 @@ def create_app(config_path="config.toml", provider_name=None):
                        GROUP BY COALESCE(run_label,model),model,category
                        ORDER BY configuration,category"""
                 ).fetchall()
-            return {"available": True, "runs": [dict(row) for row in rows],
+            return {"available": True, "runs": [{**dict(row), "is_demo": bool(json.loads(row["config_json"] or "{}").get("demo_seed"))}
+                             for row in rows],
                     "aggregates": [dict(row) for row in aggregates]}
         except sqlite3.OperationalError:
             return {"available": False, "runs": [], "aggregates": [],
@@ -248,6 +281,8 @@ def create_app(config_path="config.toml", provider_name=None):
             "hardware_process_visibility": True,
             "resource_policy_advisory": True,
             "experiments": True,
+            "demo_data": True,
+            "hardware_diagnostics": True,
             "provider_selection": False,
         }
 
