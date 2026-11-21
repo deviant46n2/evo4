@@ -14,7 +14,7 @@ The repository contains two independently usable applications:
 - Retrieves relevant persistent memories, user lessons, and saved research notes into the model context.
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
 - Uses SQLite FTS5 when available, with a LIKE-based fallback.
-- Includes a deterministic synthetic memory-retrieval benchmark reporting hit rate, recall@k, and mean reciprocal rank without touching the live database.
+- Includes a deterministic synthetic memory-retrieval benchmark reporting hit rate, recall@k, and mean reciprocal rank without touching the live database. It can compare SQLite FTS5 against the relevance-ranked LIKE fallback.
 - Supports explicit memory creation, search, listing, and archival.
 - Stores user corrections and lessons with trigger phrases, provenance, category, and confidence; relevant lessons are retrieved into future conversations.
 - Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
@@ -71,7 +71,9 @@ evo memory candidates
 evo memory accept CANDIDATE_ID
 evo memory reject CANDIDATE_ID
 evo memory archive MEMORY_ID
-evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5
+evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend auto
+# Compare the LIKE fallback independently:
+evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5 --backend fallback
 evo learn add "Run tests before claiming success" --trigger "coding tests" --category coding
 evo learn search "coding tests"
 evo runs list --limit 20
