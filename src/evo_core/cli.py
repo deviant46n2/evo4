@@ -100,7 +100,7 @@ def _interactive(args,config):
                         print(json.dumps(arguments,indent=2,ensure_ascii=False))
                         return input("Allow this action? [y/N] ").strip().lower()=="y"
                     result=agent.run(cid,user_text,approve,on_token=stream)
-                    print(f"\n[agent run {result['run_id']}; {result['tool_rounds']} rounds]",flush=True)
+                    print(f"\n[agent run {result['run_id']}; {result['tool_rounds']} rounds; verification={result['verification']}]",flush=True)
                 else:
                     result=assistant.turn(cid,user_text,on_token=stream)
                     print(f"\n[{result['elapsed_seconds']:.1f}s]",flush=True)
