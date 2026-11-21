@@ -112,6 +112,14 @@ def _interactive(args,config):
 
 def main():
     args=build_parser().parse_args()
+    if args.command=="memory" and args.memory_command=="evaluate":
+        try:
+            report=evaluate_memory_retrieval(args.cases,args.top_k)
+        except ValueError as exc:
+            print(f"Error: {exc}",file=sys.stderr)
+            raise SystemExit(2)
+        print(json.dumps(report,ensure_ascii=False,indent=2))
+        return
     try:
         config=load_config(args.config)
     except Exception as exc:
@@ -146,14 +154,6 @@ def main():
     if args.command=="backup" and not config.database.exists():
         print(f"Database not found: {config.database}",file=sys.stderr)
         raise SystemExit(2)
-    if args.command=="memory" and args.memory_command=="evaluate":
-        try:
-            report=evaluate_memory_retrieval(args.cases,args.top_k)
-        except ValueError as exc:
-            print(f"Error: {exc}",file=sys.stderr)
-            raise SystemExit(2)
-        print(json.dumps(report,ensure_ascii=False,indent=2))
-        return
     store=EvoStore(config.database)
     try:
         if args.command=="backup":
