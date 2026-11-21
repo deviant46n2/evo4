@@ -583,7 +583,9 @@ class EvoStore:
     def list_run_feedback(self, run_id, limit=20):
         with self.lock:
             return self.db.execute(
-                "SELECT * FROM run_feedback WHERE run_id=? ORDER BY created_at DESC LIMIT ?",
+                """SELECT f.*,l.lesson AS lesson_text,l.trigger_text AS lesson_trigger
+                   FROM run_feedback f LEFT JOIN lessons l ON l.id=f.lesson_id
+                   WHERE f.run_id=? ORDER BY f.created_at DESC LIMIT ?""",
                 (run_id,max(1,min(int(limit),100)))).fetchall()
 
     def backup(self, destination):
