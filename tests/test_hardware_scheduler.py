@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from evo_experiments.scheduler import (
@@ -91,7 +92,7 @@ class WorkloadSchedulerTests(unittest.TestCase):
         job=self.job()
         dispatch_jobs(self.db,self.sample,now=self.now)
         later=self.now+timedelta(seconds=LEASE_SECONDS+1)
-        with unittest.mock.patch("evo_experiments.scheduler._now",return_value=later):
+        with patch("evo_experiments.scheduler._now",return_value=later):
             saved=next(item for item in list_jobs(self.db)["jobs"] if item["id"]==job["id"])
         self.assertEqual(saved["status"],"queued")
         self.assertIsNone(saved["lease_expires_at"])
