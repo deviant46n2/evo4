@@ -1,12 +1,13 @@
 import sqlite3
 import sys
+import os
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
 from evo_experiments.execution import (
-    command_allowed, get_execution, initialize_execution, list_executions,
+    _safe_environment, command_allowed, get_execution, initialize_execution, list_executions,
     recover_interrupted_executions, register_execution, run_execution,
 )
 from evo_experiments.scheduler import create_job, dispatch_jobs, get_job, initialize_scheduler
@@ -55,6 +56,28 @@ class ManagedExecutionTests(unittest.TestCase):
         self.assertIn("worker-ok", result["stdout"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "completed")
         self.assertIsNone(result["pid"])
+
+    def test_child_process_descendants_do_not_outlive_managed_command(self):
+        job = self.reserve("child cleanup")
+        code = "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])"
+        record = self.register(job, [sys.executable, "-c", code])
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertLess(result["elapsed_seconds"], 5)
+
+    def test_credential_environment_is_filtered_without_broad_substring_matches(self):
+        with patch.dict(os.environ, {
+            "EVO_TEST_TOKEN": "secret-value",
+            "EVO_TEST_API_KEY": "secret-key",
+            "EVO_TEST_SETTING": "ordinary",
+            "MONKEY": "banana",
+        }, clear=False):
+            env = _safe_environment()
+        self.assertNotIn("EVO_TEST_TOKEN", env)
+        self.assertNotIn("EVO_TEST_API_KEY", env)
+        self.assertEqual(env["EVO_TEST_SETTING"], "ordinary")
+        self.assertEqual(env["MONKEY"], "banana")
 
     def test_nonzero_exit_is_failed_and_stderr_is_captured(self):
         job = self.reserve("failure")
