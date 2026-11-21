@@ -203,3 +203,10 @@ The research and design rationale is maintained in the [research archive](https:
 ## Sample workspace data
 
 Fresh installations can load reversible, clearly labeled sample memories, agent history, experiment results, and historical telemetry from the Memory, Agents, Hardware, and Experiments workspaces. Sample records are persisted in the configured SQLite database with explicit demo provenance; they are not real user activity or live hardware measurements. Use the workspace banner to load or remove them. See [the sample-data guide](docs/DEMO-DATA.md).
+
+
+## Memory retrieval v2
+
+Memory retrieval now combines FTS5 and parameterized LIKE candidate generation instead of treating them as mutually exclusive. A deterministic ranker weighs query-term coverage, content matches, tags/categories, exact phrase evidence, and a small FTS rank contribution. Results carry an inspectable score, matched terms, coverage, and a human-readable reason. The desktop Memory workspace includes a recall preview so users can test what Evo would retrieve before relying on it. This remains lexical retrieval: it does not claim semantic understanding or embedding-based recall.
+
+Evaluation reports precision@k and zero-result rate alongside hit rate, recall@k, and reciprocal rank. Synthetic evaluation remains isolated from the live database and does not establish recall over personal memories.
