@@ -38,3 +38,18 @@ API routes:
 - `POST /api/v1/hardware/scheduler/jobs/{id}/cancel`
 
 This is a reservation ledger, not an execution engine or hard real-time scheduler. Reservations are advisory estimates; actual consumption can differ. Running jobs are not subtracted from telemetry again because their resource use should already appear in live system measurements. The scheduler does not launch commands, inspect process arguments, manage model servers, interrupt workloads, or guarantee resource isolation. It also does not automatically reconcile an externally terminated process after a crash; the user must update the persisted job state.
+
+
+## Hardware Intelligence v3: managed workload execution
+
+Reserved jobs can now be launched as Evo-managed child processes through an explicit user action.
+
+- POST /api/v1/hardware/scheduler/jobs/{id}/execute accepts an argv array and timeout. The argv must match a prefix in workspace.allowed_commands; no shell is involved.
+- The process runs with the configured workspace as its working directory, stdin disconnected, and obvious credential-bearing environment variables filtered.
+- Evo captures the last 20,000 characters of stdout and stderr, records PID, start/finish timestamps, elapsed time, exit code, and timeout/error state.
+- Two managed workload workers can run concurrently. Each command has a 1–900 second timeout; timeout handling signals only the dedicated process group created for that Evo-owned child.
+- The Hardware workspace displays execution history and output. The existing external-start path remains available for jobs that users launch themselves.
+- At startup, unfinished managed execution records are marked interrupted. Evo preserves the recorded PID and explicitly does not signal it; after an abrupt crash the child may still be running and must be inspected manually before retrying.
+- Managed executions are not resumable and are not hard resource-isolated. Scheduler admission is advisory; child CPU, RAM, and VRAM use can differ from estimates. The worker does not inspect or attach to the user's existing model server.
+
+This is controlled command execution, not autonomous coding-agent orchestration. The coding agent still uses its separate per-action approval workflow. Commands must be deliberately added to the user's allowlist, and each launch requires a separate confirmation in the UI.
