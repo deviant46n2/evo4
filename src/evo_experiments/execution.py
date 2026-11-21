@@ -132,6 +132,13 @@ def run_execution(connection, lock, execution_id):
     stdout_buffer = bytearray()
     stderr_buffer = bytearray()
     readers = []
+    with lock:
+        connection.execute(
+            """UPDATE workload_executions
+               SET status='launching', started_at=?, process_started_at=NULL
+               WHERE id=? AND status='queued'""",
+            (started, execution_id))
+        connection.commit()
     try:
         process = subprocess.Popen(
             record["argv"], cwd=record["workspace"], shell=False,
@@ -221,22 +228,43 @@ def run_execution(connection, lock, execution_id):
             connection.commit()
 
 def recover_interrupted_executions(connection):
-    """Mark interrupted Evo-owned runs; never signal possibly orphaned processes."""
+    """Mark interrupted Evo-owned runs; never signal possibly orphaned processes.
+
+    A row in ``launching`` means Evo requested a subprocess but did not record a
+    PID.  The process may or may not exist; Evo neither assumes that it does nor
+    terminates it.  The outcome is intentionally ``launch_uncertain``.
+    """
     rows = connection.execute(
-        "SELECT * FROM workload_executions WHERE status IN ('queued','running')").fetchall()
+        "SELECT * FROM workload_executions WHERE status IN ('queued','running','launching')").fetchall()
     recovered = []
     for raw in rows:
         item = _decode(raw)
-        note = ("Evo restarted while this command was active. The recorded PID may still be running; "
-                "Evo did not signal or terminate it. Inspect it manually before retrying.")
-        connection.execute(
-            """UPDATE workload_executions SET status='interrupted',finished_at=?,error=?,pid=pid
-               WHERE id=?""", (_now(), note, item["id"]))
-        job = get_job(connection, item["job_id"])
-        if job and job["status"] == "running":
-            finish_job(connection, item["job_id"], "failed", note)
-        elif job and job["status"] == "reserved":
-            cancel_job(connection, item["job_id"])
-        recovered.append(item["id"])
-    connection.commit()
+        if item["status"] == "launching":
+            outcome = "launch_uncertain"
+            note = ("Evo restarted after requesting this subprocess but before recording its PID. "
+                    "The process may or may not be running; Evo did not signal or terminate it. "
+                    "Inspect it manually before retrying.")
+        elif item["status"] == "running":
+            outcome = "interrupted"
+            note = ("Evo restarted while this command was active. The recorded PID may still be running; "
+                    "Evo did not signal or terminate it. Inspect it manually before retrying.")
+        else:
+            outcome = "interrupted"
+            note = ("Evo restarted before this queued command was launched. No process was started by Evo.")
+        try:
+            with connection:
+                connection.execute(
+                    """UPDATE workload_executions SET status=?,finished_at=?,error=?,pid=?
+                       WHERE id=?""",
+                    (outcome, _now(), note, item.get("pid"), item["id"]))
+                job = get_job(connection, item["job_id"])
+                if job and job["status"] == "running":
+                    finish_job(connection, item["job_id"], "failed", note, commit=False)
+                elif job and job["status"] == "reserved":
+                    cancel_job(connection, item["job_id"], commit=False)
+            recovered.append(item["id"])
+        except Exception:
+            # Leave the row for the next recovery attempt rather than reporting
+            # a partially recovered execution.
+            continue
     return recovered

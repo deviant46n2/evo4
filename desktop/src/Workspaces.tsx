@@ -405,6 +405,7 @@ function WorkloadSchedulerPanel() {
       <div className="record-top"><span className={"run-status "+item.status}>{item.status}</span><span>Job {item.job_id.slice(0,8)}</span><span>{item.elapsed_seconds==null?"—":item.elapsed_seconds+"s"}</span>{item.returncode!==null&&<span>Exit {item.returncode}</span>}</div>
       <code>{item.argv.join(" ")}</code>
       <small>Workspace: {item.workspace} · PID: {item.pid??"—"} · Timeout: {item.timeout_seconds}s</small>
+      {item.status==="launch_uncertain"&&<p className="failed-note">Launch outcome unknown: Evo restarted after requesting this subprocess but before recording its PID. Evo did not terminate or retry it. Inspect the process manually before retrying.</p>}
       {item.error&&<p className="failed-note">{item.error}</p>}
       {item.stdout&&<details><summary>Standard output</summary><pre>{item.stdout}</pre></details>}
       {item.stderr&&<details><summary>Standard error</summary><pre>{item.stderr}</pre></details>}

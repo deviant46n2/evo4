@@ -193,7 +193,7 @@ def start_job(connection, job_id, now=None):
         raise
     return get_job(connection,job_id)
 
-def finish_job(connection, job_id, outcome, note="", now=None):
+def finish_job(connection, job_id, outcome, note="", now=None, commit=True):
     if outcome not in {"completed","failed"}:
         raise ValueError("Running jobs can only be marked completed or failed; Evo does not stop processes")
     now_text = _stamp(now)
@@ -205,14 +205,15 @@ def finish_job(connection, job_id, outcome, note="", now=None):
         if cur.rowcount != 1:
             connection.rollback()
             raise ValueError("Only a running job can be finished")
-        connection.commit()
+        if commit:
+            connection.commit()
     except Exception:
         if connection.in_transaction:
             connection.rollback()
         raise
     return get_job(connection,job_id)
 
-def cancel_job(connection, job_id, now=None):
+def cancel_job(connection, job_id, now=None, commit=True):
     now_text = _stamp(now)
     try:
         cur = connection.execute(
@@ -223,7 +224,8 @@ def cancel_job(connection, job_id, now=None):
         if cur.rowcount != 1:
             connection.rollback()
             raise ValueError("Only queued or reserved jobs can be cancelled; running processes are never stopped")
-        connection.commit()
+        if commit:
+            connection.commit()
     except Exception:
         if connection.in_transaction:
             connection.rollback()
