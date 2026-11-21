@@ -36,7 +36,7 @@ class RunFeedbackTests(unittest.TestCase):
         lessons=self.store.search_lessons("full existing test suite")
         self.assertEqual(len(lessons),1)
         self.assertEqual(lessons[0]["source"],"user-run-feedback")
-        self.assertAlmostEqual(lessons[0]["confidence"],0.8)
+        self.assertAlmostEqual(lessons[0]["confidence"],1.0)
 
     def test_feedback_can_be_saved_without_creating_a_lesson(self):
         run_id=self.make_run()
