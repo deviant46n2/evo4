@@ -181,3 +181,31 @@ def recover_plans(connection):
                         "Evo restarted; plan steps were not replayed.")
             recovered.append(row["id"])
     return recovered
+
+def propose_with_model(provider, request, workspace, max_tokens=1800):
+    """Ask the configured provider for a bounded JSON plan; never execute model output here."""
+    system = (
+        "You are Evo's task planner. Return ONLY one JSON object with keys title, summary, steps. "
+        "Create 2-8 sequential, concrete steps. Each step must have title, description, expected_outcome, "
+        "and verification. Keep each step independently understandable and bounded. Include inspection "
+        "before edits, and tests/verification after edits when relevant. Do not propose deployment, privilege "
+        "escalation, credential access, destructive actions, or arbitrary shell commands. Do not invent "
+        "workspace facts. Plans are proposals for user review, not authorization."
+    )
+    user = ("Workspace: " + workspace + "\\nUser request: " + request[:12000] +
+            "\\nReturn valid JSON only. No markdown fences.")
+    response = provider.chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens=max(500, min(int(max_tokens), 3000)), temperature=0.1)
+    raw = (response.get("content") or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("\\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw[:-3].strip()
+    try:
+        proposal = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("The model did not return a valid structured plan; no plan was saved.") from exc
+    if not isinstance(proposal, dict):
+        raise ValueError("The model plan must be a JSON object")
+    return proposal
