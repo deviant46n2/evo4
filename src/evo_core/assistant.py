@@ -180,7 +180,8 @@ class EvoAssistant:
                                     temperature=self.config.temperature,on_token=on_token)
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
             "elapsed_seconds":result["elapsed_seconds"],"ttft_seconds":result["ttft_seconds"],
-            "prompt_tokens":result["prompt_tokens"],"completion_tokens":result["completion_tokens"]})
+            "prompt_tokens":result["prompt_tokens"],"completion_tokens":result["completion_tokens"],
+            "finish_reason":result.get("finish_reason"),"truncated":bool(result.get("truncated",False))})
         return result
 
     def close(self):
