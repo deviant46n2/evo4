@@ -6,7 +6,7 @@ This document distinguishes implemented behavior from future design goals. The c
 
 ### Persistent memories
 - SQLite records include category, tags, source, confidence, timestamps, status, and access counts.
-- FTS5 is used when available. The LIKE fallback ranks matches by content, tags, and category relevance before confidence and recency.
+- Memory search merges FTS5 and parameterized LIKE candidate pools, then ranks by query-term coverage, content/tag/category evidence, exact phrase evidence, and a small FTS rank contribution. Results expose matched terms and a retrieval explanation. Search remains lexical; embeddings are not implemented.
 - Automatic capture is currently a small set of first-person heuristics that create tentative candidates. Explicit `remember that ...` statements are stored directly.
 - Candidates remain outside normal retrieval until accepted.
 
@@ -26,7 +26,7 @@ This document distinguishes implemented behavior from future design goals. The c
 
 ### Retrieval evaluation
 - `evo memory evaluate` seeds an isolated in-memory database from a versioned synthetic fixture.
-- It reports hit rate@k, mean recall@k, and mean reciprocal rank.
+- It reports hit rate@k, mean recall@k, precision@k, zero-result rate, and mean reciprocal rank.
 - It can force FTS5 or the LIKE fallback.
 - It does not touch the user's live database and does not measure recall over real personal memories.
 
@@ -50,3 +50,8 @@ This document distinguishes implemented behavior from future design goals. The c
 6. Compare coding-agent task success, intervention count, verification quality, latency, and resource use across repeated real-model tasks.
 
 Do not treat any future step as implemented until it has tests and a reproducible evaluation.
+
+
+### Retrieval inspection
+
+The Memory workspace offers a recall preview backed by `GET /api/v1/memories/search`. It reports the top active memories, match score, query-term coverage, and matched evidence. Preview requests do not increment persistent access counters. The assistant's actual retrieval continues to record access. This makes retrieval behavior inspectable without presenting lexical scores as calibrated probabilities or semantic relevance.
