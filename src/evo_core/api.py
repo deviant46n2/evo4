@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from .assistant import EvoAssistant
 from .config import load_config
@@ -24,7 +24,7 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.middleware("http")
     async def local_host_only(request, call_next):
         if request.url.hostname not in {"127.0.0.1", "localhost"}:
-            raise HTTPException(status_code=403, detail="Evo API accepts loopback hosts only")
+            return JSONResponse(status_code=403, content={"detail":"Evo API accepts loopback hosts only"})
         return await call_next(request)
 
     app.add_middleware(CORSMiddleware, allow_origins=[
