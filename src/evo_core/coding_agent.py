@@ -133,7 +133,7 @@ class CodingAgent:
                 calls=result.get("tool_calls") or []
                 if result.get("finish_reason") == "length":
                     final_text=((result.get("content","") or "") +
-                        "\\n\\nIncomplete response: the model reached its completion token limit. "
+                        "\n\nIncomplete response: the model reached its completion token limit. "
                         "No tool calls from this response were executed.")
                     store.update_agent_run_metadata(run_id,{"completion_state":"truncated",
                         "finish_reason":"length","successful_file_writes":successful_writes,
