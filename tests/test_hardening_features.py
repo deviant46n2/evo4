@@ -27,15 +27,21 @@ class HardeningFeatureTests(unittest.TestCase):
             self.assertTrue(is_test_path("tests/test_feature.py"))
             self.assertTrue(is_test_path("src/widget_test.py"))
             self.assertFalse(is_test_path("src/testing_helpers.py"))
+            self.assertTrue(is_test_path("src/widget.test.js"))
+            self.assertTrue(is_test_path("src/widget.spec.tsx"))
+            self.assertTrue(is_test_path("src/__tests__/widget.js"))
             with self.assertRaises(WorkspaceError):
                 workspace.write_file("tests/test_feature.py","def test_it(): pass")
-            workspace.write_file("tests/test_feature.py","def test_it(): pass",allow_test_changes=True)
+            token=workspace.approve_test_write("tests/test_feature.py")
+            workspace.write_file("tests/test_feature.py","def test_it(): pass",test_approval=token)
+            with self.assertRaises(WorkspaceError):
+                workspace.write_file("tests/test_feature.py","def test_it(): pass",test_approval=token)
             self.assertTrue((Path(tmp)/"tests/test_feature.py").is_file())
 
     def test_project_specific_secret_names_are_filtered(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
-            names=("deploy_api_token.txt","database_password.yaml","private_key_backup.pem")
+            names=("deploy_api_token.txt","database_password.yaml","private_key_backup.pem","api_key_backup.txt")
             for name in names:
                 (root/name).write_text("not-for-model",encoding="utf-8")
             workspace=Workspace(root)
@@ -44,6 +50,11 @@ class HardeningFeatureTests(unittest.TestCase):
                 self.assertNotIn(name,visible)
                 with self.assertRaises(WorkspaceError):
                     workspace.read_file(name)
+            for ordinary in ("auth_helpers.py","private_types.py","tokenizer.py"):
+                (root/ordinary).write_text("safe source",encoding="utf-8")
+            visible=set(workspace.list_files())
+            for ordinary in ("auth_helpers.py","private_types.py","tokenizer.py"):
+                self.assertIn(ordinary,visible)
 
     def test_only_test_runners_count_as_test_verification(self):
         self.assertTrue(is_test_command(["pytest","-q"]))
@@ -96,6 +107,25 @@ class HardeningFeatureTests(unittest.TestCase):
             path.write_text('[server]\nmodel="legacy"\n',encoding="utf-8")
             with self.assertRaisesRegex(ValueError,"Unknown provider profile"):
                 load_config(path,"missing")
+
+    def test_oversized_current_request_is_rejected_instead_of_silently_sent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=EvoConfig("http://localhost","no-key","fake",30,Path(tmp)/"state.db",128,0.0,
+                "BASE POLICY",8,8,context_window_tokens=4096)
+            assistant=EvoAssistant(config,EvoStore(config.database),provider=object())
+            try:
+                with self.assertRaisesRegex(ValueError,"current request exceed"):
+                    assistant._fit_context([{"role":"system","content":"BASE POLICY"},
+                        {"role":"user","content":"x"*20000}])
+            finally:
+                assistant.close()
+
+    def test_named_provider_profile_accepts_direct_api_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/"config.toml"
+            path.write_text('[server]\nmodel="legacy"\n[providers.local]\nmodel="qwen"\napi_key="direct-secret"\n',encoding="utf-8")
+            config=load_config(path,"local")
+            self.assertEqual(config.api_key,"direct-secret")
 
 
 if __name__=="__main__":
