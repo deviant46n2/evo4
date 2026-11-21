@@ -664,6 +664,11 @@ def create_app(config_path="config.toml", provider_name=None):
                  for key, value in pending_approvals.items() if value["run_id"] == run_id), None)
         return result
 
+    def _forget_agent_future(run_id, future):
+        with agent_registry_guard:
+            if agent_futures.get(run_id) is future:
+                agent_futures.pop(run_id, None)
+
     @app.get("/api/v1/agents/plans")
     def agent_plans(limit: int = 50):
         with lab_db.lock:
@@ -721,12 +726,12 @@ def create_app(config_path="config.toml", provider_name=None):
             orchestration.attach_run(lab_db.connection, plan_id, run_id)
         stop_event = threading.Event()
         with agent_registry_guard:
-            with agent_registry_guard:
             agent_stop_events[run_id] = stop_event
         try:
             future = executor.submit(run_agent, run_id, request_text, workspace, stop_event, plan_id)
             with agent_registry_guard:
                 agent_futures[run_id] = future
+            future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", "Unable to start orchestrated worker")
             with lab_db.lock:
@@ -747,13 +752,15 @@ def create_app(config_path="config.toml", provider_name=None):
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
-        agent_stop_events[run_id] = stop_event
+        with agent_registry_guard:
+            agent_stop_events[run_id] = stop_event
         with lab_db.lock:
             background_agent.create(lab_db.connection, run_id)
         try:
             future = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
             with agent_registry_guard:
                 agent_futures[run_id] = future
+            future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
             with lab_db.lock:
