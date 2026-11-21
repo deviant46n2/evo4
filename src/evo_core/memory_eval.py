@@ -3,10 +3,12 @@ from pathlib import Path
 from .store import EvoStore
 
 
-def evaluate_memory_retrieval(cases_path, top_k=5):
+def evaluate_memory_retrieval(cases_path, top_k=5, backend='auto'):
     """Score lexical memory retrieval against a deterministic, isolated fixture."""
     if int(top_k)<1:
         raise ValueError("top_k must be at least 1")
+    if backend not in {"auto","fts","fallback"}:
+        raise ValueError("backend must be auto, fts, or fallback")
     path=Path(cases_path)
     try:
         data=json.loads(path.read_text(encoding="utf-8"))
@@ -20,6 +22,10 @@ def evaluate_memory_retrieval(cases_path, top_k=5):
         raise ValueError("Memory evaluation requires nonempty memories and queries arrays")
     store=EvoStore(":memory:")
     try:
+        if backend=="fts" and not store.fts_available:
+            raise ValueError("SQLite FTS5 is unavailable in this Python build")
+        if backend=="fallback":
+            store.fts_available=False
         ids={}
         for index,item in enumerate(memories):
             if not isinstance(item,dict) or not isinstance(item.get("key"),str) or not item["key"].strip():
@@ -74,6 +80,7 @@ def evaluate_memory_retrieval(cases_path, top_k=5):
             "memory_count":len(memories),
             "query_count":total,
             "top_k":int(top_k),
+            "backend":backend if backend!="auto" else ("fts" if store.fts_available else "fallback"),
             "hit_rate_at_k":hits/total,
             "mean_recall_at_k":sum(recalls)/total,
             "mean_reciprocal_rank":sum(reciprocal_ranks)/total,
