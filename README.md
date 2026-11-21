@@ -9,7 +9,8 @@ The repository contains two independently usable applications:
 
 ## Current assistant capabilities
 
-- Streams conversations through an OpenAI-compatible endpoint (initial target: llama.cpp).
+- Streams conversations through an OpenAI-compatible endpoint (initial target: llama.cpp); optional named endpoint/model profiles can be selected with `--provider NAME`, with API keys loaded from environment variables.
+- Applies a configurable context-window budget, prioritizing persistent context and the current request over older chat history.
 - Persists conversations and messages in SQLite; resume a conversation by ID.
 - Retrieves relevant persistent memories, user lessons, and saved research notes into the model context.
 - Stores memories with category, tags, source, confidence, timestamps, and access counts.
@@ -20,6 +21,7 @@ The repository contains two independently usable applications:
 - Heuristically captures a small set of explicit first-person preferences, goals, project facts, and environment statements as tentative candidates. Candidates are not injected into model context until accepted; explicit "remember that ..." requests are saved directly with provenance.
 - Persists lightweight tasks with priority and status.
 - Uses only the Python standard library at runtime.
+- Uses SQLite WAL with a 30-second busy timeout to tolerate short-lived contention between assistant and lab processes.
 - Includes an approval-gated coding-agent loop with streamed tool calls for project inspection, file listing, reading, searching, writing, and running explicitly allowlisted commands. The agent receives a bounded, secret-filtered project overview and explicit instructions to inspect before editing, verify changes with tests, and report only observed results. After successful file writes, Evo independently reports whether a recognized test/check/build command exited successfully after the latest edit; otherwise the run is explicitly marked unverified or failed.
 - Records agent runs and tool-call inputs/outcomes in SQLite for later review.
 - Adds an explicit experiential-feedback loop: inspect prior agent runs, record success/partial/failure and user feedback, and optionally turn a verified correction into a reusable lesson linked to that run.
@@ -52,7 +54,7 @@ python -m pip install -e .
 cp config.example.toml config.toml
 ```
 
-Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
+Edit `config.toml`; set `[server].model` to the exact model ID exposed by your server, or define named `[providers.NAME]` profiles and select one with `evo chat --provider NAME`, `evo code --provider NAME`, or `evo doctor --provider NAME`. Set `api_key_env` to the name of an environment variable rather than storing cloud credentials in the TOML file. Set `[assistant].context_window_tokens` to the configured model context size; this is a conservative estimate, not tokenizer-exact accounting. The experiment manifest is manually supplied; it is not automatically inferred from a running llama.cpp process.
 
 ## Evo assistant commands
 
