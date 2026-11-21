@@ -33,12 +33,13 @@ This document distinguishes implemented behavior from future design goals. The c
 ## Important limits
 
 - No semantic embedding retrieval or cross-encoder reranking.
-- No general automatic fact extraction, memory consolidation, deduplication, or contradiction detection.
+- A read-only possible-duplicate scan surfaces high lexical-overlap pairs for human inspection. It is not semantic duplicate detection and never changes records.
+- No automatic fact consolidation or contradiction detection.
 - No automatic adjudication of whether an agent task actually succeeded.
 - No automatic promotion of model-generated lessons into trusted knowledge.
 - No claim of near-perfect recall.
 - History and context limits are character-based, not exact tokenizer budgets.
-- The synthetic benchmark is a small regression set; a broader held-out evaluation is still needed.
+- The original synthetic benchmark is a small regression set. `tasks/memory-retrieval-challenge.json` adds paraphrase and hard-negative cases to expose lexical limits; it is diagnostic rather than a pass/fail promise of semantic recall.
 
 ## Next evidence-driven steps
 
@@ -55,3 +56,8 @@ Do not treat any future step as implemented until it has tests and a reproducibl
 ### Retrieval inspection
 
 The Memory workspace offers a recall preview backed by `GET /api/v1/memories/search`. It reports the top active memories, match score, query-term coverage, and matched evidence. Preview requests do not increment persistent access counters. The assistant's actual retrieval continues to record access. This makes retrieval behavior inspectable without presenting lexical scores as calibrated probabilities or semantic relevance.
+
+
+### Conservative memory review
+
+The Memory workspace can scan up to 500 newest active records for possible duplicates. The read-only review compares token overlap and containment, returns shared terms and similarity measures, and caps suggestions. These scores are not probabilities. It does not infer contradictions, merge records, alter confidence, archive anything, or change provenance. A missing suggestion does not establish that two records are unrelated.
