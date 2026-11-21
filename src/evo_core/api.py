@@ -71,6 +71,8 @@ def create_app(config_path="config.toml", provider_name=None):
     shutting_down = threading.Event()
     approval_guard = threading.Lock()
     pending_approvals = {}
+    # Seed/clear touch both SQLite stores; serialize the cross-database operation.
+    demo_data_guard = threading.Lock()
 
     @app.middleware("http")
     async def local_host_only(request, call_next):
@@ -112,15 +114,18 @@ def create_app(config_path="config.toml", provider_name=None):
 
     @app.get("/api/v1/demo/status")
     def demo_status():
-        return demo_data_status(store, lab_db)
+        with demo_data_guard:
+            return demo_data_status(store, lab_db)
 
     @app.post("/api/v1/demo/seed")
     def demo_seed():
-        return seed_demo_data(store, lab_db)
+        with demo_data_guard:
+            return seed_demo_data(store, lab_db)
 
     @app.delete("/api/v1/demo/seed")
     def demo_clear():
-        return clear_demo_data(store, lab_db)
+        with demo_data_guard:
+            return clear_demo_data(store, lab_db)
 
     @app.get("/api/v1/hardware/current")
     def hardware_current():
