@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "description": "Expanded lexical retrieval challenge fixture with paraphrases, competing memories, and hard negatives. This is a diagnostic dataset; failures expose lexical limits, not a release gate requiring perfect semantic recall.",
+  "memories": [
+    {
+      "key": "gpu",
+      "category": "hardware",
+      "tags": [
+        "rtx",
+        "5070",
+        "vram"
+      ],
+      "content": "The workstation has an NVIDIA RTX 5070 Ti graphics card with 16 GB of video memory."
+    },
+    {
+      "key": "cpu",
+      "category": "hardware",
+      "tags": [
+        "ryzen",
+        "processor"
+      ],
+      "content": "The desktop processor is a Ryzen 7 9800X3D."
+    },
+    {
+      "key": "ram",
+      "category": "hardware",
+      "tags": [
+        "memory",
+        "system"
+      ],
+      "content": "The workstation has approximately 32 GB of system RAM."
+    },
+    {
+      "key": "model",
+      "category": "models",
+      "tags": [
+        "qwen",
+        "llama.cpp"
+      ],
+      "content": "The local Qwen3.8-27B model runs through llama.cpp with CUDA acceleration."
+    },
+    {
+      "key": "context",
+      "category": "models",
+      "tags": [
+        "context",
+        "kv"
+      ],
+      "content": "The preferred local model configuration uses roughly 49K context with Q4_0 KV cache."
+    },
+    {
+      "key": "speed",
+      "category": "models",
+      "tags": [
+        "throughput",
+        "tokens"
+      ],
+      "content": "The local Qwen3.8-27B configuration produces approximately 40 tokens per second."
+    },
+    {
+      "key": "build_policy",
+      "category": "development",
+      "tags": [
+        "tests",
+        "build"
+      ],
+      "content": "Every code-changing development pass must rebuild affected application artifacts and run relevant tests."
+    },
+    {
+      "key": "branch_safety",
+      "category": "development",
+      "tags": [
+        "git",
+        "worktree"
+      ],
+      "content": "Development changes must use isolated feature branches or worktrees and preserve the running installation and uncommitted user changes."
+    },
+    {
+      "key": "memory_provenance",
+      "category": "memory",
+      "tags": [
+        "source",
+        "confidence"
+      ],
+      "content": "Persistent memories must preserve provenance, confidence, timestamps, and supersession history."
+    },
+    {
+      "key": "candidate_safety",
+      "category": "memory",
+      "tags": [
+        "approval",
+        "candidate"
+      ],
+      "content": "Tentative memory candidates must remain outside trusted retrieval until the user approves them."
+    },
+    {
+      "key": "semantic_goal",
+      "category": "memory",
+      "tags": [
+        "embedding",
+        "retrieval"
+      ],
+      "content": "Semantic retrieval should find relevant memories when the user's wording differs substantially from the stored wording."
+    },
+    {
+      "key": "foreground",
+      "category": "hardware",
+      "tags": [
+        "scheduler",
+        "latency"
+      ],
+      "content": "Interactive foreground inference should take priority over background workloads so the desktop remains responsive."
+    }
+  ],
+  "queries": [
+    {
+      "id": "paraphrase-gpu",
+      "query": "Which graphics hardware is installed and how much video memory does it have?",
+      "expected": [
+        "gpu"
+      ]
+    },
+    {
+      "id": "paraphrase-cpu",
+      "query": "What processor is in the desktop?",
+      "expected": [
+        "cpu"
+      ]
+    },
+    {
+      "id": "paraphrase-ram",
+      "query": "How much main system memory is available?",
+      "expected": [
+        "ram"
+      ]
+    },
+    {
+      "id": "paraphrase-model",
+      "query": "Which locally hosted language model and inference runtime are in use?",
+      "expected": [
+        "model"
+      ]
+    },
+    {
+      "id": "paraphrase-context",
+      "query": "What context length and KV cache format are preferred?",
+      "expected": [
+        "context"
+      ]
+    },
+    {
+      "id": "paraphrase-speed",
+      "query": "How quickly does the local model generate output?",
+      "expected": [
+        "speed"
+      ]
+    },
+    {
+      "id": "paraphrase-build",
+      "query": "What must happen after source code is modified?",
+      "expected": [
+        "build_policy"
+      ]
+    },
+    {
+      "id": "paraphrase-branch",
+      "query": "How should development avoid damaging the active app and local changes?",
+      "expected": [
+        "branch_safety"
+      ]
+    },
+    {
+      "id": "paraphrase-provenance",
+      "query": "What historical metadata must remain attached to saved knowledge?",
+      "expected": [
+        "memory_provenance"
+      ]
+    },
+    {
+      "id": "paraphrase-candidates",
+      "query": "Can automatically extracted facts be used before a person confirms them?",
+      "expected": [
+        "candidate_safety"
+      ]
+    },
+    {
+      "id": "paraphrase-semantic",
+      "query": "How should recall behave when a question uses synonyms instead of the same keywords?",
+      "expected": [
+        "semantic_goal"
+      ]
+    },
+    {
+      "id": "paraphrase-foreground",
+      "query": "Which workload should win when GPU resources are constrained?",
+      "expected": [
+        "foreground"
+      ]
+    },
+    {
+      "id": "hard-negative-gpu-vs-cpu",
+      "query": "graphics card video memory",
+      "expected": [
+        "gpu"
+      ]
+    },
+    {
+      "id": "hard-negative-system-vs-vram",
+      "query": "system RAM capacity",
+      "expected": [
+        "ram"
+      ]
+    },
+    {
+      "id": "hard-negative-agent-build",
+      "query": "build tests after code edits",
+      "expected": [
+        "build_policy"
+      ]
+    }
+  ]
+}
