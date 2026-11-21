@@ -146,19 +146,20 @@ def main():
     if args.command=="backup" and not config.database.exists():
         print(f"Database not found: {config.database}",file=sys.stderr)
         raise SystemExit(2)
+    if args.command=="memory" and args.memory_command=="evaluate":
+        try:
+            report=evaluate_memory_retrieval(args.cases,args.top_k)
+        except ValueError as exc:
+            print(f"Error: {exc}",file=sys.stderr)
+            raise SystemExit(2)
+        print(json.dumps(report,ensure_ascii=False,indent=2))
+        return
     store=EvoStore(config.database)
     try:
         if args.command=="backup":
             print(f"Backup written to {store.backup(args.destination)}")
         elif args.command=="memory":
-            if args.memory_command=="evaluate":
-                try:
-                    report=evaluate_memory_retrieval(args.cases,args.top_k)
-                except ValueError as exc:
-                    print(f"Error: {exc}",file=sys.stderr)
-                    raise SystemExit(2)
-                print(json.dumps(report,ensure_ascii=False,indent=2))
-            elif args.memory_command=="add":
+            if args.memory_command=="add":
                 mid=store.add_memory(args.content,args.category,args.tag,args.source,args.confidence)
                 print(f"Saved memory: {mid}")
             elif args.memory_command=="search":
