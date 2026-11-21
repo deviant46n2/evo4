@@ -319,6 +319,23 @@ def create_app(config_path="config.toml", provider_name=None):
             "access_count": row["access_count"],
         } for row in rows]
 
+    @app.get("/api/v1/memories/search")
+    def memory_search_preview(q: str, limit: int = 8):
+        if not q.strip():
+            raise HTTPException(status_code=422, detail="Search query cannot be empty")
+        rows = store.search_memories(q, min(max(limit, 1), 20))
+        return {
+            "query": q, "count": len(rows),
+            "retrieval": "hybrid lexical (FTS5 + LIKE candidates; no embeddings)",
+            "matches": [{
+                "id": row["id"], "content": row["content"], "category": row["category"],
+                "source": row["source"], "confidence": row["confidence"],
+                "score": row["retrieval_score"], "coverage": row["retrieval_coverage"],
+                "matched_terms": row["retrieval_matched_terms"],
+                "reason": row["retrieval_reason"], "method": row["retrieval_method"],
+            } for row in rows],
+        }
+
     @app.post("/api/v1/memories", status_code=201)
     def create_memory(payload: MemoryCreate):
         try:
