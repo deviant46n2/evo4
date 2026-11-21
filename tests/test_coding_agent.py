@@ -43,6 +43,45 @@ class CodingAgentTests(unittest.TestCase):
             self.assertIn("print('hello')",provider.messages[1][-1]["content"])
             assistant.close()
 
+    def test_project_inspection_is_available_and_policy_is_injected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            (root/"README.md").write_text("# Demo project\\n",encoding="utf-8")
+            (root/"main.py").write_text("print('ok')\\n",encoding="utf-8")
+            (root/".env").write_text("TOKEN=must-not-leak",encoding="utf-8")
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("inspect_project",{})]},
+                {"content":"I inspected the project structure.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            result=agent.run(cid,"Inspect this project",lambda *_:False)
+            self.assertEqual(result["status"],"completed")
+            self.assertIn("Coding-agent operating rules",provider.messages[0][0]["content"])
+            tool_result=provider.messages[1][-1]["content"]
+            self.assertIn("README.md",tool_result)
+            self.assertIn("main.py",tool_result)
+            self.assertNotIn("must-not-leak",tool_result)
+            assistant.close()
+
+    def test_max_tool_rounds_marks_run_failed_not_completed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("list_files",{})]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,max_tool_rounds=1)
+            result=agent.run(cid,"Inspect the project",lambda *_:False)
+            self.assertEqual(result["status"],"max_rounds_reached")
+            self.assertEqual(result["tool_calls"],1)
+            row=assistant.store.db.execute("SELECT status FROM agent_runs WHERE id=?",
+                                            (result["run_id"],)).fetchone()
+            self.assertEqual(row["status"],"failed")
+            assistant.close()
+
     def test_write_requires_approval_and_denial_is_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
