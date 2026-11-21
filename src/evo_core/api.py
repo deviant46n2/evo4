@@ -122,7 +122,9 @@ def create_app(config_path="config.toml", provider_name=None):
     executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="evo-chat")
     app.state.chat_executor = executor
     execution_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="evo-workload")
+    execution_slots = threading.BoundedSemaphore(2)
     app.state.execution_executor = execution_executor
+    app.state.execution_slots = execution_slots
     conversation_locks = {}
     locks_guard = threading.Lock()
     shutting_down = threading.Event()
@@ -363,16 +365,21 @@ def create_app(config_path="config.toml", provider_name=None):
     def hardware_scheduler_execute(job_id: str, payload: WorkloadExecuteInput):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
+        if not execution_slots.acquire(blocking=False):
+            raise HTTPException(status_code=429, detail="Both managed execution slots are occupied; retry after a worker finishes")
         try:
             with lab_db.lock:
                 execution = register_execution(
                     lab_db.connection, job_id, payload.argv, config.allowed_commands,
                     config.workspace_root.resolve(), payload.timeout_seconds)
         except ValueError as exc:
+            execution_slots.release()
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
-            execution_executor.submit(run_execution, lab_db.connection, lab_db.lock, execution["id"])
+            future = execution_executor.submit(run_execution, lab_db.connection, lab_db.lock, execution["id"])
+            future.add_done_callback(lambda _future: execution_slots.release())
         except Exception as exc:
+            execution_slots.release()
             with lab_db.lock:
                 lab_db.connection.execute(
                     "UPDATE workload_executions SET status='failed',finished_at=?,error=? WHERE id=?",
