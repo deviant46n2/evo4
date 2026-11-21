@@ -15,12 +15,16 @@ class Config:
     repetitions: int
     system_prompt: str
     run_metadata: dict
+    seed: int | None = 42
 
 def load_config(path: str | Path) -> Config:
     with Path(path).open("rb") as handle:
         raw = tomllib.load(handle)
     server, exp, system = raw.get("server", {}), raw.get("experiment", {}), raw.get("system", {})
     run = raw.get("run", {})
+    seed = exp.get("seed", 42)
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError("experiment.seed must be an integer or omitted")
     return Config(
         base_url=str(server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
         api_key=str(server.get("api_key", "no-key")),
@@ -33,4 +37,5 @@ def load_config(path: str | Path) -> Config:
         repetitions=max(1, int(exp.get("repetitions", 1))),
         system_prompt=str(system.get("prompt", "You are a helpful assistant.")),
         run_metadata=dict(run),
+        seed=seed,
     )
