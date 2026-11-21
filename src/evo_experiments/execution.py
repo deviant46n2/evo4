@@ -147,6 +147,7 @@ def run_execution(connection, lock, execution_id):
             launch_intent_persisted = True
     except Exception as exc:
         with lock:
+            connection.rollback()
             current = get_execution(connection, execution_id)
             if current is not None and current["status"] in {"queued", "launching"}:
                 connection.execute(
@@ -157,10 +158,16 @@ def run_execution(connection, lock, execution_id):
                      execution_id))
                 job = get_job(connection, record["job_id"])
                 if job and job["status"] == "running":
-                    finish_job(connection, record["job_id"], "failed",
-                               f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
-                               commit=False)
-                connection.commit()
+                    try:
+                        finish_job(connection, record["job_id"], "failed",
+                                   f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
+                                   commit=False)
+                    except Exception:
+                        pass
+                try:
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
         return
     try:
         process = subprocess.Popen(
@@ -239,7 +246,8 @@ def run_execution(connection, lock, execution_id):
                    elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL WHERE id=?""",
                 (outcome, _now(), returncode, elapsed, stdout, stderr, error[:2000], execution_id))
             finish_job(connection, record["job_id"], outcome,
-                       error or (f"Exit code {returncode}" if returncode else "Exit code 0"))
+                       error or (f"Exit code {returncode}" if returncode else "Exit code 0"),
+                       commit=False)
             connection.commit()
     except Exception as exc:
         cleanup_error = ""
@@ -271,6 +279,7 @@ def run_execution(connection, lock, execution_id):
         if cleanup_error:
             error_text = (error_text + "; process group cleanup failed: " + cleanup_error)[:2000]
         with lock:
+            connection.rollback()
             current = get_execution(connection, execution_id)
             if current is not None and current["status"] in {"queued", "launching", "running"}:
                 connection.execute(
@@ -279,8 +288,14 @@ def run_execution(connection, lock, execution_id):
                     (_now(), elapsed, error_text, execution_id))
                 job = get_job(connection, record["job_id"])
                 if job and job["status"] == "running":
-                    finish_job(connection, record["job_id"], "failed", error_text, commit=False)
-                connection.commit()
+                    try:
+                        finish_job(connection, record["job_id"], "failed", error_text, commit=False)
+                    except Exception:
+                        pass
+                try:
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
 
 def recover_interrupted_executions(connection):
     """Mark interrupted Evo-owned runs; never signal possibly orphaned processes.

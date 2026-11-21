@@ -163,6 +163,77 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIn("process group cleanup failed: PermissionError", result["error"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
 
+    def test_launch_intent_commit_failure_does_not_call_popen(self):
+        job = self.reserve("launch-intent-commit")
+        record = self.register(job)
+
+        class CommitFailingProxy:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def execute(self, sql, *args, **kwargs):
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def commit(self):
+                raise sqlite3.OperationalError("commit failed")
+
+            def rollback(self):
+                return self._connection.rollback()
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = CommitFailingProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertIn(result["status"], {"queued", "launching"})
+        self.assertEqual(get_job(self.db, job["id"])["status"], "running")
+
+    def test_process_cleanup_process_lookup_is_not_fatal(self):
+        job = self.reserve("cleanup-missing")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(10)"], timeout=1)
+
+        class MissingProcess(FakeProcess):
+            def wait(self, timeout=None):
+                if not getattr(self, "_waited", False):
+                    self._waited = True
+                    raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+                return 0
+
+            def poll(self):
+                return None
+
+        with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        self.assertNotIn("process group cleanup failed", result["error"])
+        self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
+
+    def test_process_cleanup_generic_oserror_is_recorded(self):
+        job = self.reserve("cleanup-oserror")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(10)"], timeout=1)
+
+        class GenericOsProcess(FakeProcess):
+            def wait(self, timeout=None):
+                if not getattr(self, "_waited", False):
+                    self._waited = True
+                    raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+                return 0
+
+            def poll(self):
+                return None
+
+        with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("process group cleanup failed: OSError", result["error"])
+        self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
+
     def test_partial_recovery_failure_rolls_back_and_can_retry(self):
         job_one = self.reserve("first")
         record_one = self.register(job_one)
