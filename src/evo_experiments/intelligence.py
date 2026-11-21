@@ -54,7 +54,8 @@ def estimate_runtime(profile,sample):
 
 def assess_workload(sample,workload,reserve_vram_mib=1024,reserve_ram_mib=2048):
     kind=workload.get("kind","background")
-    gpu=bool(workload.get("gpu_heavy",kind in {"inference","benchmark","training"}))
+    gpu_value=workload.get("gpu_heavy")
+    gpu=bool(kind in {"inference","benchmark","training"} if gpu_value is None else gpu_value)
     demand=workload.get("estimated_vram_mib"); ram_demand=workload.get("estimated_ram_mib")
     free_vram=None
     if sample.get("gpu_memory_total_mib") is not None and sample.get("gpu_memory_used_mib") is not None:
