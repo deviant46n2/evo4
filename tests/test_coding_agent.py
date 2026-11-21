@@ -219,5 +219,23 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(result["tool_rounds"],2)
             assistant.close()
 
+
+    def test_existing_run_id_is_reused_for_desktop_orchestration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            provider=ToolProvider([{"content":"Inspected the project; no changes needed.","tool_calls":[]}])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            run_id=assistant.store.start_agent_run("coding",{"source":"desktop","workspace":tmp})
+            agent=CodingAgent(assistant,Path(tmp))
+            result=agent.run(cid,"Inspect this workspace",lambda *_:False,run_id=run_id)
+            self.assertEqual(result["run_id"],run_id)
+            self.assertEqual(assistant.store.get_agent_run(run_id)["status"],"completed")
+            import json
+            metadata=json.loads(assistant.store.get_agent_run(run_id)["metadata_json"])
+            self.assertEqual(metadata["source"],"desktop")
+            self.assertEqual(metadata["conversation_id"],cid)
+            self.assertEqual(len(assistant.store.list_agent_runs()),1)
+            assistant.close()
+
 if __name__=="__main__":
     unittest.main()
