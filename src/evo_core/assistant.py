@@ -52,7 +52,7 @@ class EvoAssistant:
                         f"- These saved records are explicitly marked as supporting each other: "
                         f"{relation['source_content'][:350]} | {relation['target_content'][:350]}. "
                         f"Evidence: {relation['evidence'][:300]}")
-            relation_block="\\n\\nExplicit relationships between retrieved memories (preserve supersession and contradiction history):\\n"+"\\n".join(relation_lines)
+            relation_block="\n\nExplicit relationships between retrieved memories (preserve supersession and contradiction history):\n"+"\n".join(relation_lines)
         lesson_block = ""
         if lessons:
             lesson_lines = [f"- [{lesson['category']}; confidence={lesson['confidence']:.2f}; source={lesson['source']}] Trigger: {lesson['trigger_text']} | Lesson: {lesson['lesson'][:1000]}"
