@@ -115,11 +115,18 @@ class HarnessTests(unittest.TestCase):
                 prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
                 elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
                 completion_tokens INTEGER, tokens_per_second REAL)""")
+            conn.execute("""INSERT INTO experiments (started_at,task_id,category,repetition,model,
+                base_url,config_json,prompt,status)
+                VALUES ('now','legacy','test',1,'m','local','{}','p','completed')""")
             conn.commit()
             conn.close()
             db = ResultsDB(path)
             columns = {row[1] for row in db.connection.execute("PRAGMA table_info(experiments)")}
             self.assertTrue({"run_label","evaluation_status","evaluation_details","finish_reason","seed"}.issubset(columns))
+            legacy = db.connection.execute("SELECT status,evaluation_status,evaluation_passed FROM experiments").fetchone()
+            self.assertEqual(legacy["status"],"unknown")
+            self.assertEqual(legacy["evaluation_status"],"legacy_unknown_finish_reason")
+            self.assertIsNone(legacy["evaluation_passed"])
             db.close()
 
     def test_legacy_evaluation_details_are_backfilled(self):
