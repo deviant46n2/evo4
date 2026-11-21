@@ -128,6 +128,7 @@ def create_app(config_path="config.toml", provider_name=None):
             "memory_browser": True,
             "memory_candidates": True,
             "memory_archive": True,
+            "memory_supersede": True,
             "hardware_dashboard": False,
             "experiments": False,
             "provider_selection": False,
