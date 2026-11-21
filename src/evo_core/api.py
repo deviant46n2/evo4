@@ -323,7 +323,7 @@ def create_app(config_path="config.toml", provider_name=None):
     def memory_search_preview(q: str, limit: int = 8):
         if not q.strip():
             raise HTTPException(status_code=422, detail="Search query cannot be empty")
-        rows = store.search_memories(q, min(max(limit, 1), 20))
+        rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False)
         return {
             "query": q, "count": len(rows),
             "retrieval": "hybrid lexical (FTS5 + LIKE candidates; no embeddings)",
