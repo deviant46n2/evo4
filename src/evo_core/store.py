@@ -106,16 +106,57 @@ class EvoStore:
             self.db.commit()
         return cid
 
-    def list_conversations(self, limit=20):
+    def list_conversations(self, limit=20, query=None):
         with self.lock:
-            return self.db.execute("SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?",
-                                    (max(1, limit),)).fetchall()
+            if query and query.strip():
+                pattern = _like_pattern(query.strip())
+                return self.db.execute(
+                    """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
+                       FROM conversations c WHERE c.title LIKE ? ESCAPE '!'
+                       OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id
+                                  AND m.content LIKE ? ESCAPE '!')
+                       ORDER BY c.updated_at DESC LIMIT ?""",
+                    (pattern, pattern, max(1, min(int(limit), 500)))).fetchall()
+            return self.db.execute(
+                """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
+                   FROM conversations c ORDER BY c.updated_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 500)),)).fetchall()
+
+    def get_conversation(self, conversation_id):
+        with self.lock:
+            return self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+
+    def rename_conversation(self, conversation_id, title):
+        title = (title or "").strip()
+        if not title:
+            raise ValueError("Conversation title cannot be empty")
+        if len(title) > 120:
+            raise ValueError("Conversation title cannot exceed 120 characters")
+        with self.lock:
+            cur = self.db.execute("UPDATE conversations SET title=?,updated_at=? WHERE id=?",
+                                  (title, utc_now(), conversation_id))
+            self.db.commit()
+            return cur.rowcount == 1
+
+    def delete_conversation(self, conversation_id):
+        with self.lock:
+            cur = self.db.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
+            self.db.commit()
+            return cur.rowcount == 1
 
     def add_message(self, conversation_id, role, content, metadata=None):
         now = utc_now()
         with self.lock:
             cur = self.db.execute("INSERT INTO messages(conversation_id,role,content,created_at,metadata_json) VALUES(?,?,?,?,?)",
                                   (conversation_id, role, content, now, json.dumps(metadata or {}, ensure_ascii=False)))
+            if role == "user":
+                row = self.db.execute("SELECT title FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+                if row and row["title"] == "New conversation":
+                    title = " ".join(content.strip().split())
+                    if len(title) > 57:
+                        title = title[:54].rstrip() + "..."
+                    if title:
+                        self.db.execute("UPDATE conversations SET title=? WHERE id=?", (title, conversation_id))
             self.db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conversation_id))
             self.db.commit()
             return cur.lastrowid
