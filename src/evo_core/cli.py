@@ -14,6 +14,7 @@ def build_parser():
     sub=parser.add_subparsers(dest="command",required=True)
     config_parent=argparse.ArgumentParser(add_help=False)
     config_parent.add_argument("--config",default=argparse.SUPPRESS,help="TOML configuration file")
+    config_parent.add_argument("--provider",help="Named provider profile from [providers.*] in the TOML config")
     doctor=sub.add_parser("doctor",parents=[config_parent],help="Check the configured model endpoint")
     doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
     for name,help_text in (("chat","Start an interactive conversation"),
@@ -89,10 +90,10 @@ def _interactive(args,config):
         if args.command=="code":
             from .coding_agent import CodingAgent
             agent=CodingAgent(assistant,args.workspace or config.workspace_root,config.allowed_commands)
-            print(f"Evo 4 Coding Agent | workspace {agent.workspace.root} | conversation {cid}")
+            print(f"Evo 4 Coding Agent | provider {config.provider_name} | model {config.model} | workspace {agent.workspace.root} | conversation {cid}")
             print("Writes and commands require per-action approval. Type /exit to quit.")
         else:
-            print(f"Evo 4 | conversation {cid}\nType /exit to quit, /new to start another conversation.")
+            print(f"Evo 4 | provider {config.provider_name} | model {config.model} | conversation {cid}\nType /exit to quit, /new to start another conversation.")
         while True:
             try:
                 user_text=input("\nYou> ").strip()
@@ -136,7 +137,7 @@ def main():
         print(json.dumps(report,ensure_ascii=False,indent=2))
         return
     try:
-        config=load_config(args.config)
+        config=load_config(args.config,getattr(args,"provider",None))
     except Exception as exc:
         print(f"Configuration error: {exc}",file=sys.stderr); raise SystemExit(2)
     if args.command=="doctor":
