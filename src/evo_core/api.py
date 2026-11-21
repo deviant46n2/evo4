@@ -341,12 +341,23 @@ def create_app(config_path="config.toml", provider_name=None):
         conversation_id = payload.conversation_id
         if conversation_id is None:
             conversation_id = assistant.new_conversation()
-        elif store.get_conversation(conversation_id) is None:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+        else:
+            # Existence validation and reservation share the deletion lock. A
+            # delete can therefore happen either before this check or after the
+            # reservation is released, never in the middle.
+            with locks_guard:
+                if store.get_conversation(conversation_id) is None:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+                reservation = conversation_locks.get(conversation_id)
+                if reservation is None:
+                    reservation = {"lock": threading.Lock(), "users": 0}
+                    conversation_locks[conversation_id] = reservation
+                reservation["users"] += 1
 
         # Reserve before the SSE generator queues the worker. This prevents
         # deletion during the gap between executor submission and worker start.
-        reservation = acquire_conversation_lock(conversation_id)
+        if payload.conversation_id is None:
+            reservation = acquire_conversation_lock(conversation_id)
         submitted = threading.Event()
 
         async def events():
