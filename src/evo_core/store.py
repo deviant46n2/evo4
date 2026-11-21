@@ -265,7 +265,7 @@ class EvoStore:
             return self.db.execute(sql,ids+ids).fetchall()
 
     def search_memory_relations(self, query, limit=5):
-        terms=[term.strip(" \\t\\r\\n.,!?;:\\"'()[]{}") for term in query.split()]
+        terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
         terms=[term for term in terms if len(term)>1][:12]
         if not terms:
             return []
