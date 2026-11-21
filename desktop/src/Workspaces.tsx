@@ -45,6 +45,7 @@ function DemoDataBanner() {
 type Memory = { id: string; content: string; category: string; source: string; confidence: number; status: string; created_at: string; access_count: number };
 type Candidate = { id: string; content: string; category: string; source: string; confidence: number; created_at: string };
 type RecallPreview = { query:string; count:number; retrieval:string; matches:Array<{id:string;content:string;category:string;source:string;confidence:number;score:number;coverage:number;matched_terms:string[];reason:string;method:string}> };
+type MemoryReview = {count:number;analyzed_records:number;method:string;mutates_memory:boolean;note:string;suggestions:Array<{left:{id:string;content:string;category:string;source:string;confidence:number};right:{id:string;content:string;category:string;source:string;confidence:number};similarity:number;jaccard:number;containment:number;shared_terms:string[];reason:string;method:string}>};
 type Run = { id: string; kind: string; status: string; started_at: string; finished_at?: string; summary?: string; metadata: Record<string, any> };
 type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> } };
 
@@ -55,6 +56,8 @@ export function MemoryWorkspace() {
   const [recallQuery, setRecallQuery] = useState("");
   const [recallPreview, setRecallPreview] = useState<RecallPreview | null>(null);
   const [recallBusy, setRecallBusy] = useState(false);
+  const [review, setReview] = useState<MemoryReview | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [status, setStatus] = useState("active");
   const [content, setContent] = useState("");
   const [category, setCategory] = useState("general");
@@ -89,6 +92,13 @@ export function MemoryWorkspace() {
       setRecallPreview(await api<RecallPreview>("/memories/search?" + params.toString()));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setRecallBusy(false); }
+  }
+  async function scanForDuplicates() {
+    if (reviewBusy) return;
+    setReviewBusy(true); setError(""); setReview(null);
+    try { setReview(await api<MemoryReview>("/memories/review?limit=30")); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setReviewBusy(false); }
   }
   async function addMemory(event: FormEvent) {
     event.preventDefault();
@@ -134,6 +144,17 @@ export function MemoryWorkspace() {
         </article>)}
         {recallPreview.count===0 && <div className="empty-state">No active memories matched this query.</div>}
       </div>}
+    </section>
+    <section className="workspace-panel">
+      <div className="panel-toolbar"><div><h2>Review possible duplicates</h2><p>Find records with substantial shared wording. This scan is read-only and never merges or changes memories.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void scanForDuplicates()}>{reviewBusy?"Scanning…":"Scan memories"}</button></div>
+      {review && <><small>{review.count} suggestions from {review.analyzed_records} active records · {review.method}</small><p className="policy-note">{review.note}</p>
+        <div className="record-list">{review.suggestions.map((pair,index)=><article className="record-card" key={pair.left.id+":"+pair.right.id}>
+          <div className="record-top"><span className="record-category">Possible duplicate #{index+1}</span><span>similarity {pair.similarity.toFixed(2)}</span></div>
+          <p><strong>{pair.left.category} · {pair.left.source}</strong><br/>{pair.left.content}</p>
+          <p><strong>{pair.right.category} · {pair.right.source}</strong><br/>{pair.right.content}</p>
+          <div className="record-bottom"><small>Shared terms: {pair.shared_terms.join(", ")}</small></div>
+        </article>)}{review.count===0&&<div className="empty-state">No strong lexical-overlap candidates found. This does not rule out paraphrases or semantic duplicates.</div>}</div>
+      </>}
     </section>
     <section className="workspace-panel">
       <h2>Add a memory</h2>
