@@ -23,8 +23,9 @@ def load_config(path: str | Path) -> Config:
     server, exp, system = raw.get("server", {}), raw.get("experiment", {}), raw.get("system", {})
     run = raw.get("run", {})
     seed = exp.get("seed")
-    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
-        raise ValueError("experiment.seed must be an integer or omitted")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)
+                             or not 0 <= seed <= 2147483647):
+        raise ValueError("experiment.seed must be an integer between 0 and 2147483647, or omitted")
     return Config(
         base_url=str(server.get("base_url", "http://127.0.0.1:18997")).rstrip("/"),
         api_key=str(server.get("api_key", "no-key")),
