@@ -79,5 +79,3 @@ Hardware telemetry is read-only. Resource advice is advisory and does not enact 
 - Autonomous self-modification or online weight training.
 
 These are future layers, not existing behavior.
-
-These are future layers, not reasons to discard the current foundation.
