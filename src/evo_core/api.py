@@ -199,7 +199,18 @@ def create_app(config_path="config.toml", provider_name=None):
                     + json.dumps({"conversation_id": conversation_id})
                     + "\n\n"
                 )
-                executor.submit(run_turn)
+                try:
+                    executor.submit(run_turn)
+                except Exception as exc:
+                    yield (
+                        "event: error\\ndata: "
+                        + json.dumps({
+                            "type": type(exc).__name__,
+                            "message": "Unable to start chat worker",
+                        })
+                        + "\\n\\n"
+                    )
+                    return
                 while True:
                     item = await queue.get()
                     if item is sentinel:
