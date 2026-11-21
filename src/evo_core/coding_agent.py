@@ -1,5 +1,4 @@
 import json
-from .provider import ProviderError
 from .workspace import Workspace, WorkspaceError
 
 CODING_POLICY = """\n\nCoding-agent operating rules:
@@ -22,6 +21,20 @@ TOOL_SPECS = [
  {"type":"function","function":{"name":"write_file","description":"Create or replace a text file. Requires explicit user approval.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"overwrite":{"type":"boolean","default":False}},"required":["path","content"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120}},"required":["argv"],"additionalProperties":False}}}
 ]
+
+_VERIFICATION_MARKERS={"pytest","unittest","tox","nox","test","tests","check","lint","build","ruff","mypy","pyright","eslint","tsc"}
+
+def is_verification_command(argv):
+    """Conservative command-name heuristic; success means exit code zero, not correctness."""
+    if not isinstance(argv,(list,tuple)):
+        return False
+    for value in argv:
+        token=str(value).strip().lower().rsplit("/",1)[-1]
+        base=token.split(":",1)[0]
+        if base in _VERIFICATION_MARKERS or base.startswith("test_"):
+            return True
+    return False
+
 
 class CodingAgent:
     """Bounded tool-using coding assistant. Writes and commands require per-action approval."""
@@ -46,6 +59,26 @@ class CodingAgent:
             return self.workspace.run(args["argv"],args.get("timeout_seconds",120))
         raise WorkspaceError(f"Unknown tool: {name}")
 
+    @staticmethod
+    def _verification_state(successful_writes,last_write_call,last_verification):
+        if successful_writes==0:
+            return {"status":"not_required","reason":"No file writes were performed."}
+        if not last_verification or last_verification["tool_call"]<=last_write_call:
+            return {"status":"not_run","reason":"No recognized verification command ran successfully after the latest file write."}
+        if last_verification["status"]=="completed" and last_verification.get("returncode")==0:
+            return {"status":"passed","reason":"A recognized verification command exited with code 0 after the latest file write."}
+        return {"status":"failed","reason":"The latest recognized verification command after the latest file write did not complete successfully."}
+
+    @staticmethod
+    def _verification_note(report):
+        if report["status"]=="passed":
+            return "\\n\\nVerification signal: PASSED (recognized command exited 0 after the latest file write). This is not a guarantee of correctness."
+        if report["status"]=="failed":
+            return "\\n\\nVerification signal: FAILED. Inspect the recorded command output; the change is not verified."
+        if report["status"]=="not_run":
+            return "\\n\\nVerification signal: NOT RUN. Files were changed, but no recognized test/check/build command completed successfully after the latest change."
+        return ""
+
     def run(self, conversation_id, request, approval, on_token=None):
         if not isinstance(request,str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
@@ -62,16 +95,24 @@ class CodingAgent:
         })
         try:
             total_tool_calls=0
+            successful_writes=0
+            last_write_call=0
+            last_verification=None
             for round_index in range(self.max_tool_rounds):
                 result=self.assistant.provider.chat(messages,max_tokens=self.assistant.config.max_tokens,
                     temperature=self.assistant.config.temperature,on_token=on_token,tools=TOOL_SPECS)
                 calls=result.get("tool_calls") or []
                 if not calls:
-                    final_text=result.get("content","")
-                    store.add_message(conversation_id,"assistant",final_text,metadata={"agent_run_id":run_id})
+                    verification=self._verification_state(successful_writes,last_write_call,last_verification)
+                    final_text=(result.get("content","") or "")+self._verification_note(verification)
+                    store.update_agent_run_metadata(run_id,{"verification":verification,
+                        "successful_file_writes":successful_writes,"tool_calls":total_tool_calls})
+                    store.add_message(conversation_id,"assistant",final_text,metadata={
+                        "agent_run_id":run_id,"verification":verification["status"]})
                     store.finish_agent_run(run_id,"completed",final_text[:1000])
                     return {"content":final_text,"run_id":run_id,"tool_rounds":round_index+1,
-                            "tool_calls":total_tool_calls,"status":"completed"}
+                            "tool_calls":total_tool_calls,"status":"completed",
+                            "verification":verification["status"]}
                 assistant_call={"role":"assistant","content":result.get("content") or None,
                     "tool_calls":[{"id":call["id"],"type":"function","function":{
                         "name":call["function"]["name"],
@@ -96,16 +137,29 @@ class CodingAgent:
                     except Exception as exc:
                         output={"error":f"{type(exc).__name__}: {exc}"}
                         status="failed"
+                    if name=="write_file" and status=="completed":
+                        successful_writes+=1
+                        last_write_call=total_tool_calls
+                    if name=="run_command" and status!="denied" and is_verification_command(args.get("argv",[])):
+                        last_verification={"tool_call":total_tool_calls,"status":status,
+                            "returncode":output.get("returncode") if isinstance(output,dict) else None,
+                            "argv":args.get("argv",[])}
                     store.record_tool_event(run_id,name,args,output,status)
                     messages.append({"role":"tool","tool_call_id":call["id"],
                                      "content":json.dumps(output,ensure_ascii=False,default=str)})
+            verification=self._verification_state(successful_writes,last_write_call,last_verification)
             final_text=("Stopped after reaching the maximum tool-call rounds. "
-                        "The task is incomplete; review the recorded tool events and continue with a new request.")
+                        "The task is incomplete; review the recorded tool events and continue with a new request."
+                        +self._verification_note(verification))
+            store.update_agent_run_metadata(run_id,{"verification":verification,
+                "successful_file_writes":successful_writes,"tool_calls":total_tool_calls})
             store.add_message(conversation_id,"assistant",final_text,
-                              metadata={"agent_run_id":run_id,"truncated":True})
+                              metadata={"agent_run_id":run_id,"truncated":True,
+                                        "verification":verification["status"]})
             store.finish_agent_run(run_id,"failed",final_text)
             return {"content":final_text,"run_id":run_id,"tool_rounds":self.max_tool_rounds,
-                    "tool_calls":total_tool_calls,"status":"max_rounds_reached"}
+                    "tool_calls":total_tool_calls,"status":"max_rounds_reached",
+                    "verification":verification["status"]}
         except Exception as exc:
             store.finish_agent_run(run_id,"failed",f"{type(exc).__name__}: {exc}")
             raise
