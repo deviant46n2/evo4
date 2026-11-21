@@ -16,6 +16,7 @@ from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
 from .config import load_config
 from .store import EvoStore
+from .memory_review import find_duplicate_candidates
 from .demo_data import seed_demo_data, demo_data_status, clear_demo_data
 from evo_experiments.monitor import sample_nvidia_smi
 from evo_experiments.db import ResultsDB
@@ -318,6 +319,24 @@ def create_app(config_path="config.toml", provider_name=None):
             "created_at": row["created_at"], "updated_at": row["updated_at"],
             "access_count": row["access_count"],
         } for row in rows]
+
+    @app.get("/api/v1/memories/review")
+    def memory_review(limit: int = 20):
+        bounded = min(max(limit, 1), 50)
+        with store.lock:
+            rows = store.db.execute(
+                """SELECT id,content,category,source,confidence,updated_at
+                   FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT 500"""
+            ).fetchall()
+        suggestions = find_duplicate_candidates(rows, limit=bounded)
+        return {
+            "count": len(suggestions),
+            "analyzed_records": len(rows),
+            "method": "lexical-overlap; no embeddings or semantic inference",
+            "mutates_memory": False,
+            "suggestions": suggestions,
+            "note": "Suggestions are possible duplicates, not confirmed duplicates or contradictions. Inspect both records before taking action.",
+        }
 
     @app.get("/api/v1/memories/search")
     def memory_search_preview(q: str, limit: int = 8):
