@@ -68,7 +68,7 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(config.model, "test")
             self.assertEqual(config.base_url, "http://127.0.0.1:18997")
             self.assertEqual(config.repetitions, 2)
-            self.assertEqual(config.seed, 42)
+            self.assertIsNone(config.seed)
             self.assertEqual(build_run_manifest(config)["runtime_manifest"]["context_size"], 49152)
 
     def test_model_file_hash_is_recorded(self):
