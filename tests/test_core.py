@@ -139,11 +139,11 @@ class HarnessTests(unittest.TestCase):
                 model TEXT NOT NULL, base_url TEXT NOT NULL, config_json TEXT NOT NULL,
                 prompt TEXT NOT NULL, response TEXT, status TEXT NOT NULL, error TEXT,
                 elapsed_seconds REAL, time_to_first_token_seconds REAL, prompt_tokens INTEGER,
-                completion_tokens INTEGER, tokens_per_second REAL, evaluation_status TEXT,
-                evaluation_details TEXT)""")
+                completion_tokens INTEGER, tokens_per_second REAL, finish_reason TEXT, seed INTEGER,
+                evaluation_status TEXT, evaluation_details TEXT)""")
             conn.execute("""INSERT INTO experiments (started_at,task_id,category,repetition,model,
-                base_url,config_json,prompt,status,evaluation_status,evaluation_details)
-                VALUES ('now','t','test',1,'m','local','{}','p','completed','passed',
+                base_url,config_json,prompt,status,finish_reason,evaluation_status,evaluation_details)
+                VALUES ('now','t','test',1,'m','local','{}','p','completed','stop','passed',
                 '{"passed": 2, "total": 2}')""")
             conn.commit()
             conn.close()
