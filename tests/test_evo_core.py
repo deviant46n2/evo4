@@ -26,6 +26,29 @@ class EvoCoreTests(unittest.TestCase):
         return EvoConfig("http://127.0.0.1:1","no-key","stub-model",3,Path(path),
                          64,0.0,"You are Evo.",8,10)
 
+    def test_assistant_persists_provider_finish_reason_and_truncation(self):
+        class TruncatedProvider(StubProvider):
+            def chat(self,messages,max_tokens,temperature,on_token=None):
+                if on_token:
+                    on_token("partial answer")
+                return {"content":"partial answer","elapsed_seconds":0.01,"ttft_seconds":0.001,
+                        "prompt_tokens":10,"completion_tokens":2,"tokens_per_second":200.0,
+                        "finish_reason":"length","truncated":True}
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"state.db")
+            store=EvoStore(config.database)
+            assistant=EvoAssistant(config,store,TruncatedProvider())
+            cid=assistant.new_conversation()
+            result=assistant.turn(cid,"Please answer")
+            self.assertTrue(result["truncated"])
+            row=store.db.execute(
+                "SELECT metadata_json FROM messages WHERE conversation_id=? AND role='assistant' ORDER BY id DESC LIMIT 1",
+                (cid,)).fetchone()
+            metadata=json.loads(row["metadata_json"])
+            self.assertEqual(metadata["finish_reason"],"length")
+            self.assertTrue(metadata["truncated"])
+            assistant.close()
+
     def test_memory_lifecycle_and_lexical_search(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
