@@ -668,6 +668,9 @@ def create_app(config_path="config.toml", provider_name=None):
             agent_futures[run_id] = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
+            with lab_db.lock:
+                background_agent.transition(lab_db.connection, run_id, "failed", {"error": "Unable to start agent worker"})
+            agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
         return {"run_id": run_id, "status": "running"}
 
@@ -736,9 +739,10 @@ def create_app(config_path="config.toml", provider_name=None):
             task = background_agent.get(lab_db.connection, run_id)
             if task is None:
                 raise HTTPException(status_code=404, detail="Background agent task not found")
+            previous_status = task["status"]
             if not background_agent.request_cancel(lab_db.connection, run_id):
                 return {"cancelled": False, "status": task["status"]}
-            if task["status"] == "queued":
+            if previous_status == "queued":
                 background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
                 store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
         stop_event = agent_stop_events.get(run_id)
