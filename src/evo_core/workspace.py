@@ -51,6 +51,38 @@ class Workspace:
                     break
         return results
 
+    def project_overview(self):
+        """Return a bounded, secret-filtered snapshot to help the agent orient itself."""
+        entries=[]
+        for path in sorted(self.root.iterdir(),key=lambda item:item.name.casefold()):
+            if path.is_symlink() or _is_excluded(path.relative_to(self.root)):
+                continue
+            kind="directory" if path.is_dir() else "file" if path.is_file() else "other"
+            entries.append({"name":path.name,"type":kind})
+            if len(entries)>=80:
+                break
+        manifests=("AGENTS.md","README.md","pyproject.toml","package.json","Cargo.toml",
+                   "go.mod","Makefile","requirements.txt","pytest.ini","tox.ini","setup.cfg",
+                   "composer.json","pom.xml","build.gradle")
+        project_files={}
+        for name in manifests:
+            candidate=self.root/name
+            if candidate.is_file() and not candidate.is_symlink():
+                try:
+                    content=self.read_file(name)
+                except (OSError,WorkspaceError):
+                    continue
+                project_files[name]=content[:5000]
+                if len(project_files)>=5:
+                    break
+        return {
+            "workspace":self.root.name,
+            "top_level":entries,
+            "files":self.list_files(limit=120),
+            "project_instructions_and_manifests":project_files,
+            "limits":{"top_level_entries":80,"listed_files":120,"manifest_chars_each":5000},
+        }
+
     def read_file(self,relative_path):
         path=self.resolve(relative_path)
         if not path.is_file():
