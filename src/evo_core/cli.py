@@ -247,6 +247,8 @@ def main():
                         print(f"     result: {event['output_summary'] or ''}")
                     for feedback in store.list_run_feedback(args.id):
                         print(f"Feedback: {feedback['outcome']} | {feedback['feedback']}")
+                        if feedback["lesson_text"]:
+                            print(f"  Linked lesson: {feedback['lesson_text']} (trigger: {feedback['lesson_trigger']})")
             elif args.runs_command=="review":
                 try:
                     result=store.record_run_feedback(args.id,args.outcome,args.feedback,
