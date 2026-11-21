@@ -132,13 +132,36 @@ def run_execution(connection, lock, execution_id):
     stdout_buffer = bytearray()
     stderr_buffer = bytearray()
     readers = []
-    with lock:
-        connection.execute(
-            """UPDATE workload_executions
-               SET status='launching', started_at=?, process_started_at=NULL
-               WHERE id=? AND status='queued'""",
-            (started, execution_id))
-        connection.commit()
+    launch_intent_persisted = False
+    try:
+        with lock:
+            cursor = connection.execute(
+                """UPDATE workload_executions
+                   SET status='launching', started_at=?, process_started_at=NULL
+                   WHERE id=? AND status='queued'""",
+                (started, execution_id))
+            if cursor.rowcount != 1:
+                connection.rollback()
+                raise RuntimeError("Execution is no longer queued; launch intent was not persisted")
+            connection.commit()
+            launch_intent_persisted = True
+    except Exception as exc:
+        with lock:
+            current = get_execution(connection, execution_id)
+            if current is not None and current["status"] in {"queued", "launching"}:
+                connection.execute(
+                    """UPDATE workload_executions
+                       SET status='failed', finished_at=?, error=?, pid=NULL
+                       WHERE id=? AND status IN ('queued', 'launching')""",
+                    (_now(), f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
+                     execution_id))
+                job = get_job(connection, record["job_id"])
+                if job and job["status"] == "running":
+                    finish_job(connection, record["job_id"], "failed",
+                               f"Launch intent could not be persisted: {type(exc).__name__}: {str(exc)[:1900]}",
+                               commit=False)
+                connection.commit()
+        return
     try:
         process = subprocess.Popen(
             record["argv"], cwd=record["workspace"], shell=False,
@@ -168,10 +191,13 @@ def run_execution(connection, lock, execution_id):
             returncode = None
         # Commands are bounded jobs, not daemon launchers. Clean up any descendants
         # left in this private process group after the leader exits or times out.
+        cleanup_error = ""
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+        except OSError as exc:
+            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         if timed_out:
             try:
                 process.wait(timeout=3)
@@ -184,48 +210,77 @@ def run_execution(connection, lock, execution_id):
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+            except OSError as exc:
+                if not cleanup_error:
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             for thread in readers:
                 thread.join(timeout=2)
         if process.poll() is None:
             try:
                 process.kill()
-            except ProcessLookupError:
+            except (ProcessLookupError, OSError) as exc:
+                if not cleanup_error and not isinstance(exc, ProcessLookupError):
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
                 pass
-            process.wait()
         returncode = process.returncode
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
         outcome = "failed" if timed_out or returncode != 0 else "completed"
         error = f"Command timed out after {record['timeout_seconds']} seconds" if timed_out else ""
+        if cleanup_error:
+            error = (error + "; process group cleanup failed: " + cleanup_error).strip("; ").strip()
         with lock:
             connection.execute(
                 """UPDATE workload_executions SET status=?,finished_at=?,returncode=?,
                    elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL WHERE id=?""",
-                (outcome, _now(), returncode, elapsed, stdout, stderr, error, execution_id))
+                (outcome, _now(), returncode, elapsed, stdout, stderr, error[:2000], execution_id))
             finish_job(connection, record["job_id"], outcome,
                        error or (f"Exit code {returncode}" if returncode else "Exit code 0"))
             connection.commit()
     except Exception as exc:
+        cleanup_error = ""
         if process is not None and process.poll() is None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
+            except OSError as cleanup_exc:
+                cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
             try:
                 process.wait(timeout=3)
             except Exception:
                 pass
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError as cleanup_exc:
+                    if not cleanup_error:
+                        cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
+                try:
+                    process.wait(timeout=3)
+                except Exception:
+                    pass
         elapsed = round(time.monotonic() - begin, 3)
+        error_text = f"{type(exc).__name__}: {exc}"[:2000]
+        if cleanup_error:
+            error_text = (error_text + "; process group cleanup failed: " + cleanup_error)[:2000]
         with lock:
-            connection.execute(
-                """UPDATE workload_executions SET status='failed',finished_at=?,
-                   elapsed_seconds=?,error=?,pid=NULL WHERE id=?""",
-                (_now(), elapsed, f"{type(exc).__name__}: {exc}"[:2000], execution_id))
-            job = get_job(connection, record["job_id"])
-            if job and job["status"] == "running":
-                finish_job(connection, record["job_id"], "failed", f"{type(exc).__name__}: {exc}"[:2000])
-            connection.commit()
+            current = get_execution(connection, execution_id)
+            if current is not None and current["status"] in {"queued", "launching", "running"}:
+                connection.execute(
+                    """UPDATE workload_executions SET status='failed',finished_at=?,
+                       elapsed_seconds=?,error=?,pid=NULL WHERE id=?""",
+                    (_now(), elapsed, error_text, execution_id))
+                job = get_job(connection, record["job_id"])
+                if job and job["status"] == "running":
+                    finish_job(connection, record["job_id"], "failed", error_text, commit=False)
+                connection.commit()
 
 def recover_interrupted_executions(connection):
     """Mark interrupted Evo-owned runs; never signal possibly orphaned processes.

@@ -102,5 +102,21 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         caps=self.routes[("/api/v1/capabilities","GET")]()
         self.assertTrue(caps["hardware_workload_scheduler"])
 
+    def test_external_finish_cannot_bypass_managed_launch_states(self):
+        create=self.routes[("/api/v1/hardware/scheduler/jobs","POST")]
+        for status in ("queued", "launching", "running", "launch_uncertain"):
+            saved=create(SchedulerJobInput(name="Managed state "+status,kind="cpu",gpu_heavy=False,
+                estimated_ram_mib=256))
+            self.app.state.lab_db.connection.execute(
+                "INSERT INTO workload_executions(id,job_id,argv_json,workspace,status,timeout_seconds,created_at) VALUES(?,?,?,?,?,?,?)",
+                ("exec-"+status, saved["id"], "[]", "/tmp", status, 30, "2026-01-01T00:00:00+00:00"))
+            self.app.state.lab_db.connection.execute(
+                "UPDATE workload_jobs SET status='running' WHERE id=?", (saved["id"],))
+            self.app.state.lab_db.connection.commit()
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/finish","POST")](
+                    saved["id"], SchedulerFinishInput(outcome="completed", note="external"))
+            self.assertEqual(raised.exception.status_code, 409)
+
 if __name__=="__main__":
     unittest.main()

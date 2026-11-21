@@ -50,6 +50,13 @@ Reserved jobs can now be launched as Evo-managed child processes through an expl
 - Two managed workload workers can run concurrently. Each command has a 1–900 second timeout; timeout handling signals only the dedicated process group created for that Evo-owned child.
 - The Hardware workspace displays execution history and output. The existing external-start path remains available for jobs that users launch themselves.
 - At startup, unfinished managed execution records are marked interrupted. Evo preserves the recorded PID and explicitly does not signal it; after an abrupt crash the child may still be running and must be inspected manually before retrying.
+
+Managed execution records can also have these recovery states:
+
+- `launching`: Evo requested a subprocess but had not yet recorded its PID.
+- `launch_uncertain`: Evo restarted after requesting the subprocess but before recording its PID. The process may or may not be running. Evo does not terminate, signal, retry, or relaunch it; inspect it manually before retrying.
+
+These states are terminal for automatic handling. A `launch_uncertain` record cannot be dispatched, retried, or externally marked completed.
 - Managed executions are not resumable and are not hard resource-isolated. Scheduler admission is advisory; child CPU, RAM, and VRAM use can differ from estimates. The worker does not inspect or attach to the user's existing model server.
 
 This is controlled command execution, not autonomous coding-agent orchestration. The coding agent still uses its separate per-action approval workflow. Commands must be deliberately added to the user's allowlist, and each launch requires a separate confirmation in the UI. This is not an OS sandbox: child commands run with Evo's user permissions and may access resources available to that account. The allowlist and confirmation reduce accidental execution; they do not provide privilege isolation.

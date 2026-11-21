@@ -119,6 +119,50 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertEqual(result["pid"], 424242)
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
 
+    def test_launch_intent_persistence_failure_does_not_call_popen(self):
+        job = self.reserve("launch-intent")
+        record = self.register(job)
+
+        class LaunchIntentProxy:
+            def __init__(self, connection):
+                self._connection = connection
+
+            def execute(self, sql, *args, **kwargs):
+                if "SET status='launching'" in sql:
+                    raise sqlite3.OperationalError("launch intent write failed")
+                return self._connection.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._connection, name)
+
+        proxy = LaunchIntentProxy(self.db)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(proxy, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Launch intent could not be persisted", result["error"])
+        self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
+
+    def test_process_cleanup_permission_error_is_recorded_without_aborting_finalization(self):
+        job = self.reserve("cleanup-permission")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(10)"], timeout=1)
+
+        class PermissionProcess(FakeProcess):
+            def wait(self, timeout=None):
+                if not getattr(self, "_waited", False):
+                    self._waited = True
+                    raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+                return 0
+
+        with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        self.assertIn("process group cleanup failed: PermissionError", result["error"])
+        self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
+
     def test_partial_recovery_failure_rolls_back_and_can_retry(self):
         job_one = self.reserve("first")
         record_one = self.register(job_one)
