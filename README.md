@@ -109,7 +109,7 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
 
 - `evo_core`: assistant orchestration, provider adapter, configuration, and persistent application state.
 - `evo_experiments`: independent experiment runner, evaluation, telemetry, and result aggregation.
-- SQLite is the initial durable store. Conversation state, user memories, task state, research captures, agent runs, and tool events have distinct tables.
+- SQLite is the initial durable store. Conversation state, user memories and their explicit relations, task state, research captures, agent runs, tool events, and user run feedback have distinct tables.
 - Provider access is behind an OpenAI-compatible adapter; model/runtime changes should not require replacing the assistant.
 - The lab remains usable to evaluate Evo components from the outside.
 - No unapproved code execution, background autonomous operation, or self-modification is enabled in this version.
