@@ -8,6 +8,7 @@ processes such as an existing inference server.
 from datetime import datetime, timezone
 import json
 import os
+import re
 import signal
 import sqlite3
 import subprocess
@@ -117,11 +118,13 @@ def _tail_buffer(pipe, limit=OUTPUT_LIMIT):
     return bytes(chunks).decode("utf-8", errors="replace")
 
 def _safe_environment():
-    # Preserve the normal runtime environment but do not pass obvious credentials
-    # into child commands. Commands still inherit PATH/HOME and non-secret settings.
-    blocked = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
-    return {key: value for key, value in os.environ.items()
-            if not any(part in key.upper() for part in blocked)}
+    # Preserve PATH/HOME and ordinary settings while filtering credential-shaped
+    # variable names. Avoid broad substring matching (e.g. MONKEY is not a secret).
+    sensitive = {"TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS"}
+    def is_secret(name):
+        parts = set(re.split(r"[^A-Z0-9]+", name.upper()))
+        return bool(parts & sensitive) or ({"API", "KEY"} <= parts) or ({"PRIVATE", "KEY"} <= parts)
+    return {key: value for key, value in os.environ.items() if not is_secret(key)}
 
 def _persist(connection, lock, execution_id, **values):
     if not values:
@@ -170,23 +173,34 @@ def run_execution(connection, lock, execution_id):
             returncode = process.wait(timeout=record["timeout_seconds"])
         except subprocess.TimeoutExpired:
             timed_out = True
-            # This process group was created exclusively for this Evo-owned child.
-            # Never signal a PID discovered elsewhere on the system.
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            returncode = None
+        # Commands are bounded jobs, not daemon launchers. Clean up any descendants
+        # left in this private process group after the leader exits or times out.
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if timed_out:
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-            returncode = process.returncode
+                pass
         for thread in readers:
-            thread.join(timeout=5)
+            thread.join(timeout=3)
+        if any(thread.is_alive() for thread in readers):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            for thread in readers:
+                thread.join(timeout=2)
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait()
+        returncode = process.returncode
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
