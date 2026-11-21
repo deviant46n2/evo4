@@ -83,6 +83,12 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(row["status"],"failed")
             assistant.close()
 
+    def test_verification_must_happen_after_the_latest_successful_write(self):
+        report=CodingAgent._verification_state(2,4,{
+            "tool_call":3,"status":"completed","returncode":0,"argv":["pytest"]})
+        self.assertEqual(report["status"],"not_run")
+        self.assertEqual(CodingAgent._verification_state(0,0,None)["status"],"not_required")
+
     def test_verification_command_detection_is_conservative(self):
         self.assertTrue(is_verification_command(["python","-m","pytest","-q"]))
         self.assertTrue(is_verification_command(["cargo","test"]))
@@ -109,6 +115,7 @@ class CodingAgentTests(unittest.TestCase):
             import json
             metadata=json.loads(run["metadata_json"])
             self.assertEqual(metadata["verification"]["status"],"passed")
+            self.assertEqual(metadata["workspace"],str(root.resolve()))
             assistant.close()
 
     def test_file_change_without_post_edit_check_is_explicitly_unverified(self):
