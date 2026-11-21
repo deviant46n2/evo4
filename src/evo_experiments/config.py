@@ -15,14 +15,14 @@ class Config:
     repetitions: int
     system_prompt: str
     run_metadata: dict
-    seed: int | None = 42
+    seed: int | None = None
 
 def load_config(path: str | Path) -> Config:
     with Path(path).open("rb") as handle:
         raw = tomllib.load(handle)
     server, exp, system = raw.get("server", {}), raw.get("experiment", {}), raw.get("system", {})
     run = raw.get("run", {})
-    seed = exp.get("seed", 42)
+    seed = exp.get("seed")
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
         raise ValueError("experiment.seed must be an integer or omitted")
     return Config(
