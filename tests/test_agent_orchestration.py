@@ -38,6 +38,19 @@ class AgentOrchestrationTests(unittest.TestCase):
                 orchestration.create_plan(self.db, "x", "/w", {
                     "title": "x", "summary": "y", "steps": steps})
 
+    def test_completed_plan_requires_every_step_completed(self):
+        orchestration.approve_plan(self.db, self.plan["id"])
+        orchestration.attach_run(self.db, self.plan["id"], "run-1")
+        with self.assertRaises(ValueError):
+            orchestration.finish_plan(self.db, self.plan["id"], "completed")
+
+    def test_non_text_model_fields_are_rejected(self):
+        with self.assertRaises(ValueError):
+            orchestration.create_plan(self.db, "x", "/w", {
+                "title": 123, "summary": "S",
+                "steps": [{"title": "I", "description": "D",
+                           "expected_outcome": "O", "verification": "V"}]})
+
     def test_approval_is_explicit_and_one_way(self):
         approved = orchestration.approve_plan(self.db, self.plan["id"])
         self.assertEqual(approved["status"], "approved")
