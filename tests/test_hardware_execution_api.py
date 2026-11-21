@@ -1,4 +1,5 @@
 import tempfile
+from concurrent.futures import Future
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -58,7 +59,9 @@ class ManagedExecutionApiTests(unittest.TestCase):
         with patch("evo_core.api.sample_nvidia_smi", return_value={
             "ram_available_bytes": 8 * 1024**3, "ram_used_percent": 40}):
             self.routes[("/api/v1/hardware/scheduler/dispatch", "POST")](limit=5)
-        with patch.object(self.app.state.execution_executor, "submit") as submit:
+        completed_future = Future()
+        completed_future.set_result(None)
+        with patch.object(self.app.state.execution_executor, "submit", return_value=completed_future) as submit:
             result = self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/execute", "POST")](
                 job["id"], WorkloadExecuteInput(argv=["python", "-c", "print('ok')"]))
         self.assertEqual(result["status"], "queued")
