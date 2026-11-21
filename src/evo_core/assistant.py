@@ -74,17 +74,22 @@ class EvoAssistant:
         return self._fit_context(messages)
 
     def _fit_context(self,messages):
-        """Fit retrieved context and history to a conservative, configurable token budget.
+        """Fit complete context records to a conservative character budget.
 
-        This is a character-based estimate, not the model's tokenizer. The 3.5
-        chars/token conversion intentionally leaves room for tokenization variance.
-        The base system policy and current user request are never discarded.
+        This is a tokenizer-independent estimate. Three characters per token is
+        deliberately conservative for code-heavy prompts. The current request and
+        base system policy are never silently truncated: if they cannot fit, fail
+        before the caller persists or sends the turn.
         """
-        window=max(4096,int(getattr(self.config,"context_window_tokens",49152)))
-        output_reserve=max(1,int(self.config.max_tokens))
-        budget_chars=max(4000,int(max(1024,window-output_reserve-512)*3.5))
         if not messages:
             return messages
+        window=max(4096,int(getattr(self.config,"context_window_tokens",49152)))
+        requested_output=max(1,int(self.config.max_tokens))
+        # Keep a fixed safety margin and never let an oversized output setting
+        # consume the entire context window.
+        output_reserve=min(requested_output,max(1,window-512))
+        input_tokens=max(0,window-output_reserve-512)
+        budget_chars=input_tokens*3
         system=messages[0].get("content","")
         base=self.config.system_prompt
         if system.startswith(base):
@@ -93,21 +98,45 @@ class EvoAssistant:
             base=""
             dynamic=system
         current=messages[-1] if messages[-1].get("role")=="user" else None
-        current_chars=len(current.get("content","")) if current else 0
-        dynamic_budget=max(0,budget_chars-len(base)-current_chars)
-        dynamic=dynamic[:dynamic_budget]
-        remaining=max(0,budget_chars-len(base)-len(dynamic)-current_chars)
+        current_text=current.get("content","") if current else ""
+        fixed_chars=len(base)+len(current_text)
+        if fixed_chars>budget_chars:
+            raise ValueError(
+                "The system instructions and current request exceed the configured context budget. "
+                "Shorten the request or increase assistant.context_window_tokens / reduce assistant.max_tokens."
+            )
+        remaining=budget_chars-fixed_chars
+
+        # Retrieved context is assembled as newline-delimited records. Keep only
+        # complete records and make omissions explicit rather than cutting a
+        # memory/research record in the middle.
+        kept_records=[]
+        omitted_records=0
+        for record in dynamic.splitlines(keepends=True):
+            if len(record)<=remaining:
+                kept_records.append(record)
+                remaining-=len(record)
+            else:
+                omitted_records+=1
+        if omitted_records:
+            marker=f"\n[Context notice: {omitted_records} retrieved context record(s) omitted to fit the configured context budget.]\n"
+            if len(marker)<=remaining:
+                kept_records.append(marker)
+                remaining-=len(marker)
+        fitted_dynamic="".join(kept_records)
+
+        # Keep recent history in whole-message units. Never slice a message and
+        # accidentally present a partial assistant answer as complete.
         history=[]
-        for row in reversed(messages[1:-1] if current else messages[1:]):
+        history_rows=messages[1:-1] if current else messages[1:]
+        for row in reversed(history_rows):
             content=row.get("content","")
-            if remaining<=0:
-                break
             if len(content)>remaining:
-                content=content[-remaining:]
+                continue
             history.append({**row,"content":content})
             remaining-=len(content)
         history.reverse()
-        fitted=[{"role":"system","content":base+dynamic}]
+        fitted=[{"role":"system","content":base+fitted_dynamic}]
         fitted.extend(history)
         if current:
             fitted.append(current)
