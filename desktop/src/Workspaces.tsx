@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 
 const API = "http://127.0.0.1:8765/api/v1";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -41,7 +42,7 @@ export function MemoryWorkspace() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, [query, status]);
   useEffect(() => { void refresh(); }, [refresh]);
-  async function addMemory(event: React.FormEvent) {
+  async function addMemory(event: FormEvent) {
     event.preventDefault();
     if (!content.trim()) return;
     setBusy(true);
