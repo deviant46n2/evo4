@@ -27,5 +27,5 @@ A code change is not complete merely because tests pass. Rebuild the affected ru
 - Preserve provenance, confidence, timestamps, and supersession/contradiction history.
 - Tentative candidates are not trusted memories until user approval.
 - Optional cloud providers remain optional; local operation must remain supported.
-- Hardware observation is read-only unless a separately reviewed safety design enables an action.
+- Hardware observation is read-only. The separate managed worker may launch only an explicitly user-confirmed argv command matching workspace.allowed_commands; it may supervise only its own child process group and must never attach to or signal unrelated processes.
 - Autonomous self-modification and live self-deployment remain out of scope until isolated workspaces, verification, rollback, and explicit approval exist.
