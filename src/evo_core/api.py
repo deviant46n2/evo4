@@ -912,7 +912,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 if item["run_id"] == run_id:
                     item["approved"] = False
                     item["decision"].set()
-        return {"cancelled": True, "status": "cancel_requested"}
+        return {"cancelled": True, "status": "cancelled" if previous_status == "queued" else "cancel_requested"}
 
     @app.get("/api/v1/agents/{run_id}/events")
     def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200):
