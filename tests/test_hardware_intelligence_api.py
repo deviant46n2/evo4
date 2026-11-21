@@ -40,7 +40,7 @@ class HardwareIntelligenceApiTests(unittest.TestCase):
         self.assertEqual(result["fit_assessment"],"unknown")
 
     def test_admission_api_defers_when_reserve_would_be_breached(self):
-        payload=WorkloadAssessment(kind="benchmark",gpu_heavy=True,estimated_vram_mib=4000)
+        payload=WorkloadAssessment(kind="benchmark",estimated_vram_mib=4000)
         sample={"gpu_memory_total_mib":16384,"gpu_memory_used_mib":12000,"ram_available_bytes":8*1024**3}
         with patch("evo_core.api.sample_nvidia_smi",return_value=sample):
             result=self.routes[("/api/v1/hardware/admission","POST")](payload)
