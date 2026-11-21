@@ -47,7 +47,7 @@ type Candidate = { id: string; content: string; category: string; source: string
 type RecallPreview = { query:string; count:number; retrieval:string; matches:Array<{id:string;content:string;category:string;source:string;confidence:number;score:number;coverage:number;matched_terms:string[];reason:string;method:string}> };
 type MemoryReview = {count:number;analyzed_records:number;method:string;mutates_memory:boolean;note:string;suggestions:Array<{left:{id:string;content:string;category:string;source:string;confidence:number};right:{id:string;content:string;category:string;source:string;confidence:number};similarity:number;jaccard:number;containment:number;shared_terms:string[];reason:string;method:string}>};
 type Run = { id: string; kind: string; status: string; started_at: string; finished_at?: string; summary?: string; metadata: Record<string, any> };
-type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> } };
+type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> }; background_task?: {status:string;cancel_requested:boolean}; background_events?: Array<{id:number;type:string;payload:Record<string,any>;created_at:string}> };
 
 export function MemoryWorkspace() {
   const [items, setItems] = useState<Memory[]>([]);
@@ -207,6 +207,11 @@ export function AgentsWorkspace() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
+  async function cancelRun() {
+    if (!detail || !window.confirm("Request cancellation? Evo will stop at the next safe boundary. A provider call already in progress may need to return first.")) return;
+    try { await api("/agents/" + encodeURIComponent(detail.id) + "/cancel", json({})); await refresh(); await refreshDetail(detail.id); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
   async function decide(approved: boolean) {
     if (!detail) return;
     try {
@@ -224,13 +229,13 @@ export function AgentsWorkspace() {
         <textarea value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the task. Evo will inspect the workspace first, then request approval before writes or commands…"/>
         <div className="agent-launch-footer"><input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="Workspace path (blank uses configured workspace)"/><button disabled={busy || !request.trim()}>{busy ? "Starting…" : "Start agent"}</button></div>
       </form>
-      <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded; background cancellation is not yet supported.</div>
+      <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request may finish before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
     </section>
     <div className="agent-layout">
       <section className="workspace-panel run-list-panel"><div className="panel-toolbar"><div><h2>Run history</h2><p>Most recent first</p></div><button className="quiet-button" onClick={() => void refresh()}>Refresh</button></div>
         <div className="run-list">{runs.map(run => <button key={run.id} className={"run-row " + (selected === run.id ? "selected" : "")} onClick={() => { setSelected(run.id); void refreshDetail(run.id); }}><span className={"run-status " + run.status}>{run.status}</span><strong>{String(run.metadata.request || run.summary || "Coding run").slice(0, 90)} {run.metadata.demo_seed&&<span className="demo-tag">SAMPLE</span>}</strong><small>{new Date(run.started_at).toLocaleString()}</small></button>)}{runs.length === 0 && <div className="empty-state">No agent runs yet.</div>}</div>
       </section>
-      <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <span className={"run-status " + detail.status}>{detail.status}</span>}</div>
+      <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <div className="inline-actions"><span className={"run-status " + (detail.background_task?.status || detail.status)}>{detail.background_task?.status || detail.status}</span>{detail.background_task && ["queued","running","awaiting_approval","cancel_requested"].includes(detail.background_task.status) && <button className="quiet-button danger" onClick={()=>void cancelRun()}>Request cancellation</button>}</div>}</div>
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
           {detail.pending_approval && <div className="approval-card"><div className="approval-title">Approval required · {detail.pending_approval.tool_name}</div><pre>{JSON.stringify(detail.pending_approval.arguments, null, 2)}</pre><div className="inline-actions"><button className="quiet-button danger" onClick={() => void decide(false)}>Deny</button><button onClick={() => void decide(true)}>Approve action</button></div></div>}
           <div className="event-list">{detail.events.map(event => <article className="event-card" key={event.id}><div className="event-head"><strong>{event.tool_name}</strong><span className={"run-status " + event.status}>{event.status}</span></div><pre>{JSON.stringify(event.input, null, 2)}</pre><p>{event.output}</p><small>{new Date(event.created_at).toLocaleString()}</small></article>)}{detail.events.length === 0 && <div className="empty-state">No tool activity recorded yet.</div>}</div>
