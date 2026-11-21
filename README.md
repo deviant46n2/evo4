@@ -221,7 +221,7 @@ Evaluation reports precision@k and zero-result rate alongside hit rate, recall@k
 
 ## Hardware Intelligence v1
 
-Hardware intelligence adds runtime discovery, persistent runtime profiles, architecture-aware KV-cache estimates, advisory workload admission, and a persistent reservation-based queue. The scheduler evaluates priority-ordered jobs against telemetry and outstanding reservations, but does not execute or preempt running workloads, apply runtime profiles, start/stop services, signal PIDs, or change GPU/runtime settings. Reservations are advisory rather than hard resource isolation. See [the hardware intelligence notes](docs/HARDWARE-INTELLIGENCE.md) for formulas, scheduler behavior, safety boundaries and limitations.
+Hardware intelligence adds runtime discovery, persistent runtime profiles, architecture-aware KV-cache estimates, advisory workload admission, and a persistent reservation-based queue. The scheduler evaluates priority-ordered jobs against telemetry and outstanding reservations. Reserved jobs can be launched through a separate user-confirmed managed worker when their argv matches workspace.allowed_commands; the worker captures bounded output, enforces a timeout, and supervises only its own child process group. It does not attach to or control existing services such as llama-server, apply runtime profiles, or change GPU/runtime settings. Reservations are advisory rather than hard resource isolation. See [the hardware intelligence notes](docs/HARDWARE-INTELLIGENCE.md) for formulas, scheduler behavior, safety boundaries and limitations.
 
 
 ## Managed workload execution
