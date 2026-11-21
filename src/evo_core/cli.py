@@ -16,6 +16,7 @@ def build_parser():
     config_parent.add_argument("--config",default=argparse.SUPPRESS,help="TOML configuration file")
     config_parent.add_argument("--provider",help="Named provider profile from [providers.*] in the TOML config")
     doctor=sub.add_parser("doctor",parents=[config_parent],help="Check the configured model endpoint")
+    sub.add_parser("serve",parents=[config_parent],help="Start the loopback desktop API server")
     doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
     for name,help_text in (("chat","Start an interactive conversation"),
                            ("code","Start an approval-gated coding-agent session")):
@@ -140,6 +141,15 @@ def main():
         config=load_config(args.config,getattr(args,"provider",None))
     except Exception as exc:
         print(f"Configuration error: {exc}",file=sys.stderr); raise SystemExit(2)
+    if args.command=="serve":
+        try:
+            import uvicorn
+            from .api import create_app
+        except ImportError as exc:
+            print("Desktop API dependencies missing. Install with: pip install -e '.[desktop]'",file=sys.stderr)
+            raise SystemExit(2) from exc
+        uvicorn.run(create_app(args.config,getattr(args,"provider",None)),host="127.0.0.1",port=8765,log_level="info")
+        return
     if args.command=="doctor":
         provider=OpenAICompatibleProvider(config.base_url,config.api_key,config.model,config.timeout_seconds)
         try:
