@@ -72,6 +72,17 @@ class RunFeedbackTests(unittest.TestCase):
             self.store.record_run_feedback(run_id,"partial","")
         self.assertEqual(self.store.list_run_feedback(run_id),[])
 
+    def test_failed_feedback_insert_rolls_back_lesson_creation(self):
+        run_id=self.make_run()
+        self.store.db.execute(
+            "CREATE TRIGGER reject_feedback BEFORE INSERT ON run_feedback BEGIN SELECT RAISE(ABORT,'forced failure'); END")
+        self.store.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.record_run_feedback(run_id,"failure","A correction occurred.",
+                                           "Do not repeat this regression.","coding regression")
+        self.assertEqual(self.store.list_lessons(),[])
+        self.assertEqual(self.store.list_run_feedback(run_id),[])
+
     def test_unknown_run_is_rejected_without_orphan_lesson(self):
         with self.assertRaises(ValueError):
             self.store.record_run_feedback("missing","failure","bad","lesson")
