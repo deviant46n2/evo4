@@ -573,7 +573,7 @@ class EvoStore:
         return run_id
 
     def finish_agent_run(self, run_id, status, summary=""):
-        if status not in {"completed","failed","cancelled"}:
+        if status not in {"completed","failed","cancelled","interrupted"}:
             raise ValueError("Invalid agent run status")
         with self.lock:
             self.db.execute("UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=?",
