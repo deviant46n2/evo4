@@ -66,6 +66,10 @@ class ManagedExecutionApiTests(unittest.TestCase):
         executions = self.routes[("/api/v1/hardware/executions", "GET")]()
         self.assertEqual(executions[0]["id"], result["execution_id"])
         self.assertEqual(executions[0]["argv"], ["python", "-c", "print('ok')"])
+        with self.assertRaises(HTTPException) as finish_error:
+            self.routes[("/api/v1/hardware/scheduler/jobs/{job_id}/finish", "POST")](
+                job["id"], __import__("evo_core.api", fromlist=["SchedulerFinishInput"]).SchedulerFinishInput(outcome="completed"))
+        self.assertEqual(finish_error.exception.status_code, 409)
         caps = self.routes[("/api/v1/capabilities", "GET")]()
         self.assertTrue(caps["hardware_managed_execution"])
         self.assertFalse(caps["hardware_process_control"])
