@@ -111,6 +111,9 @@ class CodingAgent:
         store.add_message(conversation_id,"user",request)
         run_id=store.start_agent_run("coding",{
             "workspace":str(self.workspace.root),
+            "conversation_id":conversation_id,
+            "model":self.assistant.config.model,
+            "base_url":self.assistant.config.base_url,
             "max_tool_rounds":self.max_tool_rounds,
             "request":request[:2000],
         })
