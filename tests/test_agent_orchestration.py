@@ -107,9 +107,23 @@ class AgentOrchestrationTests(unittest.TestCase):
         class Provider:
             def chat(self, messages, **kwargs):
                 return {"content": "not JSON"}
+        before = orchestration.list_plans(self.db)
         with self.assertRaises(ValueError):
             orchestration.propose_with_model(Provider(), "Do work", "/workspace")
-        self.assertEqual(orchestration.list_plans(self.db), [])
+        self.assertEqual(orchestration.list_plans(self.db), before)
+
+    def test_markdown_fenced_model_json_is_unwrapped(self):
+        class Provider:
+            def chat(self, messages, **kwargs):
+                return {"content": ```json
+{"title":"T","summary":"S","steps":[
+  {"title":"I","description":"Inspect","expected_outcome":"Understand the code",
+   "verification":"Read relevant files"}
+]}
+```}
+        proposal = orchestration.propose_with_model(Provider(), "Do work", "/workspace")
+        self.assertEqual(proposal["title"], "T")
+        self.assertEqual(len(proposal["steps"]), 1)
 
 
 if __name__ == "__main__":
