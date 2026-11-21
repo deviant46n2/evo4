@@ -21,11 +21,20 @@ def create_app(config_path="config.toml", provider_name=None):
     assistant = EvoAssistant(config, store=store)
     app = FastAPI(title="Evo 4 Local API", version="0.1.0")
     app.state.config, app.state.store, app.state.assistant = config, store, assistant
+    @app.middleware("http")
+    async def local_host_only(request, call_next):
+        if request.url.hostname not in {"127.0.0.1", "localhost"}:
+            raise HTTPException(status_code=403, detail="Evo API accepts loopback hosts only")
+        return await call_next(request)
+
     app.add_middleware(CORSMiddleware, allow_origins=[
         "http://127.0.0.1:5173", "http://localhost:5173",
         "http://127.0.0.1:4173", "http://localhost:4173"],
         allow_credentials=False, allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type"])
+
+    conversation_locks = {}
+    locks_guard = threading.Lock()
 
     @app.get("/api/v1/health")
     def health():
@@ -72,7 +81,10 @@ def create_app(config_path="config.toml", provider_name=None):
                 loop.call_soon_threadsafe(queue.put_nowait, {"event":"token","data":token})
             def run_turn():
                 try:
-                    result = assistant.turn(cid,text,on_token=on_token)
+                    with locks_guard:
+                        turn_lock = conversation_locks.setdefault(cid, threading.Lock())
+                    with turn_lock:
+                        result = assistant.turn(cid,text,on_token=on_token)
                     loop.call_soon_threadsafe(queue.put_nowait, {"event":"complete","data":{
                         "conversation_id":cid,"elapsed_seconds":result.get("elapsed_seconds"),
                         "ttft_seconds":result.get("ttft_seconds"),"prompt_tokens":result.get("prompt_tokens"),
