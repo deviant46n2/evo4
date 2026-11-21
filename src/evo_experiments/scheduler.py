@@ -194,23 +194,35 @@ def finish_job(connection, job_id, outcome, note="", now=None):
     if outcome not in {"completed","failed"}:
         raise ValueError("Running jobs can only be marked completed or failed; Evo does not stop processes")
     now_text = _stamp(now)
-    cur = connection.execute(
-        """UPDATE workload_jobs SET status=?,finished_at=?,updated_at=?,outcome_note=?
-           WHERE id=? AND status='running'""",
-        (outcome,now_text,now_text,str(note)[:2000],job_id))
-    if cur.rowcount != 1:
-        raise ValueError("Only a running job can be finished")
-    connection.commit()
+    try:
+        cur = connection.execute(
+            """UPDATE workload_jobs SET status=?,finished_at=?,updated_at=?,outcome_note=?
+               WHERE id=? AND status='running'""",
+            (outcome,now_text,now_text,str(note)[:2000],job_id))
+        if cur.rowcount != 1:
+            connection.rollback()
+            raise ValueError("Only a running job can be finished")
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
     return get_job(connection,job_id)
 
 def cancel_job(connection, job_id, now=None):
     now_text = _stamp(now)
-    cur = connection.execute(
-        """UPDATE workload_jobs SET status='cancelled',finished_at=?,updated_at=?,
-           lease_expires_at=NULL,outcome_note='Cancelled before start; no process action taken.'
-           WHERE id=? AND status IN ('queued','reserved')""",
-        (now_text,now_text,job_id))
-    if cur.rowcount != 1:
-        raise ValueError("Only queued or reserved jobs can be cancelled; running processes are never stopped")
-    connection.commit()
+    try:
+        cur = connection.execute(
+            """UPDATE workload_jobs SET status='cancelled',finished_at=?,updated_at=?,
+               lease_expires_at=NULL,outcome_note='Cancelled before start; no process action taken.'
+               WHERE id=? AND status IN ('queued','reserved')""",
+            (now_text,now_text,job_id))
+        if cur.rowcount != 1:
+            connection.rollback()
+            raise ValueError("Only queued or reserved jobs can be cancelled; running processes are never stopped")
+        connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
     return get_job(connection,job_id)
