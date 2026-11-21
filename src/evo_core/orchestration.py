@@ -76,6 +76,13 @@ def create_plan(connection, request, workspace, proposal):
         _event(connection, plan_id, "proposed", {"step_count": len(steps)})
     return get_plan(connection, plan_id)
 
+def record_event(connection, plan_id, event_type, payload=None, step_id=None):
+    if not connection.execute("SELECT 1 FROM agent_plans WHERE id=?", (plan_id,)).fetchone():
+        raise ValueError("Agent plan not found")
+    with connection:
+        _event(connection, plan_id, event_type, payload, step_id)
+
+
 def _step(row):
     return dict(row)
 
@@ -165,6 +172,11 @@ def finish_plan(connection, plan_id, outcome, error=""):
             "UPDATE agent_plans SET status=?,error=?,updated_at=? WHERE id=?",
             (outcome, str(error)[:2000], stamp, plan_id))
         if outcome != "completed":
+            active_outcome = "interrupted" if outcome in {"cancelled", "interrupted"} else "failed"
+            connection.execute(
+                """UPDATE agent_plan_steps SET status=?,result=?,finished_at=?
+                   WHERE plan_id=? AND status='running'""",
+                (active_outcome, str(error)[:4000], stamp, plan_id))
             connection.execute(
                 "UPDATE agent_plan_steps SET status='skipped',finished_at=? WHERE plan_id=? AND status='pending'",
                 (stamp, plan_id))
