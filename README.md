@@ -71,8 +71,12 @@ evo memory candidates
 evo memory accept CANDIDATE_ID
 evo memory reject CANDIDATE_ID
 evo memory archive MEMORY_ID
+evo memory evaluate --cases tasks/memory-retrieval.json --top-k 5
 evo learn add "Run tests before claiming success" --trigger "coding tests" --category coding
 evo learn search "coding tests"
+evo runs list --limit 20
+evo runs show RUN_ID
+evo runs review RUN_ID --outcome failure --feedback "A targeted test passed but the full suite found a regression." --lesson "Run the full existing test suite after targeted checks." --trigger "coding regression tests"
 evo research add "Paper notes" --url "https://example.org/paper" --content "Sourced notes go here."
 evo research search "retrieval performance"
 evo task add "Investigate llama.cpp context performance" --priority 2
