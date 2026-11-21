@@ -89,7 +89,7 @@ class CodingAgent:
             return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test runner completed after the latest change."
         return ""
 
-    def run(self, conversation_id, request, approval, on_token=None):
+    def run(self, conversation_id, request, approval, on_token=None, run_id=None):
         if not isinstance(request,str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
         if not callable(approval):
@@ -98,7 +98,7 @@ class CodingAgent:
         messages=self.assistant._build_messages(conversation_id,request)
         messages[0]["content"] += CODING_POLICY
         store.add_message(conversation_id,"user",request)
-        run_id=store.start_agent_run("coding",{
+        run_id=run_id or store.start_agent_run("coding",{
             "workspace":str(self.workspace.root),
             "conversation_id":conversation_id,
             "model":self.assistant.config.model,
