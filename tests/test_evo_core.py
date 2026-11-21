@@ -132,6 +132,29 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(len(assistant.store.list_memories()),2)
             assistant.close()
 
+    def test_lesson_retrieval_prefers_trigger_relevance_over_confidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            relevant=store.add_lesson("Use pinned CUDA memory measurements.",
+                                      trigger_text="CUDA memory profiling",confidence=0.4)
+            store.add_lesson("General memory organization advice.",
+                             trigger_text="memory",confidence=1.0)
+            rows=store.search_lessons("CUDA memory",limit=1)
+            self.assertEqual(rows[0]["id"],relevant)
+            self.assertGreater(rows[0]["relevance"],0)
+            store.close()
+
+    def test_research_retrieval_prefers_title_relevance_over_recency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            relevant=store.add_research_document("CUDA memory optimization",
+                "A technical note on GPU memory behavior.")
+            store.add_research_document("Memory tips","General notes about remembering information.")
+            rows=store.search_research("CUDA memory",limit=1)
+            self.assertEqual(rows[0]["id"],relevant)
+            self.assertGreater(rows[0]["relevance"],0)
+            store.close()
+
     def test_lessons_are_retrieved_into_future_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             config=self.make_config(Path(tmp)/"evo.db")
