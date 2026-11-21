@@ -515,11 +515,16 @@ class EvoStore:
             runs=self.db.execute(
                 "SELECT id,status,metadata_json FROM agent_runs WHERE kind='coding'").fetchall()
             feedback=self.db.execute(
-                "SELECT outcome,COUNT(*) AS count FROM run_feedback GROUP BY outcome").fetchall()
+                """SELECT f.outcome,COUNT(*) AS count FROM run_feedback f
+                   JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding' GROUP BY f.outcome""").fetchall()
             reviewed=self.db.execute(
-                "SELECT COUNT(DISTINCT run_id) FROM run_feedback").fetchone()[0]
+                """SELECT COUNT(DISTINCT f.run_id) FROM run_feedback f
+                   JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding'""").fetchone()[0]
             lesson_count=self.db.execute(
-                "SELECT COUNT(*) FROM lessons WHERE source='user-run-feedback' AND status='active'").fetchone()[0]
+                """SELECT COUNT(*) FROM lessons l
+                   JOIN run_feedback f ON f.lesson_id=l.id
+                   JOIN agent_runs r ON r.id=f.run_id
+                   WHERE l.source='user-run-feedback' AND l.status='active' AND r.kind='coding'""").fetchone()[0]
         statuses={}
         verification={}
         tool_calls=[]
