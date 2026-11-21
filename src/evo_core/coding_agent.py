@@ -98,14 +98,21 @@ class CodingAgent:
         messages=self.assistant._build_messages(conversation_id,request)
         messages[0]["content"] += CODING_POLICY
         store.add_message(conversation_id,"user",request)
-        run_id=run_id or store.start_agent_run("coding",{
+        run_metadata={
             "workspace":str(self.workspace.root),
             "conversation_id":conversation_id,
             "model":self.assistant.config.model,
             "base_url":self.assistant.config.base_url,
             "max_tool_rounds":self.max_tool_rounds,
             "request":request[:2000],
-        })
+        }
+        if run_id is None:
+            run_id=store.start_agent_run("coding",run_metadata)
+        else:
+            # A caller may pre-register a run before queuing background work.
+            # Merge the execution context instead of assuming it already has
+            # the conversation linkage or current agent configuration.
+            store.update_agent_run_metadata(run_id,run_metadata)
         try:
             total_tool_calls=0
             successful_writes=0
