@@ -71,7 +71,47 @@ class EvoAssistant:
         messages = [{"role":"system","content":self.config.system_prompt + memory_block + relation_block + lesson_block + research_block}]
         messages.extend(row for row in selected_history if row["role"] in {"user","assistant"})
         messages.append({"role":"user","content":user_text})
-        return messages
+        return self._fit_context(messages)
+
+    def _fit_context(self,messages):
+        """Fit retrieved context and history to a conservative, configurable token budget.
+
+        This is a character-based estimate, not the model's tokenizer. The 3.5
+        chars/token conversion intentionally leaves room for tokenization variance.
+        The base system policy and current user request are never discarded.
+        """
+        window=max(4096,int(getattr(self.config,"context_window_tokens",49152)))
+        output_reserve=max(1,int(self.config.max_tokens))
+        budget_chars=max(4000,int(max(1024,window-output_reserve-512)*3.5))
+        if not messages:
+            return messages
+        system=messages[0].get("content","")
+        base=self.config.system_prompt
+        if system.startswith(base):
+            dynamic=system[len(base):]
+        else:
+            base=""
+            dynamic=system
+        current=messages[-1] if messages[-1].get("role")=="user" else None
+        current_chars=len(current.get("content","")) if current else 0
+        dynamic_budget=max(0,budget_chars-len(base)-current_chars)
+        dynamic=dynamic[:dynamic_budget]
+        remaining=max(0,budget_chars-len(base)-len(dynamic)-current_chars)
+        history=[]
+        for row in reversed(messages[1:-1] if current else messages[1:]):
+            content=row.get("content","")
+            if remaining<=0:
+                break
+            if len(content)>remaining:
+                content=content[-remaining:]
+            history.append({**row,"content":content})
+            remaining-=len(content)
+        history.reverse()
+        fitted=[{"role":"system","content":base+dynamic}]
+        fitted.extend(history)
+        if current:
+            fitted.append(current)
+        return fitted
 
     def _capture_memory_candidate(self, conversation_id, user_text):
         patterns = [
