@@ -958,6 +958,8 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.on_event("shutdown")
     def shutdown():
         shutting_down.set()
+        for stop_event in list(agent_stop_events.values()):
+            stop_event.set()
         # Never leave an agent worker blocked on a browser approval while the
         # executor is waiting to drain during application shutdown.
         with approval_guard:
