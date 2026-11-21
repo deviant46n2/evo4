@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from .client import stream_chat_completion
+from .client import get_runtime_props, stream_chat_completion
 from .db import ResultsDB
 from .evaluation import evaluate_task
 from .monitor import ResourceMonitor
@@ -40,10 +40,15 @@ def build_run_manifest(config):
             raise FileNotFoundError(f"Configured model_file does not exist: {path}")
         metadata["model_file"] = str(path.resolve())
         metadata["model_sha256"] = _file_sha256(path)
+    props = get_runtime_props(base_url=config.base_url, api_key=config.api_key,
+                              timeout=min(config.timeout_seconds, 2))
+    metadata["server_props_available"] = props is not None
+    if props is not None:
+        metadata["server_props"] = props
     return {"base_url": config.base_url, "model_api_id": config.model,
         "max_tokens": config.max_tokens, "temperature": config.temperature,
-        "timeout_seconds": config.timeout_seconds, "system_prompt": config.system_prompt,
-        "runtime_manifest": metadata}
+        "seed": config.seed, "timeout_seconds": config.timeout_seconds,
+        "system_prompt": config.system_prompt, "runtime_manifest": metadata}
 def run_tasks(config, tasks_path, repetitions=None):
     tasks = load_tasks(tasks_path)
     if not tasks:
@@ -58,11 +63,13 @@ def run_tasks(config, tasks_path, repetitions=None):
     try:
         for repetition in range(1, count + 1):
             for task in tasks:
+                run_seed = config.seed + repetition - 1 if config.seed is not None else None
+                run_manifest = {**manifest, "run_seed": run_seed}
                 eid = db.create_experiment({"started_at": datetime.now(timezone.utc).isoformat(),
                     "task_id": task["id"], "category": str(task.get("category", "uncategorized")),
                     "repetition": repetition, "model": config.model, "run_label": run_label,
-                    "base_url": config.base_url, "config_json": json.dumps(manifest, sort_keys=True),
-                    "prompt": task["prompt"], "status": "running"})
+                    "base_url": config.base_url, "config_json": json.dumps(run_manifest, sort_keys=True),
+                    "prompt": task["prompt"], "seed": run_seed, "status": "running"})
                 ids.append(eid)
                 monitor = ResourceMonitor(config.sample_interval_seconds,
                     lambda sample, experiment_id=eid: db.add_sample(experiment_id, sample))
@@ -72,22 +79,39 @@ def run_tasks(config, tasks_path, repetitions=None):
                     result = stream_chat_completion(base_url=config.base_url, api_key=config.api_key,
                         model=config.model, system_prompt=config.system_prompt, prompt=task["prompt"],
                         max_tokens=config.max_tokens, temperature=config.temperature,
-                        timeout=config.timeout_seconds)
-                    evaluation_status, evaluation_details = evaluate_task(task, result["response"])
+                        timeout=config.timeout_seconds, seed=run_seed)
+                    finish_reason = result.get("finish_reason")
+                    if finish_reason == "stop":
+                        status = "completed"
+                        evaluation_status, evaluation_details = evaluate_task(task, result["response"])
+                    elif finish_reason == "length":
+                        status = "truncated"
+                        evaluation_status = "not_run_truncated"
+                        evaluation_details = {"reason": "Server stopped generation at the completion token limit."}
+                    elif finish_reason is None:
+                        status = "unknown"
+                        evaluation_status = "not_run_unknown_finish_reason"
+                        evaluation_details = {"reason": "Server did not report a completion finish_reason."}
+                    else:
+                        status = "incomplete"
+                        evaluation_status = "not_run_" + str(finish_reason)
+                        evaluation_details = {"reason": "Server reported a non-success finish_reason.",
+                                              "finish_reason": finish_reason}
                     db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
-                        "response": result["response"], "status": "completed",
+                        "response": result["response"], "status": status, "finish_reason": finish_reason,
                         "elapsed_seconds": result["elapsed_seconds"],
                         "time_to_first_token_seconds": result["time_to_first_token_seconds"],
                         "prompt_tokens": result["prompt_tokens"], "completion_tokens": result["completion_tokens"],
                         "tokens_per_second": result["tokens_per_second"], "evaluation_status": evaluation_status,
                         "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None,
-                        "evaluation_passed": evaluation_details["passed"] if evaluation_details else None,
-                        "evaluation_total": evaluation_details["total"] if evaluation_details else None})
+                        "evaluation_passed": evaluation_details["passed"] if evaluation_status in ("passed","failed") and evaluation_details else None,
+                        "evaluation_total": evaluation_details["total"] if evaluation_status in ("passed","failed") and evaluation_details else None})
                 except Exception as exc:
                     failure = {"finished_at": datetime.now(timezone.utc).isoformat(),
                         "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
                     if result is not None:
                         failure.update({"response": result["response"],
+                            "finish_reason": result.get("finish_reason"),
                             "elapsed_seconds": result["elapsed_seconds"],
                             "time_to_first_token_seconds": result["time_to_first_token_seconds"],
                             "prompt_tokens": result["prompt_tokens"],
