@@ -203,12 +203,12 @@ def create_app(config_path="config.toml", provider_name=None):
                     executor.submit(run_turn)
                 except Exception as exc:
                     yield (
-                        "event: error\\ndata: "
+                        "event: error\ndata: "
                         + json.dumps({
                             "type": type(exc).__name__,
                             "message": "Unable to start chat worker",
                         })
-                        + "\\n\\n"
+                        + "\n\n"
                     )
                     return
                 while True:
