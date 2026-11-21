@@ -30,6 +30,17 @@ class HardwareApiTests(unittest.TestCase):
         self.app.state.lab_db.close()
         self.temp.cleanup()
 
+    def test_memory_search_preview_exposes_ranked_evidence(self):
+        store = self.app.state.assistant.store
+        store.add_memory("The local Qwen model uses CUDA for inference",
+                         category="models", tags=["llama.cpp"], source="user")
+        endpoint = self.routes["/api/v1/memories/search"]
+        payload = endpoint(q="Qwen CUDA inference", limit=5)
+        self.assertEqual(payload["count"], 1)
+        self.assertIn("no embeddings", payload["retrieval"])
+        self.assertIn("content:", payload["matches"][0]["reason"])
+        self.assertGreater(payload["matches"][0]["coverage"], 0)
+
     def test_hardware_endpoint_is_observe_only_and_surfaces_pressure(self):
         sample = {
             "sampled_at": "2026-11-21T12:00:00+00:00",
