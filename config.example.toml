@@ -1,4 +1,7 @@
 [server]
+# Default endpoint remains backward compatible. Set profile="local" to select
+# a named profile below, or pass --provider NAME to evo chat/code/doctor.
+profile = "local"
 base_url = "http://127.0.0.1:18997"
 api_key = "no-key"
 # Set this to an ID returned by: evo doctor
@@ -45,3 +48,18 @@ batch_size = 512
 ubatch_size = 128
 flash_attention = ""
 notes = "Record desktop state and unusual background GPU use here."
+
+
+# Named OpenAI-compatible providers. Cloud providers are optional; no paid
+# provider is required. Put API keys in environment variables, never here.
+[providers.local]
+base_url = "http://127.0.0.1:18997"
+model = "local-model"
+
+# Example free-tier-compatible profile. Uncomment and set the provider's
+# documented endpoint/model plus its API-key environment variable.
+# [providers.example_cloud]
+# base_url = "https://api.example.com/v1"
+# model = "provider-model-id"
+# api_key_env = "EXAMPLE_CLOUD_API_KEY"
+# timeout_seconds = 600
