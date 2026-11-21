@@ -103,7 +103,7 @@ evo-exp report --limit 20
 evo-exp summary --csv > summary.csv
 ```
 
-See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
+See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md) and [the learning/memory implementation notes](docs/LEARNING-AND-MEMORY.md).
 
 ## Architecture and boundaries
 
