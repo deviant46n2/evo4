@@ -192,12 +192,12 @@ def main():
                 if not row:
                     print("Agent run not found.")
                 else:
-                    print(f"Run: {row['id']}\\nKind: {row['kind']}\\nStatus: {row['status']}\\nStarted: {row['started_at']}\\nFinished: {row['finished_at'] or 'still running'}\\nSummary: {row['summary'] or ''}")
+                    print(f"Run: {row['id']}\nKind: {row['kind']}\nStatus: {row['status']}\nStarted: {row['started_at']}\nFinished: {row['finished_at'] or 'still running'}\nSummary: {row['summary'] or ''}")
                     print("Tool events:")
                     for event in store.get_run_events(args.id):
                         print(f"  #{event['id']} {event['tool_name']} [{event['status']}]")
-                    print(f"     input: {event['input_json'][:1200]}")
-                    print(f"     result: {event['output_summary'] or ''}")
+                        print(f"     input: {event['input_json'][:1200]}")
+                        print(f"     result: {event['output_summary'] or ''}")
                     for feedback in store.list_run_feedback(args.id):
                         print(f"Feedback: {feedback['outcome']} | {feedback['feedback']}")
             elif args.runs_command=="review":
