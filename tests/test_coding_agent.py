@@ -92,12 +92,12 @@ class CodingAgentTests(unittest.TestCase):
     def test_test_command_detection_is_conservative(self):
         self.assertTrue(is_test_command(["python","-m","pytest","-q"]))
         self.assertTrue(is_test_command(["cargo","test"]))
-        self.assertTrue(is_verification_command(["npm","run","test:unit"]))
-        self.assertFalse(is_verification_command(["python","main.py"]))
-        self.assertFalse(is_verification_command(["git","status"]))
-        self.assertFalse(is_verification_command(["python","script.py","/tmp/build"]))
-        self.assertTrue(is_verification_command(["git","diff","--check"]))
-        self.assertTrue(is_verification_command(["npx","eslint","."]))
+        self.assertTrue(is_test_command(["npm","run","test:unit"]))
+        self.assertFalse(is_test_command(["python","main.py"]))
+        self.assertFalse(is_test_command(["git","status"]))
+        self.assertFalse(is_test_command(["python","script.py","/tmp/build"]))
+        self.assertFalse(is_test_command(["git","diff","--check"]))
+        self.assertFalse(is_test_command(["npx","eslint","."]))
 
     def test_successful_post_edit_check_is_reported_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
