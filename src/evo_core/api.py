@@ -20,6 +20,7 @@ from .memory_review import find_duplicate_candidates
 from .demo_data import seed_demo_data, demo_data_status, clear_demo_data
 from evo_experiments.monitor import sample_nvidia_smi
 from evo_experiments.db import ResultsDB
+from evo_experiments.intelligence import assess_workload, discover_runtimes, estimate_runtime, initialize_profiles, list_profiles, save_profile
 
 
 class ChatRequest(BaseModel):
@@ -51,6 +52,26 @@ class AgentCreate(BaseModel):
 class AgentApproval(BaseModel):
     approved: bool
 
+class RuntimeProfileInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    model: str = Field(default="", max_length=200)
+    model_file: str = Field(default="", max_length=1000)
+    runtime: str = Field(default="", max_length=100)
+    context_size: int | None = Field(default=None, ge=1, le=10000000)
+    gpu_layers: str = Field(default="", max_length=40)
+    kv_cache_k: str = Field(default="", max_length=40)
+    kv_cache_v: str = Field(default="", max_length=40)
+    batch_size: int | None = Field(default=None, ge=1, le=1000000)
+    ubatch_size: int | None = Field(default=None, ge=1, le=1000000)
+    notes: str = Field(default="", max_length=4000)
+
+
+class WorkloadAssessment(BaseModel):
+    kind: str = Field(default="background", max_length=40)
+    gpu_heavy: bool = False
+    estimated_vram_mib: float | None = Field(default=None, ge=0, le=1000000)
+    estimated_ram_mib: float | None = Field(default=None, ge=0, le=1000000)
+
 
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
@@ -62,6 +83,7 @@ def create_app(config_path="config.toml", provider_name=None):
     app.state.store = store
     app.state.lab_db = lab_db
     app.state.assistant = assistant
+    initialize_profiles(lab_db.connection)
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
     # Shutdown waits for active turns before closing the shared SQLite store.
@@ -194,6 +216,50 @@ def create_app(config_path="config.toml", provider_name=None):
             "warnings": warnings,
         }
 
+    @app.get("/api/v1/hardware/runtimes")
+    def hardware_runtimes():
+        try:
+            sample = sample_nvidia_smi()
+        except Exception:
+            sample = {"gpu_processes": []}
+        endpoint = urlsplit(config.base_url)
+        return discover_runtimes(gpu_processes=sample.get("gpu_processes"),
+            configured={"provider": config.provider_name, "model": config.model,
+                        "endpoint": urlunsplit((endpoint.scheme, endpoint.hostname or "", endpoint.path, "", ""))})
+
+    @app.get("/api/v1/hardware/profiles")
+    def hardware_profiles():
+        return list_profiles(lab_db.connection)
+
+    @app.post("/api/v1/hardware/profiles", status_code=201)
+    def hardware_profile_create(payload: RuntimeProfileInput):
+        try:
+            return save_profile(lab_db.connection, payload.model_dump())
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/hardware/estimate")
+    def hardware_estimate(payload: RuntimeProfileInput):
+        try:
+            sample = sample_nvidia_smi()
+        except Exception:
+            sample = {}
+        profile = payload.model_dump()
+        if profile.get("model_file"):
+            try:
+                profile["model_file_bytes"] = Path(profile["model_file"]).expanduser().stat().st_size
+            except OSError:
+                profile["model_file_bytes"] = None
+        return estimate_runtime(profile, sample)
+
+    @app.post("/api/v1/hardware/admission")
+    def hardware_admission(payload: WorkloadAssessment):
+        try:
+            sample = sample_nvidia_smi()
+        except Exception:
+            sample = {}
+        return assess_workload(sample, payload.model_dump())
+
     @app.get("/api/v1/hardware/history")
     def hardware_history(limit: int = 180):
         bounded = min(max(limit, 1), 1000)
@@ -289,6 +355,11 @@ def create_app(config_path="config.toml", provider_name=None):
             "experiments": True,
             "demo_data": True,
             "hardware_diagnostics": True,
+            "hardware_runtime_discovery": True,
+            "hardware_runtime_profiles": True,
+            "hardware_resource_estimates": True,
+            "hardware_workload_admission": True,
+            "hardware_process_control": False,
             "provider_selection": False,
         }
 
