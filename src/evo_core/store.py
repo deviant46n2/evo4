@@ -208,28 +208,32 @@ class EvoStore:
             raise ValueError("confidence must be between 0 and 1")
         new_id,relation_id,now=str(uuid.uuid4()),str(uuid.uuid4()),utc_now()
         with self.lock:
-            old=self.db.execute("SELECT * FROM memories WHERE id=? AND status='active'",
-                                (memory_id,)).fetchone()
-            if not old:
-                raise ValueError("Active memory not found")
-            metadata={"supersedes_memory_id":memory_id}
-            if reason.strip():
-                metadata["supersession_reason"]=reason.strip()
-            self.db.execute(
-                """INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
-                (new_id,content,category or old["category"],json.dumps(tags or []),source,
-                 float(confidence),now,now,json.dumps(metadata,ensure_ascii=False)))
-            if self.fts_available:
-                self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
-                                (new_id,content,category or old["category"]," ".join(tags or [])))
-            self.db.execute(
-                """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
-                   VALUES(?,?,?,?,?,?)""",
-                (relation_id,memory_id,new_id,"supersedes",reason.strip(),now))
-            self.db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?",
-                            (now,memory_id))
-            self.db.commit()
+            try:
+                old=self.db.execute("SELECT * FROM memories WHERE id=? AND status='active'",
+                                    (memory_id,)).fetchone()
+                if not old:
+                    raise ValueError("Active memory not found")
+                metadata={"supersedes_memory_id":memory_id}
+                if reason.strip():
+                    metadata["supersession_reason"]=reason.strip()
+                self.db.execute(
+                    """INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (new_id,content,category or old["category"],json.dumps(tags or []),source,
+                     float(confidence),now,now,json.dumps(metadata,ensure_ascii=False)))
+                if self.fts_available:
+                    self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
+                                    (new_id,content,category or old["category"]," ".join(tags or [])))
+                self.db.execute(
+                    """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (relation_id,memory_id,new_id,"supersedes",reason.strip(),now))
+                self.db.execute("UPDATE memories SET status='superseded',updated_at=? WHERE id=?",
+                                (now,memory_id))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
         return new_id
 
     def relate_memories(self, source_id, target_id, relation_type, evidence=""):
@@ -239,15 +243,19 @@ class EvoStore:
             raise ValueError("A memory cannot be related to itself")
         relation_id,now=str(uuid.uuid4()),utc_now()
         with self.lock:
-            found=self.db.execute(
-                "SELECT COUNT(*) FROM memories WHERE id IN (?,?)",(source_id,target_id)).fetchone()[0]
-            if found!=2:
-                raise ValueError("Both memory IDs must exist")
-            self.db.execute(
-                """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
-                   VALUES(?,?,?,?,?,?)""",
-                (relation_id,source_id,target_id,relation_type,(evidence or "").strip(),now))
-            self.db.commit()
+            try:
+                found=self.db.execute(
+                    "SELECT COUNT(*) FROM memories WHERE id IN (?,?)",(source_id,target_id)).fetchone()[0]
+                if found!=2:
+                    raise ValueError("Both memory IDs must exist")
+                self.db.execute(
+                    """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (relation_id,source_id,target_id,relation_type,(evidence or "").strip(),now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
         return relation_id
 
     def get_memory_relations(self, memory_ids):
@@ -509,23 +517,27 @@ class EvoStore:
         feedback_id=str(uuid.uuid4())
         lesson_id=None
         with self.lock:
-            run=self.db.execute("SELECT id FROM agent_runs WHERE id=?", (run_id,)).fetchone()
-            if not run:
-                raise ValueError(f"Unknown agent run: {run_id}")
-            if lesson:
-                lesson_id=str(uuid.uuid4())
-                # The lesson text is explicitly supplied by the user; do not
-                # fabricate different confidence scores from the run outcome.
-                confidence=1.0
+            try:
+                run=self.db.execute("SELECT id FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+                if not run:
+                    raise ValueError(f"Unknown agent run: {run_id}")
+                if lesson:
+                    lesson_id=str(uuid.uuid4())
+                    # The lesson text is explicitly supplied by the user; do not
+                    # fabricate different confidence scores from the run outcome.
+                    confidence=1.0
+                    self.db.execute(
+                        """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
+                           VALUES(?,?,?,?,?,?,?)""",
+                        (lesson_id,trigger_text.strip(),lesson,category,"user-run-feedback",confidence,now))
                 self.db.execute(
-                    """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
-                       VALUES(?,?,?,?,?,?,?)""",
-                    (lesson_id,trigger_text.strip(),lesson,category,"user-run-feedback",confidence,now))
-            self.db.execute(
-                """INSERT INTO run_feedback(id,run_id,outcome,feedback,lesson_id,created_at)
-                   VALUES(?,?,?,?,?,?)""",
-                (feedback_id,run_id,outcome,feedback,lesson_id,now))
-            self.db.commit()
+                    """INSERT INTO run_feedback(id,run_id,outcome,feedback,lesson_id,created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (feedback_id,run_id,outcome,feedback,lesson_id,now))
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+                raise
         return {"feedback_id":feedback_id,"lesson_id":lesson_id}
 
     def agent_run_summary(self):
