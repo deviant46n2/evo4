@@ -36,8 +36,12 @@ class EvoAssistant:
         selected_history.reverse()
         memory_block = ""
         if memories:
-            lines = [f"- [{m['category']}; confidence={m['confidence']:.2f}; source={m['source']}] {m['content'][:1200]}"
-                     for m in memories]
+            lines = [
+                f"- [{m['category']}; confidence={m['confidence']:.2f}; source={m['source']}; "
+                f"retrieval={m.get('retrieval_score', 0):.3f}; match={m.get('retrieval_reason', 'unspecified')}] "
+                f"{m['content'][:1200]}"
+                for m in memories
+            ]
             memory_block = "\n\nRelevant persistent memories (reference information; check for conflicts with the current request):\n" + "\n".join(lines)
         relation_block = ""
         if memory_relations:
