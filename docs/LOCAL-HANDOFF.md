@@ -1,11 +1,13 @@
 # Local handoff and independent review
 
-This branch is a substantial early implementation, not a claim of target-machine validation.
+This handoff describes the current desktop + hardware-observability baseline. For the exact independently reviewed commit and caveats, see [Project status](PROJECT-STATUS.md).
 
 ## First local setup
 
+For desktop use, follow [the desktop user guide](DESKTOP-USER-GUIDE.md), which includes the optional API dependencies and separate backend/frontend terminals.
+
 ```bash
-git clone -b learning-feedback-v1 https://github.com/deviant46n2/evo4.git
+git clone -b hardware-observability-v1 https://github.com/deviant46n2/evo4.git
 cd evo4
 python -m venv .venv
 source .venv/bin/activate
@@ -47,7 +49,7 @@ The example research note above is a CLI usage example, not a real research clai
 
 For coding mode, the default configuration allowlists `python -m unittest` and `pytest`. The model can inspect files automatically; each file write and command requires an interactive approval. Add other safe command prefixes to `[workspace].allowed_commands` only when needed. Tool-call support must be verified against the selected llama.cpp build and model.
 
-## OpenCode independent review prompt
+## Independent review prompt
 
 Review this repository as a skeptical senior Python engineer. Do not assume the implementation is correct because tests exist. First inspect the complete repository and identify architectural and correctness risks. Then:
 
@@ -77,4 +79,4 @@ Return:
 - resource measurements
 - recommended fixes ranked by severity
 
-Do not report an untested hypothesis as a confirmed defect. The base branch's earlier live Qwen test does not validate new features on this branch; repeat the real endpoint checks here. CI covers Python 3.11 and 3.14, but does not validate the user's local model behavior.
+Do not report an untested hypothesis as a confirmed defect. The earlier live Qwen test does not validate later features; repeat real endpoint checks on the exact commit under review. For desktop work, separately test browser interactions and narrow-window behavior. Do not treat a successful TypeScript/Vite build as browser UX validation. CI covers Python 3.11 and 3.14, but does not validate the user's local model behavior.
