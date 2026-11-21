@@ -15,11 +15,17 @@ def _looks_sensitive_name(name):
         return True
     if lowered.endswith((".pem",".key",".p12",".pfx",".keystore")):
         return True
-    # Catch common project-specific secret/config filenames without matching
-    # ordinary words such as "monkey" or "tokenizer".
+    # Match credential-bearing filename patterns, not generic words such as
+    # "auth", "private", or "token" that commonly occur in source filenames.
     tokens={part for part in re.split(r"[^a-z0-9]+",lowered) if part}
-    return bool(tokens & {"secret","secrets","credential","credentials","password","passwd",
-                          "token","tokens","apikey","privatekey","private","auth"})
+    joined="_".join(tokens)
+    if tokens & {"secret","secrets","credential","credentials","password","passwd"}:
+        return True
+    if {"api","key"}.issubset(tokens) or {"private","key"}.issubset(tokens):
+        return True
+    if tokens & {"access_token","refresh_token","auth_token","api_token"}:
+        return True
+    return joined in {"token","tokens","authkey","auth_key","client_secret"}
 
 def _is_excluded(path):
     return any(part in IGNORED_DIRS or _looks_sensitive_name(part)
@@ -29,9 +35,14 @@ def is_test_path(relative_path):
     parts=Path(str(relative_path)).parts
     name=parts[-1].casefold() if parts else ""
     parent_parts={part.casefold() for part in parts[:-1]}
-    return (bool(parent_parts & {"test","tests","spec","specs"}) or
-            name.startswith(("test_","tests_","spec_")) or
-            name.endswith(("_test.py","_spec.py","test.ts","test.tsx","spec.ts","spec.tsx")))
+    if parent_parts & {"test","tests","spec","specs","__tests__","__mocks__"}:
+        return True
+    if name.startswith(("test_","tests_","spec_")):
+        return True
+    suffixes=(".test.js",".test.jsx",".test.ts",".test.tsx",".test.mjs",".test.cjs",
+              ".spec.js",".spec.jsx",".spec.ts",".spec.tsx",".spec.mjs",".spec.cjs",
+              "_test.py","_spec.py","_test.go","_test.rs","_test.rb","_spec.rb")
+    return name.endswith(suffixes)
 
 class WorkspaceError(RuntimeError):
     pass
@@ -48,6 +59,7 @@ class Workspace:
             raise WorkspaceError(f"Workspace root is not a directory: {self.root}")
         self.allowed_commands=[tuple(item) for item in allowed_commands if item]
         self.max_read_bytes=max_read_bytes
+        self._test_write_approvals={}
 
     def resolve(self,relative_path):
         candidate=(self.root / relative_path).resolve()
@@ -136,10 +148,21 @@ class Workspace:
                         return matches
         return matches
 
-    def write_file(self,relative_path,content,overwrite=False,allow_test_changes=False):
+    def approve_test_write(self,relative_path):
+        """Mint a one-use, path-scoped approval token after user approval."""
         path=self.resolve(relative_path)
-        if is_test_path(path.relative_to(self.root)) and not allow_test_changes:
-            raise WorkspaceError("Test/spec files are protected. Explicitly approve a test-file change before writing.")
+        if not is_test_path(path.relative_to(self.root)):
+            raise WorkspaceError("Approval tokens are only issued for test/spec files")
+        token=object()
+        self._test_write_approvals[id(token)]=(token,path)
+        return token
+
+    def write_file(self,relative_path,content,overwrite=False,test_approval=None):
+        path=self.resolve(relative_path)
+        if is_test_path(path.relative_to(self.root)):
+            approved=self._test_write_approvals.pop(id(test_approval),None) if test_approval is not None else None
+            if not approved or approved[0] is not test_approval or approved[1] != path:
+                raise WorkspaceError("Test/spec files are protected. A fresh, path-specific user approval is required.")
         if _is_excluded(path.relative_to(self.root)):
             raise WorkspaceError("Refusing to write inside ignored or sensitive paths")
         if path.exists() and not overwrite:
