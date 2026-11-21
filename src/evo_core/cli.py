@@ -179,7 +179,7 @@ def main():
                 print(f"Saved lesson: {lesson_id}")
             elif args.learn_command=="search":
                 for row in store.search_lessons(args.query,args.limit):
-                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
+                    print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}; source={row['source']}] Trigger: {row['trigger_text']} | {row['lesson']}")
             elif args.learn_command=="list":
                 for row in store.list_lessons():
                     print(f"{row['id']} [{row['category']}; confidence={row['confidence']:.2f}] {row['lesson']}")
@@ -195,7 +195,9 @@ def main():
                     print(f"Run: {row['id']}\\nKind: {row['kind']}\\nStatus: {row['status']}\\nStarted: {row['started_at']}\\nFinished: {row['finished_at'] or 'still running'}\\nSummary: {row['summary'] or ''}")
                     print("Tool events:")
                     for event in store.get_run_events(args.id):
-                        print(f"  #{event['id']} {event['tool_name']} [{event['status']}] {event['output_summary'] or ''}")
+                        print(f"  #{event['id']} {event['tool_name']} [{event['status']}]")
+                    print(f"     input: {event['input_json'][:1200]}")
+                    print(f"     result: {event['output_summary'] or ''}")
                     for feedback in store.list_run_feedback(args.id):
                         print(f"Feedback: {feedback['outcome']} | {feedback['feedback']}")
             elif args.runs_command=="review":
