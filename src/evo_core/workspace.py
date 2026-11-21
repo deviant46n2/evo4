@@ -23,7 +23,8 @@ def _looks_sensitive_name(name):
         return True
     if {"api","key"}.issubset(tokens) or {"private","key"}.issubset(tokens):
         return True
-    if tokens & {"access_token","refresh_token","auth_token","api_token"}:
+    if ({"access","token"}.issubset(tokens) or {"refresh","token"}.issubset(tokens) or
+            {"auth","token"}.issubset(tokens) or {"api","token"}.issubset(tokens)):
         return True
     return joined in {"token","tokens","authkey","auth_key","client_secret"}
 
