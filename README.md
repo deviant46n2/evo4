@@ -232,3 +232,10 @@ Reserved scheduler jobs can now run explicitly approved commands through Evo's m
 ## Background agent execution
 
 The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
+
+
+## Agent Intelligence & Orchestration v1
+
+Evo can ask the configured model to produce a bounded JSON task plan, save it for review, and execute it only after explicit user approval. Plans contain ordered steps with descriptions, expected outcomes, and verification instructions. The user can inspect the complete proposal before approving it. Each step is delegated sequentially to the existing coding agent; file writes and allowlisted commands still require their own per-action approval. Step results, plan lifecycle events, and terminal outcomes are persisted. A failed step stops later steps. Restart recovery marks approved or executing plans interrupted and never replays them.
+
+This is supervised orchestration, not autonomous execution. Step completion currently means the coding-agent loop completed its step request; the recorded verification instruction is not yet an independent test oracle. There are no automatic retries, pause/resume checkpoints, durable approval restoration, or reliable per-plan resource estimates. Hardware admission is therefore explicitly not claimed by this milestone. See [Agent Orchestration v1](docs/AGENT-ORCHESTRATION.md) for API, lifecycle, and limitations.
