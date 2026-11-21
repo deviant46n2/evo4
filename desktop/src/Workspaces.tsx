@@ -68,9 +68,6 @@ export function MemoryWorkspace() {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
-  const [plan, setPlan] = useState<AgentPlan | null>(null);
-  const [planning, setPlanning] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const params = new URLSearchParams({ status, limit: "200" });
@@ -187,6 +184,9 @@ export function AgentsWorkspace() {
   const [workspace, setWorkspace] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
+  const [plan, setPlan] = useState<AgentPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
   const refresh = useCallback(async () => {
     try { setRuns(await api<Run[]>("/agents?limit=100")); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
