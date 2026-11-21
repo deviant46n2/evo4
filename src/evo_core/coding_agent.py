@@ -155,7 +155,7 @@ class CodingAgent:
                     name=call["function"]["name"]
                     args=call["function"]["arguments"]
                     if on_progress:
-                        on_progress("tool_proposed", {"tool_name": name, "arguments": args})
+                        on_progress("tool_proposed", {"tool_name": name, "argument_fields": sorted(args.keys())})
                     try:
                         if name in {"write_file","run_command"}:
                             if not approval(name,args):
@@ -182,7 +182,8 @@ class CodingAgent:
                             "argv":args.get("argv",[])}
                     store.record_tool_event(run_id,name,args,output,status)
                     if on_progress:
-                        on_progress("tool_result", {"tool_name": name, "status": status, "output": output})
+                        on_progress("tool_result", {"tool_name": name, "status": status,
+                                                     "summary": str(output)[:1200]})
                     messages.append({"role":"tool","tool_call_id":call["id"],
                                      "content":json.dumps(output,ensure_ascii=False,default=str)})
             verification=self._verification_state(successful_writes,last_write_call,last_verification)
