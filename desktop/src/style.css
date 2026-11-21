@@ -81,3 +81,17 @@
 .demo-tag{display:inline-flex;align-items:center;border:1px solid #53677d;background:#253648;color:#c4d5e6;border-radius:4px;padding:3px 6px;font-size:8px;font-weight:700;letter-spacing:.6px;white-space:nowrap}
 .demo-data-banner .inline-actions{flex-shrink:0}
 @media(max-width:680px){.demo-data-banner{align-items:flex-start;flex-direction:column}.demo-data-banner .inline-actions{width:100%;justify-content:flex-end}}
+
+
+.scheduler-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:13px;border:1px solid #2b3948;background:#141c25;border-radius:7px;margin:12px 0}
+.scheduler-form label{display:flex;flex-direction:column;gap:6px;font-size:9px;color:#8fa1b5;text-transform:uppercase;letter-spacing:.5px}
+.scheduler-form input,.scheduler-form select{width:100%;min-width:0;height:34px;border:1px solid #344252;background:#101720;color:#dce6f0;border-radius:5px;padding:7px 9px;font:inherit;font-size:10px;text-transform:none;letter-spacing:normal;outline:none}
+.scheduler-form input:focus,.scheduler-form select:focus{border-color:#638db7}
+.scheduler-form .inline-actions{grid-column:1/-1;justify-content:flex-end;flex-wrap:wrap}
+.scheduler-counts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;margin:12px 0}
+.scheduler-counts span{display:flex;flex-direction:column;gap:4px;padding:9px;background:#141c25;border:1px solid #2b3948;border-radius:6px}
+.scheduler-counts b{font-size:17px;color:#e0e9f3;font-variant-numeric:tabular-nums}.scheduler-counts small{font-size:8px;color:#8193a7;text-transform:uppercase;letter-spacing:.5px}
+.scheduler-jobs{display:flex;flex-direction:column;gap:8px}.scheduler-job{display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid #2b3948;background:#141c25;border-radius:7px;min-width:0}
+.scheduler-job>strong{font-size:11px;color:#dce6f0}.scheduler-job>small{font-size:9px;color:#8c9db0;line-height:1.45;overflow-wrap:anywhere}.scheduler-job .inline-actions{justify-content:flex-end;flex-wrap:wrap}
+@media(max-width:900px){.scheduler-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.scheduler-form{grid-template-columns:1fr}.scheduler-form .inline-actions{justify-content:stretch}.scheduler-form .inline-actions button{flex:1}.scheduler-counts{grid-template-columns:repeat(3,minmax(0,1fr))}.scheduler-job .inline-actions{justify-content:stretch}.scheduler-job .inline-actions button{flex:1}}
