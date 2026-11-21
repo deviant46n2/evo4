@@ -35,6 +35,7 @@ def build_parser():
     meval=ms.add_parser("evaluate",help="Score retrieval against a deterministic synthetic benchmark")
     meval.add_argument("--cases",default="tasks/memory-retrieval.json")
     meval.add_argument("--top-k",type=int,default=5)
+    meval.add_argument("--backend",choices=["auto","fts","fallback"],default="auto")
     task=sub.add_parser("task",parents=[config_parent],help="Manage persistent tasks")
     ts=task.add_subparsers(dest="task_command",required=True)
     ta=ts.add_parser("add"); ta.add_argument("title"); ta.add_argument("--description",default="")
@@ -115,7 +116,7 @@ def main():
     args=build_parser().parse_args()
     if args.command=="memory" and args.memory_command=="evaluate":
         try:
-            report=evaluate_memory_retrieval(args.cases,args.top_k)
+            report=evaluate_memory_retrieval(args.cases,args.top_k,args.backend)
         except ValueError as exc:
             print(f"Error: {exc}",file=sys.stderr)
             raise SystemExit(2)
