@@ -37,6 +37,18 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(store.search_memories("coding recommendations"),[])
             store.close()
 
+    def test_lexical_fallback_ranks_relevant_memories_before_recent_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=EvoStore(Path(tmp)/"evo.db")
+            store.fts_available=False
+            relevant=store.add_memory("RTX 5070 Ti has 16 GB VRAM","hardware",["gpu"])
+            store.add_memory("Pasta with tomato and basil","food",["cooking"])
+            store.add_memory("General computer acceleration notes","general",["computer"])
+            rows=store.search_memories("RTX VRAM",limit=1)
+            self.assertEqual(rows[0]["id"],relevant)
+            self.assertGreater(rows[0]["relevance"],0)
+            store.close()
+
     def test_conversation_persistence_and_memory_injection(self):
         with tempfile.TemporaryDirectory() as tmp:
             config=self.make_config(Path(tmp)/"evo.db")
