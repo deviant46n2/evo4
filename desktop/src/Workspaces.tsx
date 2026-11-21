@@ -308,9 +308,9 @@ function WorkloadSchedulerPanel() {
   }
   async function execute(job:ScheduledJob) {
     if(busy)return;
-    const argv=commandArgs.split("\\n").map(part=>part.trim()).filter(Boolean);
+    const argv=commandArgs.split("\n").map(part=>part.trim()).filter(Boolean);
     if(!argv.length){setError("Enter an allowlisted command, one argument per line.");return;}
-    if(!window.confirm("Execute this command inside Evo's configured workspace?\\n\\n"+JSON.stringify(argv)+"\\n\\nOnly configured command prefixes are accepted."))return;
+    if(!window.confirm("Execute this command inside Evo's configured workspace?\n\n"+JSON.stringify(argv)+"\\n\\nOnly configured command prefixes are accepted."))return;
     setBusy(true);setError("");
     try{await api("/hardware/scheduler/jobs/"+job.id+"/execute",json({argv,timeout_seconds:Number(timeout)}));await refresh();}
     catch(e){setError(e instanceof Error?e.message:String(e));}
@@ -318,8 +318,8 @@ function WorkloadSchedulerPanel() {
   }
   const jobs=data?.jobs||[];
   return <section className="workspace-panel">
-    <div className="panel-toolbar"><div><h2>Workload scheduler</h2><p>Persistent queue, resource reservations and explicit workload lifecycle.</p></div><span className="run-status">RESERVATION ONLY</span></div>
-    <p className="policy-copy">Evo never launches, kills or reconfigures processes. Dispatch reserves capacity using live telemetry; you start the workload yourself and confirm when it finishes. Unstarted reservations expire after five minutes.</p>
+    <div className="panel-toolbar"><div><h2>Workload scheduler</h2><p>Persistent queue, resource reservations and explicit workload lifecycle.</p></div><span className="run-status">SUPERVISED EXECUTION</span></div>
+    <p className="policy-copy">Dispatch reserves capacity using live telemetry. A reserved job can be started externally, or you can explicitly launch an allowlisted command that Evo supervises. Unstarted reservations expire after five minutes.</p>
     {error&&<div className="workspace-error" role="alert">{error}</div>}
     <form className="scheduler-form" onSubmit={create}>
       <label>Workload name<input value={name} onChange={e=>setName(e.target.value)} maxLength={120} required placeholder="e.g. Memory retrieval benchmark"/></label>
@@ -328,7 +328,7 @@ function WorkloadSchedulerPanel() {
       <label>GPU use<select value={gpuHeavy} onChange={e=>setGpuHeavy(e.target.value)}><option value="auto">Assume GPU-heavy</option><option value="true">GPU-heavy</option><option value="false">CPU-only (declared)</option></select></label>
       <label>Estimated VRAM (MiB)<input type="number" min="0" max="1000000" value={vram} onChange={e=>setVram(e.target.value)} placeholder="Required for GPU jobs"/></label>
       <label>Estimated RAM (MiB)<input type="number" min="0" max="1000000" value={ram} onChange={e=>setRam(e.target.value)} placeholder="Required for background jobs"/></label>
-      <label className="scheduler-command">Execution command (one argv item per line)<textarea value={commandArgs} onChange={e=>setCommandArgs(e.target.value)} rows={3} placeholder={"python\\n-m\\nunittest\\ndiscover\\n-s\\ntests"}/></label>
+      <label className="scheduler-command">Execution command (one argv item per line)<textarea value={commandArgs} onChange={e=>setCommandArgs(e.target.value)} rows={3} placeholder={"python\n-m\nunittest\ndiscover\n-s\ntests"}/></label>
       <label>Execution timeout (seconds)<input type="number" min="1" max="900" value={timeout} onChange={e=>setTimeout(e.target.value)}/></label>
       <div className="inline-actions"><button className="quiet-button" type="submit" disabled={busy||!name.trim()}>{busy?"Working…":"Add to queue"}</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void action("/hardware/scheduler/dispatch?limit=5")}>Evaluate queue and reserve</button><button className="quiet-button" type="button" disabled={busy} onClick={()=>void refresh()}>Refresh</button></div>
     </form>
@@ -340,10 +340,10 @@ function WorkloadSchedulerPanel() {
       <small>VRAM {job.estimated_vram_mib==null?"unknown":mib(job.estimated_vram_mib)} · RAM {job.estimated_ram_mib==null?"unknown":mib(job.estimated_ram_mib)} · GPU {job.gpu_heavy===false?"CPU-only":job.gpu_heavy===true?"yes":"assumed"}</small>
       {job.last_decision?.reasons?.map((reason,index)=><small key={index}>{reason}</small>)}
       {job.status==="reserved"&&<small>Reservation expires: {job.lease_expires_at?new Date(job.lease_expires_at).toLocaleTimeString():"—"}</small>}
-      {job.status==="running"&&<small>Running is user-confirmed; Evo does not monitor or control the external process.</small>}
+      {job.status==="running"&&<small>{executions.some(item=>item.job_id===job.id)?"Evo-managed command is supervised; completion is recorded automatically.":"External workload is user-confirmed; Evo does not monitor or control it."}</small>}
       <div className="inline-actions">
         {job.status==="reserved"&&<><button className="quiet-button" disabled={busy} onClick={()=>void execute(job)}>Execute allowlisted command</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/start")}>Confirm external start</button></>}
-        {job.status==="running"&&<><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"completed"})}>Mark external job completed</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"failed",note:"Marked failed by user"})}>Mark external job failed</button></>}
+        {job.status==="running"&&!executions.some(item=>item.job_id===job.id)&&<><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"completed"})}>Mark external job completed</button><button className="quiet-button" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/finish",{outcome:"failed",note:"Marked failed by user"})}>Mark external job failed</button></>}
         {(job.status==="queued"||job.status==="reserved")&&<button className="quiet-button danger" disabled={busy} onClick={()=>void action("/hardware/scheduler/jobs/"+job.id+"/cancel")}>Cancel queued job</button>}
       </div>
     </article>)}
