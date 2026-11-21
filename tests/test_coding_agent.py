@@ -44,6 +44,26 @@ class CodingAgentTests(unittest.TestCase):
             self.assertIn("print('hello')",provider.messages[1][-1]["content"])
             assistant.close()
 
+    def test_truncated_model_response_does_not_execute_proposed_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([{
+                "content":"I will write the file, but this response was cut off.",
+                "tool_calls":[call("write_file",{"path":"main.py","content":"print('unsafe')"})],
+                "finish_reason":"length","truncated":True
+            }])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            approvals=[]
+            result=agent.run(cid,"Create main.py",lambda *args:approvals.append(args) or True)
+            self.assertEqual(result["status"],"truncated")
+            self.assertEqual(approvals,[])
+            self.assertFalse((root/"main.py").exists())
+            run=assistant.store.get_agent_run(result["run_id"])
+            self.assertEqual(run["status"],"failed")
+            assistant.close()
+
     def test_project_inspection_is_available_and_policy_is_injected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
