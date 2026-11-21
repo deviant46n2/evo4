@@ -53,8 +53,7 @@ notes = "Record desktop state and unusual background GPU use here."
 # Named OpenAI-compatible providers. Cloud providers are optional; no paid
 # provider is required. Put API keys in environment variables, never here.
 [providers.local]
-base_url = "http://127.0.0.1:18997"
-model = "local-model"
+# Empty profile inherits [server] settings. Add overrides only when needed.
 
 # Example free-tier-compatible profile. Uncomment and set the provider's
 # documented endpoint/model plus its API-key environment variable.
