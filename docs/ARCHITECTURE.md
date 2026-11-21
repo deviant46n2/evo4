@@ -12,6 +12,7 @@ Increase the useful capabilities of the user's existing workstation through meas
 - `provider.py`: OpenAI-compatible streaming chat adapter.
 - `store.py`: durable SQLite state for conversations, messages, memories, tasks, research captures, agent runs, and tool events.
 - `assistant.py`: conversation orchestration and lexical memory retrieval.
+- `memory_eval.py`: deterministic synthetic retrieval benchmark (hit rate, recall@k, MRR) isolated from the user's live database.
 - `cli.py`: interactive terminal interface and data-management commands.
 - `workspace.py`: constrained project workspace API.
 - `coding_agent.py`: bounded model-directed tool loop with project orientation, explicit verification policy, approval-gated writes and command execution.
@@ -25,7 +26,7 @@ The experiment harness remains independently usable. It runs repeatable tasks, r
 
 SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time. A SQLite online-backup operation creates a consistent copy of both assistant and lab state.
 
-FTS5 is used for memory retrieval when available. A lexical LIKE fallback keeps the assistant usable when FTS5 is unavailable. Retrieval is not semantic and does not imply perfect recall.
+FTS5 is used for memory retrieval when available. A lexical LIKE fallback keeps the assistant usable when FTS5 is unavailable. Retrieval is not semantic and does not imply perfect recall. `evo memory evaluate` seeds an isolated in-memory database from a versioned synthetic fixture and reports hit rate, recall@k, and mean reciprocal rank. It is a retrieval regression test, not a measurement of real-world personal-memory recall.
 
 A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts. Agent runs and tool events form an append-oriented execution record. The `run_feedback` table links explicit user assessments (success, partial, failure) to a run and, optionally, to a reusable lesson created from that assessment. This makes the experiential loop inspectable: run → observed tool history → user assessment/correction → lesson → later retrieval. Lessons created this way carry `user-run-feedback` provenance. Evo does not infer verified success from a model self-report or autonomously promote generated claims into trusted lessons. Saved research documents are also retrieved lexically and injected as source material, with URLs and capture timestamps. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
 
