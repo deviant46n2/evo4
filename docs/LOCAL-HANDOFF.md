@@ -7,7 +7,7 @@ This handoff describes the current desktop + hardware-observability baseline. Fo
 For desktop use, follow [the desktop user guide](DESKTOP-USER-GUIDE.md), which includes the optional API dependencies and separate backend/frontend terminals.
 
 ```bash
-git clone -b hardware-observability-v1 https://github.com/deviant46n2/evo4.git
+git clone -b documentation-refresh-v1 https://github.com/deviant46n2/evo4.git
 cd evo4
 python -m venv .venv
 source .venv/bin/activate
