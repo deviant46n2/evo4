@@ -208,7 +208,7 @@ class EvoCoreTests(unittest.TestCase):
             backup=EvoStore(destination)
             try:
                 relation=backup.get_memory_relations([new_id])[0]
-                self.assertEqual(relation["source_memory_id"],old_id)
+                self.assertEqual(relation["source_memory_id"],new_id)
                 self.assertEqual(relation["target_memory_id"],old_id)
                 self.assertEqual(relation["relation_type"],"supersedes")
             finally:
