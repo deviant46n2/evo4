@@ -34,6 +34,13 @@ def initialize(connection):
     );
     CREATE INDEX IF NOT EXISTS idx_background_events_run
       ON background_agent_events(run_id,id);
+    CREATE TABLE IF NOT EXISTS agent_run_finalizations (
+      run_id TEXT PRIMARY KEY,
+      outcome TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
     """)
     connection.commit()
 
@@ -139,3 +146,57 @@ def recover(connection):
                    {"previous_status": row["status"], "resume_safe": False})
             recovered.append(row["run_id"])
     return recovered
+
+
+TERMINAL_OUTCOMES = {"completed", "failed", "cancelled", "interrupted"}
+
+def decide_finalization(connection, run_id, outcome, summary="", metadata=None):
+    """Durably record one terminal outcome for an agent run.
+
+    The first committed row wins; later calls return the existing decision.
+    """
+    if outcome not in TERMINAL_OUTCOMES:
+        raise ValueError("Invalid finalization outcome")
+    stamp = now()
+    with connection:
+        cur = connection.execute(
+            """INSERT OR IGNORE INTO agent_run_finalizations
+               (run_id, outcome, summary, metadata_json, created_at)
+               VALUES (?,?,?,?,?)""",
+            (run_id, outcome, str(summary)[:4000],
+             json.dumps(metadata or {}, ensure_ascii=False, default=str), stamp))
+        row = connection.execute(
+            "SELECT outcome, summary, metadata_json, created_at FROM agent_run_finalizations WHERE run_id=?",
+            (run_id,)).fetchone()
+    created = cur.rowcount == 1
+    return {
+        "run_id": run_id,
+        "outcome": row["outcome"],
+        "summary": row["summary"],
+        "metadata": json.loads(row["metadata_json"] or "{}"),
+        "created_at": row["created_at"],
+        "created": created,
+    }
+
+def get_finalization(connection, run_id):
+    row = connection.execute(
+        "SELECT outcome, summary, metadata_json, created_at FROM agent_run_finalizations WHERE run_id=?",
+        (run_id,)).fetchone()
+    if not row:
+        return None
+    return {
+        "run_id": run_id,
+        "outcome": row["outcome"],
+        "summary": row["summary"],
+        "metadata": json.loads(row["metadata_json"] or "{}"),
+        "created_at": row["created_at"],
+    }
+
+def list_finalizations(connection):
+    rows = connection.execute(
+        "SELECT run_id, outcome, summary, metadata_json, created_at FROM agent_run_finalizations"
+    ).fetchall()
+    return [{
+        "run_id": r["run_id"], "outcome": r["outcome"], "summary": r["summary"],
+        "metadata": json.loads(r["metadata_json"] or "{}"), "created_at": r["created_at"],
+    } for r in rows]

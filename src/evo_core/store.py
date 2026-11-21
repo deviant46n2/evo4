@@ -588,13 +588,22 @@ class EvoStore:
             self.db.commit()
         return run_id
 
+    TERMINAL_AGENT_RUN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+
     def finish_agent_run(self, run_id, status, summary=""):
-        if status not in {"completed","failed","cancelled","interrupted"}:
+        if status not in self.TERMINAL_AGENT_RUN_STATUSES:
             raise ValueError("Invalid agent run status")
         with self.lock:
+            row = self.db.execute("SELECT status FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return False
+            if row["status"] in self.TERMINAL_AGENT_RUN_STATUSES:
+                # Terminal states are durable; do not overwrite an existing outcome.
+                return False
             self.db.execute("UPDATE agent_runs SET status=?,finished_at=?,summary=? WHERE id=?",
-                            (status,utc_now(),summary,run_id))
+                            (status, utc_now(), summary, run_id))
             self.db.commit()
+            return True
 
     def update_agent_run_metadata(self, run_id, updates):
         if not isinstance(updates,dict):
