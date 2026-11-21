@@ -1,5 +1,6 @@
 from pathlib import Path
 import fnmatch
+import re
 import subprocess
 import time
 
@@ -8,10 +9,29 @@ SENSITIVE_NAMES={".env",".env.local",".env.production",".npmrc",".pypirc","confi
                  "id_rsa","id_dsa","id_ecdsa","id_ed25519","credentials","credentials.json","credentials.yaml",
                  "secrets.json","secrets.yaml","secrets.yml"}
 
+def _looks_sensitive_name(name):
+    lowered=name.casefold()
+    if lowered in SENSITIVE_NAMES or lowered.startswith(".env"):
+        return True
+    if lowered.endswith((".pem",".key",".p12",".pfx",".keystore")):
+        return True
+    # Catch common project-specific secret/config filenames without matching
+    # ordinary words such as "monkey" or "tokenizer".
+    tokens={part for part in re.split(r"[^a-z0-9]+",lowered) if part}
+    return bool(tokens & {"secret","secrets","credential","credentials","password","passwd",
+                          "token","tokens","apikey","privatekey","private","auth"})
+
 def _is_excluded(path):
-    return any(part in IGNORED_DIRS or part in SENSITIVE_NAMES or
-               part == ".env" or part.startswith(".env.") or
-               part.endswith((".pem",".key",".p12",".pfx")) for part in path.parts)
+    return any(part in IGNORED_DIRS or _looks_sensitive_name(part)
+               for part in path.parts)
+
+def is_test_path(relative_path):
+    parts=Path(str(relative_path)).parts
+    name=parts[-1].casefold() if parts else ""
+    parent_parts={part.casefold() for part in parts[:-1]}
+    return (bool(parent_parts & {"test","tests","spec","specs"}) or
+            name.startswith(("test_","tests_","spec_")) or
+            name.endswith(("_test.py","_spec.py","test.ts","test.tsx","spec.ts","spec.tsx")))
 
 class WorkspaceError(RuntimeError):
     pass
@@ -116,8 +136,10 @@ class Workspace:
                         return matches
         return matches
 
-    def write_file(self,relative_path,content,overwrite=False):
+    def write_file(self,relative_path,content,overwrite=False,allow_test_changes=False):
         path=self.resolve(relative_path)
+        if is_test_path(path.relative_to(self.root)) and not allow_test_changes:
+            raise WorkspaceError("Test/spec files are protected. Explicitly approve a test-file change before writing.")
         if _is_excluded(path.relative_to(self.root)):
             raise WorkspaceError("Refusing to write inside ignored or sensitive paths")
         if path.exists() and not overwrite:
