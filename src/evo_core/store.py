@@ -219,7 +219,7 @@ class EvoStore:
                 "to","use","used","using","was","we","what","when","where","which","who","why",
                 "will","with","would","you","your"}
         tokens = []
-        for token in re.findall(r"[a-z0-9]+(?:[._'-][a-z0-9]+)*", raw_query.casefold()):
+        for token in re.findall(r"[a-z0-9]+(?:[._'%-][a-z0-9]+)*%?", raw_query.casefold()):
             if len(token) > 1 and token not in stop and token not in tokens:
                 tokens.append(token)
         tokens = tokens[:24]
@@ -265,11 +265,13 @@ class EvoStore:
                     tags = json.loads(row["tags_json"] or "[]")
                 except (TypeError, json.JSONDecodeError):
                     tags = []
-                tokenize = lambda value: set(re.findall(r"[a-z0-9]+(?:[._'-][a-z0-9]+)*", value.casefold()))
+                tokenize = lambda value: set(re.findall(r"[a-z0-9]+(?:[._'%-][a-z0-9]+)*%?", value.casefold()))
                 content_hits = query_set & tokenize(content)
                 tag_hits = query_set & tokenize(" ".join(str(tag) for tag in tags))
                 category_hits = query_set & tokenize(str(row["category"] or ""))
                 matched = content_hits | tag_hits | category_hits
+                if not matched:
+                    continue
                 coverage = len(matched) / len(query_set)
                 content_coverage = len(content_hits) / len(query_set)
                 tag_coverage = len(tag_hits) / len(query_set)
@@ -284,7 +286,7 @@ class EvoStore:
                 if category_hits: reasons.append("category: " + ", ".join(sorted(category_hits)))
                 if exact: reasons.append("exact phrase")
                 item = dict(row)
-                item.update(retrieval_score=round(min(score,1.0),6), retrieval_coverage=round(coverage,4),
+                item.update(retrieval_score=round(min(score,1.0),6), relevance=round(min(score,1.0),6), retrieval_coverage=round(coverage,4),
                             retrieval_matched_terms=sorted(matched),
                             retrieval_reason="; ".join(reasons) or "lexical candidate",
                             retrieval_method="hybrid-fts-like" if rank else "lexical-like")
