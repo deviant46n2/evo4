@@ -131,6 +131,9 @@ def attach_run(connection, plan_id, run_id):
 def start_step(connection, plan_id, step_id):
     stamp = _now()
     with connection:
+        plan = connection.execute("SELECT status FROM agent_plans WHERE id=?", (plan_id,)).fetchone()
+        if not plan or plan["status"] != "executing":
+            raise ValueError("Steps can only run after the plan has started")
         row = connection.execute(
             "SELECT position,status FROM agent_plan_steps WHERE id=? AND plan_id=?", (step_id, plan_id)).fetchone()
         if not row or row["status"] != "pending":
@@ -168,6 +171,12 @@ def finish_plan(connection, plan_id, outcome, error=""):
             raise ValueError("Plan not found")
         if row["status"] in {"completed", "failed", "cancelled", "interrupted"}:
             return False
+        if outcome == "completed":
+            remaining = connection.execute(
+                "SELECT COUNT(*) FROM agent_plan_steps WHERE plan_id=? AND status!='completed'",
+                (plan_id,)).fetchone()[0]
+            if remaining:
+                raise ValueError("A plan cannot complete until every step is completed")
         connection.execute(
             "UPDATE agent_plans SET status=?,error=?,updated_at=? WHERE id=?",
             (outcome, str(error)[:2000], stamp, plan_id))
