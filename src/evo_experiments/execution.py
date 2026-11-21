@@ -10,7 +10,6 @@ import json
 import os
 import re
 import signal
-import sqlite3
 import subprocess
 import threading
 import time
@@ -103,20 +102,6 @@ def register_execution(connection, job_id, argv, allowed_commands, workspace, ti
         raise
     return get_execution(connection, execution_id)
 
-def _tail_buffer(pipe, limit=OUTPUT_LIMIT):
-    chunks = bytearray()
-    try:
-        while True:
-            chunk = pipe.read(8192)
-            if not chunk:
-                break
-            chunks.extend(chunk)
-            if len(chunks) > limit:
-                del chunks[:-limit]
-    finally:
-        pipe.close()
-    return bytes(chunks).decode("utf-8", errors="replace")
-
 def _safe_environment():
     # Preserve PATH/HOME and ordinary settings while filtering credential-shaped
     # variable names. Avoid broad substring matching (e.g. MONKEY is not a secret).
@@ -152,7 +137,7 @@ def run_execution(connection, lock, execution_id):
             record["argv"], cwd=record["workspace"], shell=False,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=False, close_fds=True, start_new_session=True, env=_safe_environment())
-        _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started)
+        _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
         def drain(pipe, target):
             try:
                 while True:
