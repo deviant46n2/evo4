@@ -64,7 +64,7 @@ class MemoryEvaluationTests(unittest.TestCase):
             database=Path(tmp)/"state"/"evo.sqlite3"
             config=Path(tmp)/"config.toml"
             config.write_text(
-                f'[server]\\nmodel="test"\\n[experiment]\\ndatabase="{database}"\\n',
+                f'[server]\nmodel="test"\n[experiment]\ndatabase="{database}"\n',
                 encoding="utf-8")
             argv=["evo","--config",str(config),"memory","evaluate","--cases",str(cases)]
             with patch.object(sys,"argv",argv), patch("sys.stdout",new=io.StringIO()) as output:
