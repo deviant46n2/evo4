@@ -172,6 +172,36 @@ class CodingAgentTests(unittest.TestCase):
             self.assertIn("Verification signal: NOT RUN",result["content"])
             assistant.close()
 
+    def test_test_file_write_requires_and_consumes_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"src/widget.test.js","content":"test('ok',()=>{});"})]},
+                {"content":"Updated the test after approval.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            result=agent.run(cid,"Update the test file",lambda name,args: name=="write_file")
+            self.assertEqual(result["status"],"completed")
+            self.assertEqual((root/"src/widget.test.js").read_text(encoding="utf-8"),"test('ok',()=>{});")
+            assistant.close()
+
+    def test_test_file_write_is_not_performed_when_approval_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"tests/test_new.py","content":"def test_new(): pass"})]},
+                {"content":"No test file was changed.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            result=agent.run(cid,"Update the test file",lambda *_:False)
+            self.assertFalse((root/"tests/test_new.py").exists())
+            self.assertEqual(result["status"],"completed")
+            assistant.close()
+
     def test_write_requires_approval_and_denial_is_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
