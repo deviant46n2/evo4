@@ -702,6 +702,8 @@ def create_app(config_path="config.toml", provider_name=None):
     def approve_agent_plan(plan_id: str):
         try:
             with lab_db.lock:
+                if orchestration.get_plan(lab_db.connection, plan_id) is None:
+                    raise HTTPException(status_code=404, detail="Agent plan not found")
                 return orchestration.approve_plan(lab_db.connection, plan_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
