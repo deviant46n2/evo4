@@ -107,9 +107,8 @@ class EvoAssistant:
             )
         remaining=budget_chars-fixed_chars
 
-        # Retrieved context is assembled into blank-line-separated sections.
-        # Keep complete sections (including their headers and all contained
-        # records) so truncation cannot leave an orphaned title or partial item.
+        # Retrieved context is assembled into four explicitly headed blocks.
+        # Split only at those boundaries so blank lines inside a record remain intact.
         kept_records=[]
         omitted_records=0
         section_pattern = r"\n\n(?=(?:Relevant persistent memories|Explicit relationships between retrieved memories|Relevant lessons from prior feedback and outcomes|Relevant saved research))"
