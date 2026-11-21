@@ -405,6 +405,41 @@ class EvoStore:
             self.db.commit()
         return {"feedback_id":feedback_id,"lesson_id":lesson_id}
 
+    def agent_run_summary(self):
+        with self.lock:
+            runs=self.db.execute(
+                "SELECT id,status,metadata_json FROM agent_runs WHERE kind='coding'").fetchall()
+            feedback=self.db.execute(
+                "SELECT outcome,COUNT(*) AS count FROM run_feedback GROUP BY outcome").fetchall()
+            reviewed=self.db.execute(
+                "SELECT COUNT(DISTINCT run_id) FROM run_feedback").fetchone()[0]
+            lesson_count=self.db.execute(
+                "SELECT COUNT(*) FROM lessons WHERE source='user-run-feedback' AND status='active'").fetchone()[0]
+        statuses={}
+        verification={}
+        tool_calls=[]
+        for row in runs:
+            statuses[row["status"]]=statuses.get(row["status"],0)+1
+            try:
+                metadata=json.loads(row["metadata_json"] or "{}")
+            except json.JSONDecodeError:
+                metadata={}
+            state=(metadata.get("verification") or {}).get("status")
+            if state:
+                verification[state]=verification.get(state,0)+1
+            if isinstance(metadata.get("tool_calls"),int):
+                tool_calls.append(metadata["tool_calls"])
+        return {
+            "coding_runs":len(runs),
+            "run_statuses":statuses,
+            "verification_statuses":verification,
+            "reviewed_runs":int(reviewed),
+            "feedback_outcomes":{row["outcome"]:row["count"] for row in feedback},
+            "active_user_feedback_lessons":int(lesson_count),
+            "average_tool_calls":round(sum(tool_calls)/len(tool_calls),2) if tool_calls else None,
+            "runs_with_tool_call_metrics":len(tool_calls),
+        }
+
     def list_run_feedback(self, run_id, limit=20):
         with self.lock:
             return self.db.execute(
