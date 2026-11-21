@@ -1,4 +1,5 @@
 import json
+import threading
 from .workspace import Workspace, WorkspaceError, is_test_path
 
 CODING_POLICY = """\n\nCoding-agent operating rules:
@@ -46,6 +47,10 @@ def is_test_command(argv):
     return False
 
 
+class AgentCancelled(Exception):
+    """Raised at a safe boundary after a user cancellation request."""
+
+
 class CodingAgent:
     """Bounded tool-using coding assistant. Writes and commands require per-action approval."""
     def __init__(self, assistant, workspace_root=None, allowed_commands=(), max_tool_rounds=8):
@@ -89,7 +94,7 @@ class CodingAgent:
             return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test runner completed after the latest change."
         return ""
 
-    def run(self, conversation_id, request, approval, on_token=None, run_id=None):
+    def run(self, conversation_id, request, approval, on_token=None, run_id=None, stop_event=None, on_progress=None):
         if not isinstance(request,str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
         if not callable(approval):
@@ -119,6 +124,8 @@ class CodingAgent:
             last_write_call=0
             last_verification=None
             for round_index in range(self.max_tool_rounds):
+                if stop_event is not None and stop_event.is_set():
+                    raise AgentCancelled("Cancellation requested; stopped at a safe boundary.")
                 result=self.assistant.provider.chat(messages,max_tokens=self.assistant.config.max_tokens,
                     temperature=self.assistant.config.temperature,on_token=on_token,tools=TOOL_SPECS)
                 calls=result.get("tool_calls") or []
@@ -140,9 +147,13 @@ class CodingAgent:
                         for call in calls]}
                 messages.append(assistant_call)
                 for call in calls:
+                    if stop_event is not None and stop_event.is_set():
+                        raise AgentCancelled("Cancellation requested; stopped before the next tool action.")
                     total_tool_calls+=1
                     name=call["function"]["name"]
                     args=call["function"]["arguments"]
+                    if on_progress:
+                        on_progress("tool_proposed", {"tool_name": name, "arguments": args})
                     try:
                         if name in {"write_file","run_command"}:
                             if not approval(name,args):
@@ -168,6 +179,8 @@ class CodingAgent:
                             "returncode":output.get("returncode") if isinstance(output,dict) else None,
                             "argv":args.get("argv",[])}
                     store.record_tool_event(run_id,name,args,output,status)
+                    if on_progress:
+                        on_progress("tool_result", {"tool_name": name, "status": status, "output": output})
                     messages.append({"role":"tool","tool_call_id":call["id"],
                                      "content":json.dumps(output,ensure_ascii=False,default=str)})
             verification=self._verification_state(successful_writes,last_write_call,last_verification)
@@ -183,6 +196,9 @@ class CodingAgent:
             return {"content":final_text,"run_id":run_id,"tool_rounds":self.max_tool_rounds,
                     "tool_calls":total_tool_calls,"status":"max_rounds_reached",
                     "verification":verification["status"]}
+        except AgentCancelled as exc:
+            store.finish_agent_run(run_id,"cancelled",str(exc))
+            return {"content": str(exc), "run_id": run_id, "status": "cancelled"}
         except Exception as exc:
             store.finish_agent_run(run_id,"failed",f"{type(exc).__name__}: {exc}")
             raise
