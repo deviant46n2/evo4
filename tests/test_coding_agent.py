@@ -1,8 +1,9 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from evo_core.assistant import EvoAssistant
-from evo_core.coding_agent import CodingAgent
+from evo_core.coding_agent import CodingAgent, is_verification_command
 from evo_core.config import EvoConfig
 from evo_core.store import EvoStore
 
@@ -80,6 +81,66 @@ class CodingAgentTests(unittest.TestCase):
             row=assistant.store.db.execute("SELECT status FROM agent_runs WHERE id=?",
                                             (result["run_id"],)).fetchone()
             self.assertEqual(row["status"],"failed")
+            assistant.close()
+
+    def test_verification_command_detection_is_conservative(self):
+        self.assertTrue(is_verification_command(["python","-m","pytest","-q"]))
+        self.assertTrue(is_verification_command(["cargo","test"]))
+        self.assertTrue(is_verification_command(["npm","run","test:unit"]))
+        self.assertFalse(is_verification_command(["python","main.py"]))
+        self.assertFalse(is_verification_command(["git","status"]))
+
+    def test_successful_post_edit_check_is_reported_and_persisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print(5)","overwrite":False})]},
+                {"content":"","tool_calls":[call("run_command",{"argv":["python","-m","unittest"]})]},
+                {"content":"Implemented the change and ran the test suite.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
+            with patch.object(agent.workspace,"run",return_value={"argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1}):
+                result=agent.run(cid,"Create and verify main.py",lambda *_:True)
+            self.assertEqual(result["verification"],"passed")
+            self.assertIn("Verification signal: PASSED",result["content"])
+            run=assistant.store.get_agent_run(result["run_id"])
+            import json
+            metadata=json.loads(run["metadata_json"])
+            self.assertEqual(metadata["verification"]["status"],"passed")
+            assistant.close()
+
+    def test_file_change_without_post_edit_check_is_explicitly_unverified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print(5)"})]},
+                {"content":"Created the file.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            result=agent.run(cid,"Create main.py",lambda *_:True)
+            self.assertEqual(result["verification"],"not_run")
+            self.assertIn("Verification signal: NOT RUN",result["content"])
+            assistant.close()
+
+    def test_failed_post_edit_check_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print(5)"})]},
+                {"content":"","tool_calls":[call("run_command",{"argv":["pytest","-q"]})]},
+                {"content":"The test failed.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["pytest"]])
+            with patch.object(agent.workspace,"run",return_value={"argv":["pytest","-q"],"returncode":1,"stdout":"","stderr":"failed","elapsed_seconds":0.1}):
+                result=agent.run(cid,"Create and test main.py",lambda *_:True)
+            self.assertEqual(result["verification"],"failed")
+            self.assertIn("Verification signal: FAILED",result["content"])
             assistant.close()
 
     def test_write_requires_approval_and_denial_is_recorded(self):
