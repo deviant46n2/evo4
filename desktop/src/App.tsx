@@ -187,6 +187,12 @@ export default function App() {
         if (done) break;
       }
       if (buffer.trim()) handleFrame(buffer);
+      // Reconcile with the durable transcript after the stream closes. The
+      // database is authoritative if a provider emits unusual chunk framing.
+      if (conversationId && activeRef.current === conversationId) {
+        const persisted = await request<Message[]>(`/conversations/${encodeURIComponent(conversationId)}/messages`);
+        setMessages(persisted);
+      }
       await refreshConversations();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
