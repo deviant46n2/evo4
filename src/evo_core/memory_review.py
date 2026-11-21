@@ -73,10 +73,11 @@ def find_duplicate_candidates(memories, limit=20, min_shared_terms=3):
         ),
         reverse=True,
     )
+    # Return a disjoint set of pairs so one popular record cannot monopolize the review list.
     selected, used = [], set()
     for item in suggestions:
         pair = (item["left"]["id"], item["right"]["id"])
-        if pair[0] in used and pair[1] in used:
+        if pair[0] in used or pair[1] in used:
             continue
         selected.append(item)
         used.update(pair)
