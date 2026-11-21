@@ -73,7 +73,7 @@ class RuntimeProfileInput(BaseModel):
 
 class WorkloadAssessment(BaseModel):
     kind: str = Field(default="background", max_length=40)
-    gpu_heavy: bool = False
+    gpu_heavy: bool | None = None
     estimated_vram_mib: float | None = Field(default=None, ge=0, le=1000000)
     estimated_ram_mib: float | None = Field(default=None, ge=0, le=1000000)
 
