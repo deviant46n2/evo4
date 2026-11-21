@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
+from . import background_agent
 from .config import load_config
 from .store import EvoStore
 from .memory_review import find_duplicate_candidates
@@ -114,8 +115,12 @@ def create_app(config_path="config.toml", provider_name=None):
     initialize_profiles(lab_db.connection)
     initialize_scheduler(lab_db.connection)
     initialize_execution(lab_db.connection)
+    background_agent.initialize(lab_db.connection)
     with lab_db.lock:
         recover_interrupted_executions(lab_db.connection)
+        recovered_agent_tasks = background_agent.recover(lab_db.connection)
+        for recovered_id in recovered_agent_tasks:
+            store.finish_agent_run(recovered_id, "interrupted", "Evo restarted; in-flight work was not resumed.")
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
     # Shutdown waits for active turns before closing the shared SQLite store.
@@ -130,6 +135,8 @@ def create_app(config_path="config.toml", provider_name=None):
     shutting_down = threading.Event()
     approval_guard = threading.Lock()
     pending_approvals = {}
+    agent_stop_events = {}
+    agent_futures = {}
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 
@@ -474,6 +481,11 @@ def create_app(config_path="config.toml", provider_name=None):
             "agents": True,
             "agent_approval": True,
             "agent_run_history": True,
+            "background_agent_tasks": True,
+            "background_agent_cancellation": True,
+            "background_agent_event_history": True,
+            "background_agent_restart_recovery": True,
+            "background_agent_resume": False,
             "memory_browser": True,
             "memory_candidates": True,
             "memory_archive": True,
@@ -622,6 +634,11 @@ def create_app(config_path="config.toml", provider_name=None):
         if row is None:
             raise HTTPException(status_code=404, detail="Agent run not found")
         result = serialize_run(row)
+        with lab_db.lock:
+            task = background_agent.get(lab_db.connection, run_id)
+            task_events = background_agent.events(lab_db.connection, run_id, limit=300) if task else []
+        result["background_task"] = task
+        result["background_events"] = task_events
         result["events"] = [{
             "id": event["id"], "tool_name": event["tool_name"],
             "input": json.loads(event["input_json"] or "{}"),
@@ -643,14 +660,27 @@ def create_app(config_path="config.toml", provider_name=None):
             "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
+        stop_event = threading.Event()
+        agent_stop_events[run_id] = stop_event
+        with lab_db.lock:
+            background_agent.create(lab_db.connection, run_id)
         try:
-            executor.submit(run_agent, run_id, payload.request, workspace)
+            agent_futures[run_id] = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", "Unable to start agent worker")
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
         return {"run_id": run_id, "status": "running"}
 
-    def run_agent(run_id, request_text, workspace):
+    def run_agent(run_id, request_text, workspace, stop_event):
+        import uuid
+        worker_token = uuid.uuid4().hex
+        with lab_db.lock:
+            claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
+        if not claimed:
+            return
+        def progress(event_type, payload):
+            with lab_db.lock:
+                background_agent.event(lab_db.connection, run_id, event_type, payload)
         def approval(name, arguments):
             import uuid
             approval_id = uuid.uuid4().hex
@@ -661,20 +691,72 @@ def create_app(config_path="config.toml", provider_name=None):
                 pending_approvals[approval_id] = item
             store.update_agent_run_metadata(run_id, {"lifecycle": "awaiting_approval",
                                                       "pending_approval_id": approval_id})
-            decision.wait(timeout=600)
+            with lab_db.lock:
+                background_agent.transition(lab_db.connection, run_id, "awaiting_approval", {"tool_name": name, "arguments": arguments})
+            deadline = datetime.now(timezone.utc).timestamp() + 600
+            while not decision.wait(timeout=0.25):
+                if stop_event.is_set() or shutting_down.is_set() or datetime.now(timezone.utc).timestamp() >= deadline:
+                    break
             with approval_guard:
                 pending_approvals.pop(approval_id, None)
+            with lab_db.lock:
+                task = background_agent.get(lab_db.connection, run_id)
+                if task and task["status"] not in {"cancel_requested", "interrupted"}:
+                    background_agent.transition(lab_db.connection, run_id, "running", {"approval": "resolved"})
             store.update_agent_run_metadata(run_id, {"lifecycle": "executing",
                                                       "pending_approval_id": None})
-            return bool(item["approved"])
+            return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
             conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
             agent = CodingAgent(assistant, workspace, config.allowed_commands)
-            agent.run(conversation_id, request_text, approval, run_id=run_id)
+            agent.run(conversation_id, request_text, approval, run_id=run_id,
+                      stop_event=stop_event, on_progress=progress)
+            final = store.get_agent_run(run_id)
+            final_status = final["status"] if final else "failed"
+            with lab_db.lock:
+                task = background_agent.get(lab_db.connection, run_id)
+                if task and task["status"] not in {"interrupted"}:
+                    target = final_status if final_status in {"completed", "failed", "cancelled"} else "failed"
+                    background_agent.transition(lab_db.connection, run_id, target, {"summary": final["summary"] if final else ""})
         except Exception as exc:
             store.finish_agent_run(run_id, "failed", f"{type(exc).__name__}: {exc}")
+            with lab_db.lock:
+                task = background_agent.get(lab_db.connection, run_id)
+                if task and task["status"] not in {"interrupted"}:
+                    background_agent.transition(lab_db.connection, run_id, "failed", {"error": f"{type(exc).__name__}: {exc}"})
+        finally:
+            agent_stop_events.pop(run_id, None)
+            agent_futures.pop(run_id, None)
+
+    @app.post("/api/v1/agents/{run_id}/cancel")
+    def cancel_agent(run_id: str):
+        with lab_db.lock:
+            task = background_agent.get(lab_db.connection, run_id)
+            if task is None:
+                raise HTTPException(status_code=404, detail="Background agent task not found")
+            if not background_agent.request_cancel(lab_db.connection, run_id):
+                return {"cancelled": False, "status": task["status"]}
+            if task["status"] == "queued":
+                background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
+                store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
+        stop_event = agent_stop_events.get(run_id)
+        if stop_event:
+            stop_event.set()
+        with approval_guard:
+            for item in pending_approvals.values():
+                if item["run_id"] == run_id:
+                    item["approved"] = False
+                    item["decision"].set()
+        return {"cancelled": True, "status": "cancel_requested"}
+
+    @app.get("/api/v1/agents/{run_id}/events")
+    def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200):
+        with lab_db.lock:
+            if background_agent.get(lab_db.connection, run_id) is None:
+                raise HTTPException(status_code=404, detail="Background agent task not found")
+            return background_agent.events(lab_db.connection, run_id, after_id, limit)
 
     @app.post("/api/v1/agents/{run_id}/approval")
     def decide_agent_approval(run_id: str, payload: AgentApproval):
