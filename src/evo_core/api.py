@@ -228,18 +228,26 @@ def create_app(config_path="config.toml", provider_name=None):
         except Exception:
             sample = {"gpu_processes": []}
         endpoint = urlsplit(config.base_url)
+        hostname = endpoint.hostname or ""
+        if ":" in hostname and not hostname.startswith("["):
+            hostname = "[" + hostname + "]"
+        if endpoint.port:
+            hostname += ":" + str(endpoint.port)
+        safe_endpoint = urlunsplit((endpoint.scheme, hostname, endpoint.path, "", ""))
         return discover_runtimes(gpu_processes=sample.get("gpu_processes"),
             configured={"provider": config.provider_name, "model": config.model,
-                        "endpoint": urlunsplit((endpoint.scheme, endpoint.hostname or "", endpoint.path, "", ""))})
+                        "endpoint": safe_endpoint})
 
     @app.get("/api/v1/hardware/profiles")
     def hardware_profiles():
-        return list_profiles(lab_db.connection)
+        with lab_db.lock:
+            return list_profiles(lab_db.connection)
 
     @app.post("/api/v1/hardware/profiles", status_code=201)
     def hardware_profile_create(payload: RuntimeProfileInput):
         try:
-            return save_profile(lab_db.connection, payload.dict())
+            with lab_db.lock:
+                return save_profile(lab_db.connection, payload.dict())
         except (ValueError, sqlite3.IntegrityError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
