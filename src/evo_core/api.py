@@ -21,6 +21,7 @@ from .demo_data import seed_demo_data, demo_data_status, clear_demo_data
 from evo_experiments.monitor import sample_nvidia_smi
 from evo_experiments.db import ResultsDB
 from evo_experiments.intelligence import assess_workload, discover_runtimes, estimate_runtime, initialize_profiles, list_profiles, save_profile
+from evo_experiments.scheduler import initialize_scheduler, create_job, list_jobs, dispatch_jobs, start_job, finish_job, cancel_job
 
 
 class ChatRequest(BaseModel):
@@ -78,6 +79,21 @@ class WorkloadAssessment(BaseModel):
     estimated_ram_mib: float | None = Field(default=None, ge=0, le=1000000)
 
 
+class SchedulerJobInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    kind: str = Field(default="background", max_length=40)
+    priority: int = Field(default=10, ge=1, le=100)
+    gpu_heavy: bool | None = None
+    estimated_vram_mib: float | None = Field(default=None, ge=0, le=1000000)
+    estimated_ram_mib: float | None = Field(default=None, ge=0, le=1000000)
+
+
+class SchedulerFinishInput(BaseModel):
+    outcome: str = Field(min_length=1, max_length=20)
+    note: str = Field(default="", max_length=2000)
+
+
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
     store = EvoStore(config.database)
@@ -89,6 +105,7 @@ def create_app(config_path="config.toml", provider_name=None):
     app.state.lab_db = lab_db
     app.state.assistant = assistant
     initialize_profiles(lab_db.connection)
+    initialize_scheduler(lab_db.connection)
 
     # Bound workers keep blocking provider calls off the ASGI event loop.
     # Shutdown waits for active turns before closing the shared SQLite store.
@@ -273,6 +290,54 @@ def create_app(config_path="config.toml", provider_name=None):
             sample = {}
         return assess_workload(sample, payload.dict())
 
+    @app.get("/api/v1/hardware/scheduler")
+    def hardware_scheduler():
+        with lab_db.lock:
+            return list_jobs(lab_db.connection)
+
+    @app.post("/api/v1/hardware/scheduler/jobs", status_code=201)
+    def hardware_scheduler_create(payload: SchedulerJobInput):
+        try:
+            with lab_db.lock:
+                return create_job(lab_db.connection, payload.dict())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="Could not create workload job") from exc
+
+    @app.post("/api/v1/hardware/scheduler/dispatch")
+    def hardware_scheduler_dispatch(limit: int = 5):
+        try:
+            sample = sample_nvidia_smi()
+        except Exception:
+            sample = {}
+        with lab_db.lock:
+            return dispatch_jobs(lab_db.connection, sample, limit=limit)
+
+    @app.post("/api/v1/hardware/scheduler/jobs/{job_id}/start")
+    def hardware_scheduler_start(job_id: str):
+        try:
+            with lab_db.lock:
+                return start_job(lab_db.connection, job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/hardware/scheduler/jobs/{job_id}/finish")
+    def hardware_scheduler_finish(job_id: str, payload: SchedulerFinishInput):
+        try:
+            with lab_db.lock:
+                return finish_job(lab_db.connection, job_id, payload.outcome, payload.note)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/hardware/scheduler/jobs/{job_id}/cancel")
+    def hardware_scheduler_cancel(job_id: str):
+        try:
+            with lab_db.lock:
+                return cancel_job(lab_db.connection, job_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.get("/api/v1/hardware/history")
     def hardware_history(limit: int = 180):
         bounded = min(max(limit, 1), 1000)
@@ -372,6 +437,7 @@ def create_app(config_path="config.toml", provider_name=None):
             "hardware_runtime_profiles": True,
             "hardware_resource_estimates": True,
             "hardware_workload_admission": True,
+            "hardware_workload_scheduler": True,
             "hardware_process_control": False,
             "provider_selection": False,
         }
