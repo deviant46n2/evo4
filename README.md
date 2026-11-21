@@ -21,6 +21,7 @@ The repository contains two independently usable applications:
 - Uses only the Python standard library at runtime.
 - Includes an approval-gated coding-agent loop with streamed tool calls for project inspection, file listing, reading, searching, writing, and running explicitly allowlisted commands. The agent receives a bounded, secret-filtered project overview and explicit instructions to inspect before editing, verify changes with tests, and report only observed results.
 - Records agent runs and tool-call inputs/outcomes in SQLite for later review.
+- Adds an explicit experiential-feedback loop: inspect prior agent runs, record success/partial/failure and user feedback, and optionally turn a verified correction into a reusable lesson linked to that run.
 
 ## Current Evo Lab capabilities
 
@@ -105,6 +106,8 @@ See [the experiment protocol](docs/EXPERIMENT-PROTOCOL.md).
 ## Important limitations
 
 This is a substantial early foundation, not a validated finished assistant. It does not yet have a web research agent, semantic memory retrieval, robust automatic memory consolidation or contradiction resolution, background task execution, model scheduling/unloading, or a graphical UI. Memory and research retrieval are lexical. Automatic memory capture is a small heuristic that creates tentative candidates; it is not general language understanding. The current assistant sends recent conversation history and selected memories/lessons/research; history and retrieved records have conservative character limits, not exact tokenizer-based token budgeting.
+
+Experiential learning is deliberately user-grounded at this stage: Evo does not decide on its own that a task succeeded or promote its own speculation into trusted lessons. A user can review an agent run and record its outcome; an optional lesson is stored with `user-run-feedback` provenance and linked to the feedback record. This creates a traceable correction loop, not autonomous self-training.
 
 The coding agent depends on OpenAI-compatible streamed tool-call support. Some llama.cpp builds/models may not support the expected tool-call format; this must be tested on the actual endpoint. The agent is bounded by a tool-round limit; reaching that limit is recorded as a failed/incomplete run rather than success. It is not a background autonomous worker. The streaming client targets common OpenAI-compatible SSE behavior; server-specific quirks must be tested on the actual endpoint. A successful CI run cannot validate the target machine, model, CUDA stack, or real-world response quality.
 
