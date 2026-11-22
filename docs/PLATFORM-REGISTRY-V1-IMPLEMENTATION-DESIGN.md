@@ -194,6 +194,25 @@ Notes:
 - `ON DELETE RESTRICT` preserves history and prevents accidental destruction.
 - Archiving is the normal lifecycle operation for configurations, projects, and workspaces. No general destructive deletion is provided.
 
+### SQLite validation evidence
+
+The exact complete proposed DDL above was executed in an isolated in-memory SQLite database (`:memory:`) with `PRAGMA foreign_keys=ON`. No Evo database or file was touched.
+
+Full-DDL tests performed:
+
+- Schema creation: the complete DDL, including all tables, composite foreign keys, indexes, and triggers, executed successfully via `executescript()` on a fresh database. Result: success, no syntax errors.
+- Repeated creation was not separately exercised; the DDL uses `CREATE TABLE IF NOT EXISTS` and `CREATE TRIGGER IF NOT EXISTS`, so repeated initialization is structurally supported.
+- Configuration creation with predetermined IDs: `BEGIN IMMEDIATE`, insert `ai_configurations` with `current_revision_id` set to a predetermined revision ID, insert the initial `ai_configuration_revisions` row, commit. Result: success; both rows present.
+- Deferred FK invariant: inserting `ai_configurations` referencing a non-existent revision and committing without inserting the revision failed with `FOREIGN KEY constraint failed`.
+- Cross-configuration revision reference: inserting a workspace whose `configuration_id`/`configuration_revision_id` pair does not match an existing revision failed with `FOREIGN KEY constraint failed`.
+- Revision immutability: `UPDATE` on `ai_configuration_revisions` was rejected by `ai_configuration_revisions_no_update` with `AI configuration revisions are immutable`.
+- Revision deletion: `DELETE` on `ai_configuration_revisions` was rejected by `ai_configuration_revisions_no_delete` with `AI configuration revisions cannot be deleted`.
+- Checkout ownership: inserting a workspace referencing a non-existent `(project_id, checkout_id)` pair failed with `FOREIGN KEY constraint failed`.
+- Shared checkout: two workspaces referencing the same checkout were inserted successfully.
+- Restrictive deletion: deleting a referenced `software_projects` row failed with `FOREIGN KEY constraint failed`.
+
+All tests above used the exact full DDL. No partial-DDL-only claims are made.
+
 ## 5. Migration and transaction design
 
 Registry migration integration (accurate to `src/evo_core/store.py`):
@@ -250,7 +269,7 @@ Archived entities:
 - Archiving is reversible in v1 unless a later design explicitly makes it terminal.
 - An archived configuration, project, or workspace may be reactivated by changing status from `archived` to `active` using the same optimistic-concurrency rules (for example, via PATCH with `status: active` and a required `expected_version`).
 - Archiving must not delete revisions, history, checkouts, or experiment references.
-- An archived project's checkouts remain registered but unavailable for new workspace creation unless explicitly reactivated or unless the design later permits archived-project checkout use.
+- An archived project's checkouts remain registered. While the project is archived, they are unavailable for new workspace creation. Reactivating the project does not automatically change any checkout's `availability_status`; checkout availability remains independently controlled by its existing state and system checks. No separate checkout reactivation endpoint or capability is provided in v1.
 - Unregistering a checkout is distinct from archiving a project and must not delete filesystem contents.
 
 Unavailable checkouts:
@@ -313,10 +332,10 @@ AI configurations:
 - `get_configuration(configuration_id) -> ConfigurationRecord`
 - `list_configurations(status=None) -> list[ConfigurationRecord]`
 - `update_configuration(configuration_id, updates, expected_version) -> ConfigurationRecord`
-- `create_revision(configuration_id, definition, parent_revision_id=None, change_summary="", expected_version) -> ConfigurationRevisionResult`
+- `create_revision(configuration_id, definition, *, parent_revision_id=None, change_summary="", expected_version) -> ConfigurationRevisionResult`
 - `get_revision(configuration_id, revision_id) -> RevisionRecord`
 - `list_revisions(configuration_id) -> list[RevisionRecord]`
-- `restore_revision(configuration_id, revision_id, change_summary="", expected_version) -> ConfigurationRevisionResult`
+- `restore_revision(configuration_id, revision_id, *, change_summary="", expected_version) -> ConfigurationRevisionResult`
 - `archive_configuration(configuration_id, expected_version) -> ConfigurationRecord`
 
 Projects:
@@ -472,11 +491,11 @@ The following defines the concrete fields returned by the essential endpoints ab
 - `ConfigurationCreateRequest`: `definition: object`, `change_summary: string` (default empty).
 - `ConfigurationUpdateRequest`: `status: "active" | "archived"` (optional), `expected_version: integer` (required). Name and description are derived from revisions and are not directly mutable here.
 - `ProjectCreateRequest`: `name`, `description`, `git_remote`, `default_ref`, `project_type`.
-- `ProjectUpdateRequest`: permitted metadata fields plus `expected_version: integer`.
+- `ProjectUpdateRequest`: permitted metadata fields, including `status: "active" | "archived"`, plus `expected_version: integer` (required).
 - `CheckoutRegisterRequest`: `canonical_path`, `branch_or_ref`, `last_known_commit`.
 - `CheckoutUpdateRequest`: permitted metadata fields plus `expected_version: integer`.
 - `WorkspaceCreateRequest`: `name`, `description`, `project_id`, `configuration_id`, `configuration_revision_id`, `checkout_id` (nullable).
-- `WorkspaceUpdateRequest`: permitted fields plus `expected_version: integer`.
+- `WorkspaceUpdateRequest`: permitted fields, including `status: "active" | "archived"`, plus `expected_version: integer` (required).
 - `RevisionCreateRequest`: `definition: object`, `parent_revision_id` (string or null), `change_summary: string`, `expected_version: integer` (required).
 - `RestoreRevisionRequest`: `change_summary: string`, `expected_version: integer` (required).
 
@@ -544,7 +563,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-Do not start implementation until the unresolved decisions in section 16 have been explicitly resolved.
+Implementation may proceed once the blocking decisions in section 16 are resolved: checkout canonicalization/symlink handling and cross-database transaction/failure semantics. The remaining items are contract refinements to finalize during implementation.
 
 ## 14. Acceptance criteria
 
@@ -591,13 +610,12 @@ Residual risks:
 
 ## 16. Unresolved decisions requiring source-level resolution
 
-1. Whether the minimal append-only `workspace_events` table belongs in v1. It is not required for core invariants but may be needed for auditability; inclusion affects migration scope.
-2. Whether secret-free configuration export and import are included in v1 or deferred. Deferred unless separately approved, but the schema should not prevent later addition.
-3. Exact JSON schema validation rules and forward-compatibility behavior. Common structure is specified, but strictness and evolution policy remain open.
-4. Exact optimistic concurrency token and conflict response semantics. Integer versions are proposed; exact error payload and retry guidance remain open.
-5. Checkout canonicalization, symlink handling, unavailable-path behavior, and registration rules. Security-sensitive and requires source-level inspection of `Workspace`.
-6. Exact request/response contracts and route conventions after source inspection. The matrix and field definitions above are proposed, not final.
-7. Exact persistence integration between `EvoStore` and `ResultsDB`, including transaction and migration behavior. Cross-database operations need concrete locking and failure semantics.
+1. Exact JSON schema validation strictness and forward-compatibility behavior. The common structure is specified, but strictness, unknown-field handling, and evolution policy remain open.
+2. Exact conflict response payload and retry/error semantics for stale optimistic-concurrency versions. Integer versions are chosen, but the response body and client retry guidance remain open.
+3. Checkout canonicalization, symlink handling, and unavailable-path behavior. This is security-sensitive and requires source-level inspection of `Workspace`; registration rules themselves are specified in section 9.
+4. Cross-database transaction and failure semantics between `EvoStore` and `ResultsDB`. Locking, partial-failure, and recovery behavior for operations touching both stores remain open.
+
+Resolved and removed from this section: `workspace_events` inclusion (optional, not required for v1); secret-free export/import (deferred unless separately approved); integer optimistic concurrency model; `Workspace` security boundary and checkout registration rules; `EvoStore`/`ResultsDB` connection and migration architecture; and API contracts specified in sections 7-10.
 
 ## 17. Source references
 
