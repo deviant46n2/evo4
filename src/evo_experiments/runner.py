@@ -62,6 +62,7 @@ def run_tasks(config, tasks_path, repetitions=None):
     run_label = str(config.run_metadata.get("label") or config.model)
     db = ResultsDB(config.database)
     ids = []
+    active_interrupt = None
     try:
         for repetition in range(1, count + 1):
             for task in tasks:
@@ -126,7 +127,8 @@ def run_tasks(config, tasks_path, repetitions=None):
                                 "tokens_per_second": result["tokens_per_second"]})
                         db.finish_experiment(eid, failure)
                         finished = True
-                    except KeyboardInterrupt:
+                    except KeyboardInterrupt as exc:
+                        active_interrupt = exc
                         if not finished:
                             interrupted = {"finished_at": datetime.now(timezone.utc).isoformat(),
                                 "status": "interrupted",
@@ -140,20 +142,21 @@ def run_tasks(config, tasks_path, repetitions=None):
                                     "completion_tokens": result.get("completion_tokens"),
                                     "tokens_per_second": result.get("tokens_per_second")})
                             try:
-                                db.finish_experiment(eid, interrupted)
+                                db.finish_experiment_if_running(eid, interrupted)
                                 finished = True
                             except Exception as cleanup_exc:
                                 import sys, traceback
                                 sys.stderr.write(f"Secondary experiment cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
                                 traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
                         raise
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
+                    active_interrupt = exc
                     if eid is not None and not finished:
                         interrupted = {"finished_at": datetime.now(timezone.utc).isoformat(),
                             "status": "interrupted",
                             "error": "KeyboardInterrupt: experiment interrupted by user"}
                         try:
-                            db.finish_experiment(eid, interrupted)
+                            db.finish_experiment_if_running(eid, interrupted)
                             finished = True
                         except Exception as cleanup_exc:
                             import sys, traceback
@@ -169,5 +172,13 @@ def run_tasks(config, tasks_path, repetitions=None):
                             sys.stderr.write(f"Secondary monitor cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
                             traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception as close_exc:
+            if active_interrupt is not None:
+                import sys, traceback
+                sys.stderr.write(f"Secondary database close failure: {type(close_exc).__name__}: {close_exc}\n")
+                traceback.print_exception(type(close_exc), close_exc, close_exc.__traceback__, file=sys.stderr)
+            else:
+                raise
     return ids

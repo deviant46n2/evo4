@@ -93,6 +93,21 @@ class ResultsDB:
             self.connection.execute(f"UPDATE experiments SET {assignments} WHERE id=?",
                                     [*values.values(), experiment_id])
             self.connection.commit()
+
+    def finish_experiment_if_running(self, experiment_id, values):
+        """Finalize an experiment only while it is still running.
+
+        Returns True when the transition was applied and False when the row had
+        already reached a terminal state. This prevents an interruption cleanup
+        from overwriting a result that was committed immediately before it.
+        """
+        assignments = ", ".join(f"{key}=?" for key in values)
+        with self.lock:
+            cursor = self.connection.execute(
+                f"UPDATE experiments SET {assignments} WHERE id=? AND status='running'",
+                [*values.values(), experiment_id])
+            self.connection.commit()
+            return cursor.rowcount > 0
     def add_sample(self, experiment_id, values):
         row = {"experiment_id": experiment_id, **values}
         if "gpu_processes" in row:

@@ -130,3 +130,37 @@ class ExperimentInterruptionTests(unittest.TestCase):
                 with patch("evo_experiments.runner.ResultsDB.finish_experiment", side_effect=RuntimeError("cleanup failed")):
                     with self.assertRaises(KeyboardInterrupt):
                         run_tasks(load_config(config), tasks)
+
+
+    def test_interrupt_after_committed_terminal_result_preserves_completed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "results.db"
+            config, tasks = write_config(temp, db_path, 1)
+            original_finish = ResultsDB.finish_experiment
+
+            def finish_then_interrupt(self_db, eid, values):
+                original_finish(self_db, eid, values)
+                raise KeyboardInterrupt()
+
+            with patch("evo_experiments.runner.stream_chat_completion", return_value={
+                    "response": "hello", "finish_reason": "stop",
+                    "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
+                    "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}):
+                with patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})):
+                    with patch("evo_experiments.db.ResultsDB.finish_experiment", finish_then_interrupt):
+                        with self.assertRaises(KeyboardInterrupt):
+                            run_tasks(load_config(config), tasks)
+            db = ResultsDB(db_path)
+            row = db.connection.execute("SELECT status,response FROM experiments").fetchone()
+            db.close()
+            self.assertEqual(row["status"], "completed")
+            self.assertEqual(row["response"], "hello")
+
+    def test_database_close_failure_does_not_replace_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "results.db"
+            config, tasks = write_config(temp, db_path, 1)
+            with patch("evo_experiments.runner.stream_chat_completion", side_effect=KeyboardInterrupt()):
+                with patch("evo_experiments.db.ResultsDB.close", side_effect=RuntimeError("close failed")):
+                    with self.assertRaises(KeyboardInterrupt):
+                        run_tasks(load_config(config), tasks)
