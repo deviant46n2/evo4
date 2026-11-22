@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -47,21 +48,97 @@ class CodingAgentTests(unittest.TestCase):
     def test_truncated_model_response_does_not_execute_proposed_tools(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
-            provider=ToolProvider([{
-                "content":"I will write the file, but this response was cut off.",
-                "tool_calls":[call("write_file",{"path":"main.py","content":"print('unsafe')"})],
-                "finish_reason":"length","truncated":True
-            }])
+            provider=ToolProvider([
+                {
+                    "content":"I will write the file, but this response was cut off.",
+                    "tool_calls":[call("write_file",{"path":"main.py","content":"print('unsafe')"})],
+                    "finish_reason":"length","truncated":True
+                },
+                {"content":"No further action is needed.","tool_calls":[]}
+            ])
             assistant=self.make_assistant(tmp,provider)
             cid=assistant.new_conversation()
             agent=CodingAgent(assistant,root)
             approvals=[]
             result=agent.run(cid,"Create main.py",lambda *args:approvals.append(args) or True)
-            self.assertEqual(result["status"],"truncated")
+            self.assertEqual(result["status"],"completed")
             self.assertEqual(approvals,[])
             self.assertFalse((root/"main.py").exists())
             run=assistant.store.get_agent_run(result["run_id"])
+            self.assertEqual(run["status"],"completed")
+            metadata=run["metadata"] if "metadata" in run else None
+            assistant.close()
+
+    def test_truncated_response_recovers_with_fresh_tool_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {
+                    "content":"I will write unsafe content, but this response was cut off.",
+                    "tool_calls":[call("write_file",{"path":"main.py","content":"print('unsafe')"}, "call-unsafe")],
+                    "finish_reason":"length",
+                },
+                {
+                    "content":"Writing the correct file now.",
+                    "tool_calls":[call("write_file",{"path":"main.py","content":"print('safe')"}, "call-safe")],
+                    "finish_reason":"stop",
+                },
+                {"content":"Done.","tool_calls":[]},
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            approvals=[]
+            def approval(name,args):
+                approvals.append((name,args))
+                return True
+            result=agent.run(cid,"Create main.py",approval)
+            self.assertEqual(result["status"],"completed")
+            self.assertEqual(len(provider.messages),3)
+            self.assertEqual(len(approvals),1)
+            self.assertEqual(approvals[0][1]["content"],"print('safe')")
+            self.assertEqual((root/"main.py").read_text(encoding="utf-8"),"print('safe')")
+            run=assistant.store.get_agent_run(result["run_id"])
+            self.assertEqual(run["status"],"completed")
+            metadata=json.loads(run["metadata_json"] or "{}")
+            self.assertEqual(metadata.get("provider_response_attempts"),3)
+            self.assertEqual(metadata.get("truncated_responses"),1)
+            self.assertEqual(metadata.get("continuation_attempts"),1)
+            self.assertEqual(metadata.get("tool_calls_processed"),1)
+            assistant.close()
+
+    def test_repeated_truncation_executes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {
+                    "content":"First truncated response.",
+                    "tool_calls":[call("write_file",{"path":"first.py","content":"first"}, "call-first")],
+                    "finish_reason":"length",
+                },
+                {
+                    "content":"Second truncated response.",
+                    "tool_calls":[call("write_file",{"path":"second.py","content":"second"}, "call-second")],
+                    "finish_reason":"length",
+                },
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            approvals=[]
+            result=agent.run(cid,"Create files",lambda *args:approvals.append(args) or True)
+            self.assertEqual(result["status"],"truncated")
+            self.assertEqual(len(provider.messages),2)
+            self.assertEqual(approvals,[])
+            self.assertFalse((root/"first.py").exists())
+            self.assertFalse((root/"second.py").exists())
+            run=assistant.store.get_agent_run(result["run_id"])
             self.assertEqual(run["status"],"failed")
+            metadata=json.loads(run["metadata_json"] or "{}")
+            self.assertEqual(metadata.get("provider_response_attempts"),2)
+            self.assertEqual(metadata.get("truncated_responses"),2)
+            self.assertEqual(metadata.get("continuation_attempts"),1)
+            self.assertEqual(metadata.get("tool_calls_processed"),0)
             assistant.close()
 
     def test_project_inspection_is_available_and_policy_is_injected(self):
