@@ -167,11 +167,12 @@ def run_tasks(config, tasks_path, repetitions=None):
                     if monitor is not None:
                         cleanup_exc = None
                         interrupted = False
+                        unexpected_exc = None
                         try:
                             monitor.stop()
                         except KeyboardInterrupt:
                             interrupted = True
-                        except Exception as exc:
+                        except BaseException as exc:
                             cleanup_exc = exc
                             import sys, traceback
                             sys.stderr.write(f"Secondary monitor cleanup failure: {type(exc).__name__}: {exc}\n")
@@ -182,10 +183,19 @@ def run_tasks(config, tasks_path, repetitions=None):
                                 thread.join()
                             except KeyboardInterrupt:
                                 interrupted = True
-                        if interrupted:
-                            if active_interrupt is None:
-                                active_interrupt = KeyboardInterrupt()
+                            except BaseException as exc:
+                                if unexpected_exc is None:
+                                    unexpected_exc = exc
+                                    import sys, traceback
+                                    sys.stderr.write(f"Secondary monitor join failure: {type(exc).__name__}: {exc}\n")
+                                    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+                        if active_interrupt is not None:
                             raise active_interrupt
+                        if interrupted:
+                            active_interrupt = KeyboardInterrupt()
+                            raise active_interrupt
+                        if unexpected_exc is not None:
+                            raise unexpected_exc
                         if cleanup_exc is not None:
                             raise cleanup_exc
     finally:
