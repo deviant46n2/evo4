@@ -584,7 +584,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-No blocking design decisions remain. Implementation may proceed; the remaining items in section 16 are non-blocking refinements to finalize during implementation.
+No blocking design decisions remain. Implementation may begin only after explicit user authorization; the remaining items in section 16 are non-blocking refinements that may be finalized during implementation.
 
 ## 14. Acceptance criteria
 

@@ -115,6 +115,89 @@ Eventually support export/import, reconstruction on another machine, and multi-u
 
 The proposed persistent platform entity model is specified in `docs/PLATFORM-REGISTRY-V1-SPEC.md`. It is proposed architecture, not an implemented feature.
 
+## Platform-wide design principles and engineering contracts
+
+These principles are binding architectural guidance. They do not require every future subsystem to be implemented immediately. Any justified exception should be explicit, scoped, and documented. Specialized governance details are maintained in `docs/DEVELOPMENT-CONTROL-PLANE.md`.
+
+### 1. Ownership and authority
+
+- Every persistent entity and record has a defined authoritative owner.
+- Distinguish authoritative source data from derived, cached, indexed, or replicated data.
+- Derived data must not silently override its authoritative source.
+- Cross-subsystem ownership and mutation responsibilities must be explicit.
+
+### 2. Component lifecycle
+
+- Define a general lifecycle: discovery → evaluation → registration → authorization → availability → assignment/use → upgrade or replacement → suspension/retirement/revocation.
+- Registration is not authorization.
+- Components must be replaceable without requiring unrelated subsystems to be redesigned.
+- Preserve identity, version, provenance, compatibility, and relevant history through upgrades and replacements.
+- This does not prescribe a complete component manager implementation.
+
+### 3. Contracts and integration boundaries
+
+- Evo owns platform-level interfaces and contracts.
+- External providers, models, frameworks, agents, and tools integrate through adapters or explicit interfaces.
+- Provider-specific details remain behind integration boundaries where practical.
+- Optional integrations must not become hidden mandatory dependencies.
+- Contract changes must consider compatibility and migration.
+
+### 4. Data integrity and provenance
+
+- Persistent records require stable identity and appropriate timestamps, versions, and provenance.
+- Important mutations must be atomic.
+- Preserve meaningful history, including failures, supersession, and contradictions where relevant.
+- Define explicit ownership and retention rules before introducing destructive operations.
+- Use the appropriate store for each domain; do not create duplicate sources of truth.
+
+### 5. Security, trust, and authority
+
+- Capability, trust, and permission are distinct concepts.
+- Possessing a capability or being registered does not grant permission to exercise it.
+- Access must be scoped to an authorized task, target, and execution context.
+- Preserve approval, isolation, path-containment, secret-handling, and command-allowlist boundaries.
+- No subsystem may silently expand its own authority.
+- Provider terms, licensing, API rules, and automation restrictions remain mandatory.
+
+### 6. Shared resource management
+
+- Resource discovery, ownership, admission, reservations, limits, priorities, and scheduling are platform responsibilities.
+- No subsystem may assume exclusive ownership of shared compute, memory, endpoints, or provider quotas without an explicit reservation or policy.
+- Resource decisions must account for competing workloads and available headroom.
+- More agents or parallelism are not automatically better.
+- This defines architectural ownership, not a requirement to implement a scheduler now.
+
+### 7. Evaluation and evidence
+
+- Capability claims require defined acceptance criteria and observed evidence.
+- Record relevant configuration/version, software revision, environment, inputs, methodology, and results for reproducibility.
+- Distinguish deterministic tests, integration tests, live-model tests, and independent acceptance checks.
+- Preserve failures and incomplete runs.
+- An agent or subsystem must not be the sole authority validating its own consequential improvements.
+- Evaluation rigor should be proportionate to risk and impact.
+
+### 8. Recovery and operational resilience
+
+- Persistence migrations must be transactional and fail safely.
+- Important state must have a documented recovery strategy appropriate to its criticality.
+- Bootstrap, diagnosis, and minimum recovery capabilities must not depend entirely on the subsystem they are intended to repair.
+- Do not mandate a distributed recovery architecture now.
+
+### 9. Progressive autonomy
+
+- Autonomy grows with demonstrated reliability, explicit authorization, safeguards, and available resources.
+- Routine reversible authorized operations may eventually be autonomous.
+- Consequential operations require appropriate safeguards and approvals.
+- Do not impose arbitrary restrictions that prevent future self-development.
+
+### 10. Incremental implementation
+
+- Build the smallest useful capability that satisfies its acceptance criteria.
+- Preserve extension points where justified, but do not build speculative abstractions or future infrastructure without a demonstrated need.
+- Reuse existing software and research when practical.
+- Existing working capabilities must be preserved unless a deliberate, validated replacement is approved.
+
+
 ## Current vs designed vs long-term
 
 1. Current implemented capabilities: described in `README.md` and existing docs.

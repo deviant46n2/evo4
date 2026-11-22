@@ -47,7 +47,7 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Proposed decisions awaiting discussion
 
-- Storage choices, migration strategy, and schema evolution for experiment records and other persistent entities.
+- Storage choices, migration strategy, and schema evolution for experiment records and other persistent entities outside the approved Registry v1 baseline.
 - Portability mechanisms for project/configuration definitions and secrets.
 - Subsystem boundaries and how independently replaceable individual subsystems should be.
 - Detailed optimization priorities and tradeoffs.
@@ -62,6 +62,9 @@ The personal assistant and coding-agent experience are configurations built on t
 - HEAD before this documentation commit: `be32d766b5fde3c0e8bc7662a43856859b378d9b`
 - Tracked working tree was clean before this documentation task. Pre-existing untracked files remain untouched: `desktop/dist/`, `desktop/tsconfig.tsbuildinfo`, `diagnostics/coding-acceptance-direct-1ab0d44c.md`, and `diagnostics/coding-acceptance-plan-33ebabb2.md`.
 - Platform Registry v1 design baseline is approved at commit `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
+- `docs/ARCHITECTURE.md` is the authoritative cross-cutting architecture, including platform-wide design principles and engineering contracts.
+- `docs/ARCHITECTURE-READINESS-REVIEW.md` is the Registry readiness decision record. It finds no blocking incompatibility but does not authorize Milestone 1.
+- `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md` defines the approved implementation sequence.
 - Platform Registry v1 implementation plan is now recorded in `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md`.
 - Verified baseline in this worktree:
   - Python tests: 263 passed using the main repository virtual environment because this worktree has no `.venv`.
@@ -86,4 +89,4 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Next recommended engineering decision
 
-GPT-6 should review the Platform Registry implementation plan and decide whether to authorize Milestone 1. The smallest useful first code step is the registry persistence foundation and migration in `EvoStore`, with persistence-level invariant tests. Do not prematurely implement the full development control plane or begin registry code before that authorization.
+GPT-6 should review the committed architecture deliverables, including `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE-READINESS-REVIEW.md`, and the Registry baseline, and determine whether any blocking issue remains. Milestone 1 is not authorized until that review is complete. No Registry implementation has started.
