@@ -105,6 +105,27 @@ This document is a plan only. Implementation requires explicit approval and must
 - Implement revision history, new-revision updates, restoration by creating a new revision, optimistic concurrency, and archive/reactivation.
 - Keep provider-specific extensions and secret references.
 
+**Definition contract (schema version 1):**
+
+- Required top-level keys: `schema_version` (integer `1`) and `components` (object).
+- Optional top-level key: `extensions` (object).
+- No other top-level keys.
+- `components` accepts arbitrary non-empty string keys and object values.
+- Recursive rejection of obvious credential-value keys; explicit reference fields are permitted.
+- Normalized deep-copied JSON-compatible values are persisted.
+
+**Extensibility boundary:**
+
+- Unknown provider, model, agent, framework, tool, and extension identifiers remain representable.
+- No validation against currently installed integrations.
+- No generic plugin or component framework is introduced.
+
+**Registry AI configurations versus EvoConfig:**
+
+- Registry AI configurations are persistent, versioned platform entities.
+- `EvoConfig` remains the runtime application configuration loaded from TOML.
+- M2 does not replace or reconfigure `EvoConfig`.
+
 **Required tests/evidence:**
 
 - Atomic configuration creation and rollback.

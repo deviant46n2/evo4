@@ -69,6 +69,7 @@ The personal assistant and coding-agent experience are configurations built on t
 - `docs/ARCHITECTURE.md` is the authoritative cross-cutting architecture, including platform-wide design principles and engineering contracts.
 - `docs/ARCHITECTURE-READINESS-REVIEW.md` is the Registry readiness decision record. It finds no blocking incompatibility, but Milestone 1 remains unauthorized and no Registry implementation has started.
 - `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md` defines the approved implementation sequence.
+- M2 implementation code and tests have been added (`src/evo_core/ai_configurations.py`, `tests/test_ai_configurations.py`) and are pending GPT-6 review. M2 is not accepted and Milestone 1 authorization does not imply M2 acceptance.
 - The implementation plan's Milestone 1 now includes mandatory safeguards (foreign-key verification before migration, realistic database migration, concurrent/repeated initialization, shared-connection preservation, injected-failure rollback/retry, and fail-closed startup) as explicit completion gates. No implementation code has been changed and Milestone 1 remains unauthorized.
 - Platform Registry v1 implementation plan is now recorded in `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md`.
 - Verified baseline in this worktree:
