@@ -107,6 +107,74 @@ Application areas should remain windows into backend capabilities rather than se
 - Retrieved context remains untrusted reference data, not instructions.
 - Workspace and command boundaries remain governed by existing safety controls.
 
+## Existing Capability vs. Redesign Gap Inventory
+
+This inventory is based on inspection of the current implementation, routes, components, services, persistence, and tests. It distinguishes existing capabilities from redesign gaps and identifies what should be reused.
+
+### Phase 0 — Product redesign specification and architecture reconciliation
+
+- Existing implementation: Product direction, platform identity, registry, and stabilization status are documented in `README.md`, `ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT-CONTINUITY.md`, `docs/PLATFORM-REGISTRY-V1-SPEC.md`, and this plan. The platform entity model is implemented through Registry v1 (M5) and exercised by `tests/test_workspaces_api.py`, `tests/test_project_checkouts_api.py`, and related tests.
+- Status: Partially implemented.
+- Redesign gap: Reconcile the chat-first UX direction with the existing platform architecture without conflating UI navigation with entity ownership.
+- Backend gap: None expected; this is documentation and architecture reconciliation.
+- Preservation and reuse: Preserve existing platform architecture and registry.
+- Validation: Documentation consistency checks and existing test suite.
+
+### Phase 1 — Chat-first interface and navigation
+
+- Existing implementation: `desktop/src/App.tsx` already implements a chat-first layout with conversation list, search, create, open, rename, delete, streaming chat, and switching between workspaces. Conversation APIs exist at `/api/v1/conversations` and `/api/v1/conversations/{id}/messages` in `src/evo_core/api.py`.
+- Status: Implemented.
+- Redesign gap: Navigation and visual polish may need refinement, but the core chat/conversation capability exists.
+- Backend gap: None identified beyond existing APIs.
+- Preservation and reuse: Reuse conversation persistence and streaming chat implementation.
+- Validation: Desktop build and existing API tests; no dedicated frontend tests exist.
+
+### Phase 2 — Project lifecycle, provisioning, and isolation
+
+- Existing implementation: Platform Registry v1 implements AI configurations (`src/evo_core/ai_configurations.py`), software projects and checkouts (`src/evo_core/project_checkouts.py`), workspaces (`src/evo_core/workspaces.py`), and registered-workspace execution boundaries (`src/evo_core/api.py`). Desktop workspaces exist in `desktop/src/ProjectsWorkspace.tsx`, `desktop/src/WorkspaceRegistryWorkspace.tsx`, and `desktop/src/Workspaces.tsx`.
+- Status: Implemented for registry entities; project provisioning/deletion workflow is not fully implemented as described by the redesign.
+- Redesign gap: Default project creation should create a dedicated folder, initialize Git, and provision an initial framework. Project deletion with verified cleanup is not yet implemented. Project-specific instruction/memory scoping needs UX integration.
+- Backend gap: New backend functionality is required for provisioning, deletion safeguards, and project-scoped instructions/memory.
+- Preservation and reuse: Reuse existing project, checkout, configuration, and workspace entities and validation.
+- Validation: `tests/test_project_checkouts_api.py`, `tests/test_workspaces_api.py`, `tests/test_workspace_execution_boundary.py`.
+
+### Phase 3 — Agent interaction, background execution, and interruption
+
+- Existing implementation: `AgentsWorkspace` in `desktop/src/Workspaces.tsx` supports run history, detail, approval, cancellation, and plan management. Backend supports agent runs, plans, approval, execution, cancellation, background tasks, and worker revalidation. Interruption and finalization behavior is covered by `tests/test_experiment_interruption.py` and agent tests.
+- Status: Implemented.
+- Redesign gap: Agent activity needs inline chat presentation with reliable expandable details. The current Agents workspace is a separate view rather than inline chat activity.
+- Backend gap: Primarily UI/UX integration; backend execution and approval already exist.
+- Preservation and reuse: Reuse agent run, plan, approval, cancellation, and background-task infrastructure.
+- Validation: `tests/test_verification_approval.py`, `tests/test_coding_agent.py`, `tests/test_workspace_execution_boundary.py`.
+
+### Phase 4 — Persistent memory and context experience
+
+- Existing implementation: Memory workspace in `desktop/src/Workspaces.tsx` supports listing, search/recall preview, add, archive, supersede, candidate review, duplicate scan, and provenance display. Backend memory APIs and `_build_messages`/`_fit_context` exist in `src/evo_core/assistant.py`. Retrieved context is isolated as untrusted in a separate user-role message.
+- Status: Partially implemented.
+- Redesign gap: Memory UX needs stronger search, inspection, editing, and global/project distinction. The mechanical/spider visual metaphor is exploratory and not committed.
+- Backend gap: Some extension may be needed for global/project scoping and metadata; core persistence and retrieval exist.
+- Preservation and reuse: Reuse memory storage, retrieval, candidate review, and context-fitting logic.
+- Validation: `tests/test_evo_core.py`, `tests/test_hardening_features.py`, including `RetrievedContextTrustBoundaryTests`.
+
+### Phase 5 — AI configuration and Cyberdeck
+
+- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, revisions, activation, and selection. Workspace Registry links configurations to projects and checkouts.
+- Status: Partially implemented.
+- Redesign gap: Node-based visual canvas and component inspection are not implemented.
+- Backend gap: Backend configuration entities and relationships exist; visualization is frontend work.
+- Preservation and reuse: Reuse configuration and revision entities.
+- Validation: Configuration API tests and workspace tests.
+
+### Phase 6 — Integration, visual polish, accessibility, usability, and reliability validation
+
+- Existing implementation: Desktop build, backend APIs, tests, and stabilization work exist. No dedicated frontend test framework is present in `desktop/package.json`.
+- Status: Partially implemented.
+- Redesign gap: Integration polish, accessibility review, and dedicated frontend tests are needed.
+- Backend gap: Mostly validation and UI work.
+- Preservation and reuse: Existing build and validation commands.
+- Validation: `npm run build`, Python test suite, compileall, `git diff --check`.
+
+
 ## 10. Phased implementation roadmap
 
 - Phase 0: Product redesign specification and architecture reconciliation.
@@ -133,7 +201,9 @@ Refine dependencies where justified, but do not turn this into a detailed task b
 
 ### Phase 0
 - Redesign plan and architecture reconciliation are documented.
+- An evidence-based Existing Capability vs. Redesign Gap Inventory is included in this plan.
 - Confirmed decisions, proposed approaches, and open questions are clearly separated.
+- Existing capabilities are distinguished from new backend requirements and UI/UX changes.
 - No implementation is implied by planning documents.
 
 ### Phase 1
