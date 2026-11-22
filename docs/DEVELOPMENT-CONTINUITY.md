@@ -44,9 +44,9 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Proposed decisions awaiting discussion
 
-- Persistent first-class experiment records and experiment management implementation details.
-- Hardware and operating-system portability strategy.
-- How independently replaceable individual subsystems should be.
+- Storage choices, migration strategy, and schema evolution for experiment records and other persistent entities.
+- Portability mechanisms for project/configuration definitions and secrets.
+- Subsystem boundaries and how independently replaceable individual subsystems should be.
 - Detailed optimization priorities and tradeoffs.
 - Exact implementation and sequencing of autonomous self-development.
 - Development control plane implementation details and acceptance criteria.
@@ -56,21 +56,24 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Current development state
 
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD: `5d4ae8f53c4cbb150bfe8ac2f3d85444abad4ee5`
+- HEAD: `f1b11dc942e894fa9d20fc6d49ae474f86b7e81a`
 - Working tree contains uncommitted generated artifacts and diagnostic files.
 - Implemented and validated in this branch: agent lifecycle reconciliation, verified background coding, build identity, truncated-response safety, malformed-tool-call recovery, verification completion guards, and documentation reconciliation.
-- A direct coding acceptance run failed because the model produced malformed tool-call JSON.
-- A plan-first acceptance run created files but could not run verification because the configured allowlist did not include `python test_calculator.py`; the plan was marked completed despite failed verification commands. This is historical evidence for the verification-authority question, not the immediate project priority.
+- Identity, architecture, roadmap, and development-continuity documentation has been reconciled with the revised Evo platform vision.
+- Historical coding-agent acceptance evidence:
+  - An earlier live coding-agent attempt failed because the model produced malformed tool-call JSON. No files were written.
+  - A later attempt failed because the model hit its completion-token limit twice, including one bounded continuation. Truncated tool-call content was not executed and no successful file writes occurred.
+- A separate plan-first acceptance run created files but could not run verification because the configured allowlist did not include `python test_calculator.py`. The plan was marked completed despite failed verification commands. This is historical evidence for the verification-authority concern, not the current top-level project priority.
 - The development control plane and lifecycle supervisor are documented as proposed architecture only.
 
 ## Outstanding tasks and blockers
 
-- Define the first implementation milestone for the portable platform foundation.
+- Define the first narrow, coherent platform-foundation implementation milestone.
 - Resolve the verification-authority question for plan completion in a user-configurable allowlist environment.
 - Repeat live coding-agent acceptance after provider/model reliability and allowlist configuration are addressed.
 - Define and implement the development control plane only after design review.
 - Define lifecycle supervisor architecture only after the current coding-agent milestone closes.
 
-## Next recommended discussion or engineering decision
+## Next recommended engineering decision
 
-Before further implementation, GPT-6 should define the first implementation milestone for the platform foundation, using the entity model in `docs/ARCHITECTURE.md`, while preserving the existing Evo assistant and Evo Lab capabilities. The next engineering decision should be the smallest coherent foundation that supports independent AI configurations, software projects, workspaces/sessions, and experiments without prematurely implementing the full control plane.
+GPT-6 should define the smallest useful platform foundation around independent AI configurations, software projects, and their workspace/session relationships, while preserving the existing Evo assistant and Evo Lab capabilities. Experiments remain a first-class architectural entity; determine deliberately whether their initial implementation belongs in this first milestone or a subsequent one. Do not prematurely implement the full development control plane.
