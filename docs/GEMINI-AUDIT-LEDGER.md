@@ -126,19 +126,21 @@ Evidence types:
 ## G. ResourceMonitor lifecycle
 
 - Subsystem: Evo Lab monitoring
-- Source: `src/evo_experiments/monitor.py:152-155` (`stop`, `thread.join`)
-- Classification: Remediation implemented; pending GPT-6 review
-- Fix: `ResourceMonitor.stop()` waits until the worker thread terminates, defers `KeyboardInterrupt` until termination, and reports it afterward; runner database closure cannot occur while the worker remains alive.
-- New tests: `tests/test_monitor_lifecycle.py` (`MonitorLifecycleTests`, `MonitorShutdownFailureTests`, `MonitorUnexpectedJoinTests`).
-- Remaining limitations: monitor shutdown waits for the worker, but process termination or power loss can still leave work incomplete.
+- Source: `src/evo_experiments/monitor.py` (`ResourceMonitor.stop`); `src/evo_experiments/runner.py` (`run_tasks`)
+- Classification: Implemented and accepted
+- Fix: `ResourceMonitor.stop()` waits until the worker thread terminates, defers `KeyboardInterrupt` until termination, and reports it afterward; the runner independently waits for worker termination before database closure, including monitor-stop failure and unexpected join failure.
 - Evidence: `stop()` previously joined with a timeout. If the thread was still alive after the timeout, the runner's outer `finally` closed the database while the monitor callback may still access it.
 - Severity: Medium
-- Existing tests: `tests/test_telemetry.py`, `tests/test_telemetry_db.py`.
-- New tests: `tests/test_monitor_lifecycle.py` (`MonitorLifecycleTests`, `MonitorShutdownFailureTests`, `MonitorUnexpectedJoinTests`).
-- Unverified assumptions: None beyond process termination and power loss.
-- Required remediation: Ensure monitor shutdown completes or database closure waits for monitor termination; document any remaining limitation.
+- Existing tests: `tests/test_telemetry.py`, `tests/test_telemetry_db.py`
+- New tests: `tests/test_monitor_lifecycle.py`:
+  - `test_stop_waits_for_in_flight_callback`
+  - `test_interrupted_join_does_not_return_early`
+  - `test_real_monitor_callback_blocks_database_close`
+  - `test_runner_waits_for_worker_when_monitor_stop_fails`
+  - `test_unexpected_join_failure_does_not_close_database_while_worker_alive`
+- Remaining limitation: process termination or power loss can interrupt shutdown.
 - Acceptance criteria: No database access after shutdown.
-- Status: Unresolved; scheduled in stabilization roadmap.
+- Status: Implemented and accepted.
 
 ## H. Previously challenged Gemini claims
 

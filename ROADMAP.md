@@ -83,7 +83,7 @@ Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Required tests: Interruption finalization test.
 - Acceptance criteria: No running rows remain after interruption.
 
-### Priority 6: ResourceMonitor shutdown race — remediation implemented; pending GPT-6 review
+### Priority 6: ResourceMonitor shutdown race — completed and accepted
 - Problem: Monitor join timeout can race with database closure.
 - Affected subsystem: Evo Lab monitoring.
 - Required remediation: Ensure shutdown completes before database closure or document the limitation.
@@ -91,8 +91,7 @@ Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Acceptance criteria: No database access after shutdown.
 
 ### Partially confirmed / needs investigation
-- Untrusted retrieved context isolation details.
-- Workspace traversal and sensitive-file exposure scope.
+None. Residual limitations for accepted priorities are documented in `docs/GEMINI-AUDIT-LEDGER.md`.
 
 ### False positives
 - Evaluation false positive: disproved by `evaluate_task`.

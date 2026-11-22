@@ -69,7 +69,7 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Outstanding stabilization tasks
 
-- ResourceMonitor shutdown race (Priority 6).
+None. Priorities 1-6 are accepted; the stabilization freeze remains active pending final GPT-6 review.
 
 Accepted:
 - Provider streaming reliability (Priority 1).
@@ -77,6 +77,7 @@ Accepted:
 - Workspace filesystem boundary hardening (Priority 3).
 - Untrusted retrieved context isolation (Priority 4).
 - Experiment lifecycle interruption (Priority 5).
+- ResourceMonitor shutdown race (Priority 6).
 
 Latest reported validation for this branch: 525 Python tests passed; compileall passed; `git diff --check` passed; no desktop build was run for the Priority 6 follow-up. Validation was reported by Kilo implementation runs, not independently rerun by GPT-6.
 
