@@ -190,6 +190,8 @@ export function AgentsWorkspace() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [configurations, setConfigurations] = useState<ConfigurationSummary[]>([]);
   const [checkouts, setCheckouts] = useState<Record<string, CheckoutSummary>>({});
+  const runDetailGeneration = useRef(0);
+  const planDetailGeneration = useRef(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
@@ -204,12 +206,26 @@ export function AgentsWorkspace() {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, []);
   const loadPlan = useCallback(async (id: string) => {
-    try { setPlan(await api<AgentPlan>("/agents/plans/" + encodeURIComponent(id))); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    const token = ++planDetailGeneration.current;
+    try {
+      const result = await api<AgentPlan>("/agents/plans/" + encodeURIComponent(id));
+      if (token !== planDetailGeneration.current) return;
+      setPlan(result);
+    } catch (e) {
+      if (token !== planDetailGeneration.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
   const refreshDetail = useCallback(async (id: string) => {
-    try { setDetail(await api<RunDetail>("/agents/" + encodeURIComponent(id))); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    const token = ++runDetailGeneration.current;
+    try {
+      const result = await api<RunDetail>("/agents/" + encodeURIComponent(id));
+      if (token !== runDetailGeneration.current) return;
+      setDetail(result);
+    } catch (e) {
+      if (token !== runDetailGeneration.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
   useEffect(() => {
     let alive = true;
@@ -238,6 +254,9 @@ export function AgentsWorkspace() {
     return () => { alive = false; };
   }, []);
   useEffect(() => {
+    if (!selected) runDetailGeneration.current += 1;
+  }, [selected]);
+  useEffect(() => {
     void refresh(); void refreshPlans();
     const changed=()=>{void refresh();void refreshPlans();if(selected)void refreshDetail(selected);};
     window.addEventListener("evo-demo-data-changed",changed);
@@ -255,6 +274,7 @@ export function AgentsWorkspace() {
     finally { setBusy(false); }
   }
   async function proposePlan() {
+    planDetailGeneration.current += 1;
     if (!request.trim() || planning || busy || !workspaceId) return;
     setPlanning(true); setError(""); setPlan(null);
     try {
