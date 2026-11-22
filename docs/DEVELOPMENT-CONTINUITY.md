@@ -59,7 +59,7 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Current development state
 
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD: `f1b11dc942e894fa9d20fc6d49ae474f86b7e81a`
+- HEAD: `c1fd790674ffc7d9c47f8558dec9620bb5f0977a`
 - Working tree contains uncommitted generated artifacts and diagnostic files.
 - Implemented and validated in this branch: agent lifecycle reconciliation, verified background coding, build identity, truncated-response safety, malformed-tool-call recovery, verification completion guards, and documentation reconciliation.
 - Identity, architecture, roadmap, and development-continuity documentation has been reconciled with the revised Evo platform vision.
