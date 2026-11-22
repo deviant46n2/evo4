@@ -62,14 +62,14 @@ The personal assistant and coding-agent experience are configurations built on t
 - Platform Registry v1 has been implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are implemented and validated.
 - Registered-workspace execution boundary: implemented and accepted. API execution requires an active registered `workspace_id`; direct and plan-backed workers re-resolve before constructing `CodingAgent`; legacy plans fail closed.
 - Desktop `AgentsWorkspace` selection race correction: implemented and accepted.
-- The codebase is in a stabilization phase. Feature development is frozen until confirmed serious audit findings are fixed, tested, reviewed, and accepted.
+- The codebase is in a stabilization phase. The final GPT-6 review is complete and Priorities 1-6 are accepted; the stabilization freeze remains active until the user explicitly lifts it.
 - Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Canonical roadmap stabilization section: `ROADMAP.md`.
 - Latest validation reported on this branch: 525 Python tests passed; compileall passed; `git diff --check` passed; no desktop build was run for the Priority 6 follow-up.
 
 ## Outstanding stabilization tasks
 
-None. Priorities 1-6 are accepted; the stabilization freeze remains active pending final GPT-6 review.
+None. Priorities 1-6 are accepted; the stabilization freeze remains active until the user explicitly lifts it.
 
 Accepted:
 - Provider streaming reliability (Priority 1).

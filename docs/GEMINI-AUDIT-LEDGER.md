@@ -121,7 +121,7 @@ Evidence types:
 - Status: Implemented and accepted.
 - Fix: `KeyboardInterrupt` is caught around the per-experiment lifecycle, including monitor startup, model execution, evaluation, and result persistence; interrupted rows are finalized as `interrupted` only from `running`; the original exception is re-raised; secondary cleanup and database-close failures are reported without replacing it.
 - New tests: `tests/test_experiment_interruption.py` (`ExperimentInterruptionTests`).
-- Remaining limitations: bounded monitor join cannot guarantee thread termination; process termination or power loss can still leave running rows.
+- Remaining limitations: process termination or power loss can still leave a running experiment record.
 
 ## G. ResourceMonitor lifecycle
 
