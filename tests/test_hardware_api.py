@@ -128,9 +128,9 @@ class HardwareApiTests(unittest.TestCase):
 
     def test_demo_seed_endpoints_are_reversible_and_label_experiment_data(self):
         seed_endpoint = next(route.endpoint for route in self.app.routes
-                             if route.path == "/api/v1/demo/seed" and "POST" in route.methods)
+                             if getattr(route, "path", None) == "/api/v1/demo/seed" and "POST" in (getattr(route, "methods", None) or set()))
         clear_endpoint = next(route.endpoint for route in self.app.routes
-                              if route.path == "/api/v1/demo/seed" and "DELETE" in route.methods)
+                              if getattr(route, "path", None) == "/api/v1/demo/seed" and "DELETE" in (getattr(route, "methods", None) or set()))
         seeded = seed_endpoint()
         self.assertGreater(seeded["seeded"]["memories"], 0)
         status = self.routes["/api/v1/demo/status"]()
