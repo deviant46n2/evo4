@@ -76,7 +76,7 @@ Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Required tests: Context-budget and injection-resistance tests.
 - Acceptance criteria: Retrieved content cannot masquerade as system instructions.
 
-### Priority 5: Experiment lifecycle interruption
+### Priority 5: Experiment lifecycle interruption — remediation implemented; pending GPT-6 review
 - Problem: KeyboardInterrupt can leave experiment rows running.
 - Affected subsystem: Evo Lab runner.
 - Required remediation: Finalize interrupted runs consistently.

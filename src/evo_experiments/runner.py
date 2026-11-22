@@ -67,61 +67,107 @@ def run_tasks(config, tasks_path, repetitions=None):
             for task in tasks:
                 run_seed = config.seed + repetition - 1 if config.seed is not None else None
                 run_manifest = {**manifest, "run_seed": run_seed}
-                eid = db.create_experiment({"started_at": datetime.now(timezone.utc).isoformat(),
-                    "task_id": task["id"], "category": str(task.get("category", "uncategorized")),
-                    "repetition": repetition, "model": config.model, "run_label": run_label,
-                    "base_url": config.base_url, "config_json": json.dumps(run_manifest, sort_keys=True),
-                    "prompt": task["prompt"], "seed": run_seed, "status": "running"})
-                ids.append(eid)
-                monitor = ResourceMonitor(config.sample_interval_seconds,
-                    lambda sample, experiment_id=eid: db.add_sample(experiment_id, sample))
-                monitor.start()
+                eid = None
+                monitor = None
+                finished = False
                 result = None
                 try:
-                    result = stream_chat_completion(base_url=config.base_url, api_key=config.api_key,
-                        model=config.model, system_prompt=config.system_prompt, prompt=task["prompt"],
-                        max_tokens=config.max_tokens, temperature=config.temperature,
-                        timeout=config.timeout_seconds, seed=run_seed)
-                    finish_reason = result.get("finish_reason")
-                    if finish_reason == "stop":
-                        status = "completed"
-                        evaluation_status, evaluation_details = evaluate_task(task, result["response"])
-                    elif finish_reason == "length":
-                        status = "truncated"
-                        evaluation_status = "not_run_truncated"
-                        evaluation_details = {"reason": "Server stopped generation at the completion token limit."}
-                    elif finish_reason is None:
-                        status = "unknown"
-                        evaluation_status = "not_run_unknown_finish_reason"
-                        evaluation_details = {"reason": "Server did not report a completion finish_reason."}
-                    else:
-                        status = "incomplete"
-                        evaluation_status = "not_run_" + str(finish_reason)
-                        evaluation_details = {"reason": "Server reported a non-success finish_reason.",
-                                              "finish_reason": finish_reason}
-                    db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
-                        "response": result["response"], "status": status, "finish_reason": finish_reason,
-                        "elapsed_seconds": result["elapsed_seconds"],
-                        "time_to_first_token_seconds": result["time_to_first_token_seconds"],
-                        "prompt_tokens": result["prompt_tokens"], "completion_tokens": result["completion_tokens"],
-                        "tokens_per_second": result["tokens_per_second"], "evaluation_status": evaluation_status,
-                        "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None,
-                        "evaluation_passed": evaluation_details["passed"] if evaluation_status in ("passed","failed") and evaluation_details else None,
-                        "evaluation_total": evaluation_details["total"] if evaluation_status in ("passed","failed") and evaluation_details else None})
-                except Exception as exc:
-                    failure = {"finished_at": datetime.now(timezone.utc).isoformat(),
-                        "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-                    if result is not None:
-                        failure.update({"response": result["response"],
-                            "finish_reason": result.get("finish_reason"),
+                    eid = db.create_experiment({"started_at": datetime.now(timezone.utc).isoformat(),
+                        "task_id": task["id"], "category": str(task.get("category", "uncategorized")),
+                        "repetition": repetition, "model": config.model, "run_label": run_label,
+                        "base_url": config.base_url, "config_json": json.dumps(run_manifest, sort_keys=True),
+                        "prompt": task["prompt"], "seed": run_seed, "status": "running"})
+                    ids.append(eid)
+                    monitor = ResourceMonitor(config.sample_interval_seconds,
+                        lambda sample, experiment_id=eid: db.add_sample(experiment_id, sample))
+                    monitor.start()
+                    try:
+                        result = stream_chat_completion(base_url=config.base_url, api_key=config.api_key,
+                            model=config.model, system_prompt=config.system_prompt, prompt=task["prompt"],
+                            max_tokens=config.max_tokens, temperature=config.temperature,
+                            timeout=config.timeout_seconds, seed=run_seed)
+                        finish_reason = result.get("finish_reason")
+                        if finish_reason == "stop":
+                            status = "completed"
+                            evaluation_status, evaluation_details = evaluate_task(task, result["response"])
+                        elif finish_reason == "length":
+                            status = "truncated"
+                            evaluation_status = "not_run_truncated"
+                            evaluation_details = {"reason": "Server stopped generation at the completion token limit."}
+                        elif finish_reason is None:
+                            status = "unknown"
+                            evaluation_status = "not_run_unknown_finish_reason"
+                            evaluation_details = {"reason": "Server did not report a completion finish_reason."}
+                        else:
+                            status = "incomplete"
+                            evaluation_status = "not_run_" + str(finish_reason)
+                            evaluation_details = {"reason": "Server reported a non-success finish_reason.",
+                                                  "finish_reason": finish_reason}
+                        db.finish_experiment(eid, {"finished_at": datetime.now(timezone.utc).isoformat(),
+                            "response": result["response"], "status": status, "finish_reason": finish_reason,
                             "elapsed_seconds": result["elapsed_seconds"],
                             "time_to_first_token_seconds": result["time_to_first_token_seconds"],
-                            "prompt_tokens": result["prompt_tokens"],
-                            "completion_tokens": result["completion_tokens"],
-                            "tokens_per_second": result["tokens_per_second"]})
-                    db.finish_experiment(eid, failure)
+                            "prompt_tokens": result["prompt_tokens"], "completion_tokens": result["completion_tokens"],
+                            "tokens_per_second": result["tokens_per_second"], "evaluation_status": evaluation_status,
+                            "evaluation_details": json.dumps(evaluation_details) if evaluation_details else None,
+                            "evaluation_passed": evaluation_details["passed"] if evaluation_status in ("passed","failed") and evaluation_details else None,
+                            "evaluation_total": evaluation_details["total"] if evaluation_status in ("passed","failed") and evaluation_details else None})
+                        finished = True
+                    except Exception as exc:
+                        failure = {"finished_at": datetime.now(timezone.utc).isoformat(),
+                            "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                        if result is not None:
+                            failure.update({"response": result["response"],
+                                "finish_reason": result.get("finish_reason"),
+                                "elapsed_seconds": result["elapsed_seconds"],
+                                "time_to_first_token_seconds": result["time_to_first_token_seconds"],
+                                "prompt_tokens": result["prompt_tokens"],
+                                "completion_tokens": result["completion_tokens"],
+                                "tokens_per_second": result["tokens_per_second"]})
+                        db.finish_experiment(eid, failure)
+                        finished = True
+                    except KeyboardInterrupt:
+                        if not finished:
+                            interrupted = {"finished_at": datetime.now(timezone.utc).isoformat(),
+                                "status": "interrupted",
+                                "error": "KeyboardInterrupt: experiment interrupted by user"}
+                            if result is not None:
+                                interrupted.update({"response": result.get("response"),
+                                    "finish_reason": result.get("finish_reason"),
+                                    "elapsed_seconds": result.get("elapsed_seconds"),
+                                    "time_to_first_token_seconds": result.get("time_to_first_token_seconds"),
+                                    "prompt_tokens": result.get("prompt_tokens"),
+                                    "completion_tokens": result.get("completion_tokens"),
+                                    "tokens_per_second": result.get("tokens_per_second")})
+                            try:
+                                db.finish_experiment(eid, interrupted)
+                                finished = True
+                            except Exception as cleanup_exc:
+                                import sys, traceback
+                                sys.stderr.write(f"Secondary experiment cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
+                                traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
+                        raise
+                except KeyboardInterrupt:
+                    if eid is not None and not finished:
+                        interrupted = {"finished_at": datetime.now(timezone.utc).isoformat(),
+                            "status": "interrupted",
+                            "error": "KeyboardInterrupt: experiment interrupted by user"}
+                        try:
+                            db.finish_experiment(eid, interrupted)
+                            finished = True
+                        except Exception as cleanup_exc:
+                            import sys, traceback
+                            sys.stderr.write(f"Secondary experiment cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
+                            traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
+                    raise
                 finally:
-                    monitor.stop()
+                    if monitor is not None:
+                        try:
+                            monitor.stop()
+                        except Exception as cleanup_exc:
+                            import sys, traceback
+                            sys.stderr.write(f"Secondary monitor cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
+                            traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
     finally:
         db.close()
     return ids

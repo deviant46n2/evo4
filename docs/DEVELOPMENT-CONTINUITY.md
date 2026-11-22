@@ -71,7 +71,7 @@ The personal assistant and coding-agent experience are configurations built on t
 
 - Workspace filesystem boundary hardening.
 - Untrusted retrieved context isolation — remediation implemented; pending GPT-6 review.
-- Experiment lifecycle interruption.
+- Experiment lifecycle interruption — remediation implemented; pending GPT-6 review.
 - ResourceMonitor shutdown race.
 
 Accepted in commit `af10694ab35481929e565523c1306cf378b2ddad`:
