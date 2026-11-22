@@ -62,11 +62,11 @@ Invariants:
 6. Invalid relationships must be rejected transactionally.
 7. Registry operations must not silently change active runtime configuration.
 
-One AI configuration may be used across multiple projects. Multiple configurations may work on the same project. Multiple workspaces may exist independently. Different workspaces may use different revisions of the same configuration. A workspace may exist without a registered checkout where appropriate.
+One AI configuration may be used across multiple projects. Multiple configurations may work on the same project. Multiple workspaces may exist independently. Different workspaces may use different revisions of the same configuration. A workspace may exist without a registered checkout where appropriate. Multiple workspaces may share a registered checkout.
 
 ## 4. Exact SQLite schema
 
-The following SQL is design SQL pending implementation review. It is intended to be internally consistent and syntactically plausible SQLite. The final migration must be reviewed against actual SQLite behavior.
+The following SQL is design SQL pending implementation review. It is intended to be internally consistent and syntactically plausible SQLite. The final migration must be reviewed against actual SQLite behavior. Foreign-key clause ordering below has been validated against SQLite: `ON DELETE`/`ON UPDATE` precede `DEFERRABLE`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS ai_configurations (
@@ -74,15 +74,15 @@ CREATE TABLE IF NOT EXISTS ai_configurations (
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
-    current_revision_id TEXT,
+    current_revision_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     UNIQUE (configuration_id, current_revision_id),
     FOREIGN KEY (configuration_id, current_revision_id)
         REFERENCES ai_configuration_revisions (configuration_id, revision_id)
-        DEFERRABLE INITIALLY DEFERRED
         ON DELETE RESTRICT
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE IF NOT EXISTS ai_configuration_revisions (
@@ -103,8 +103,8 @@ CREATE TABLE IF NOT EXISTS ai_configuration_revisions (
         ON DELETE RESTRICT,
     FOREIGN KEY (configuration_id, parent_revision_id)
         REFERENCES ai_configuration_revisions (configuration_id, revision_id)
-        DEFERRABLE INITIALLY DEFERRED
         ON DELETE RESTRICT
+        DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TRIGGER IF NOT EXISTS ai_configuration_revisions_no_update
@@ -166,15 +166,15 @@ CREATE TABLE IF NOT EXISTS workspaces (
         ON DELETE RESTRICT,
     FOREIGN KEY (project_id, checkout_id)
         REFERENCES project_checkouts (project_id, checkout_id)
-        DEFERRABLE INITIALLY IMMEDIATE
-        ON DELETE RESTRICT,
+        ON DELETE RESTRICT
+        DEFERRABLE INITIALLY IMMEDIATE,
     FOREIGN KEY (configuration_id)
         REFERENCES ai_configurations (configuration_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (configuration_id, configuration_revision_id)
         REFERENCES ai_configuration_revisions (configuration_id, revision_id)
-        DEFERRABLE INITIALLY IMMEDIATE
         ON DELETE RESTRICT
+        DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_configurations_status ON ai_configurations(status, updated_at);
@@ -187,50 +187,43 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_configuration ON workspaces(configurat
 
 Notes:
 
-- `ai_configurations.current_revision_id` is nullable to allow the safe create-then-set current revision transaction.
+- `ai_configurations.current_revision_id` is `NOT NULL`. The deferred composite foreign key allows the configuration row and its initial revision row to be inserted in either order within one transaction; the constraint is checked at commit.
 - `workspaces.checkout_id` is nullable; a workspace may exist without a registered checkout.
-- The redundant `UNIQUE (project_id, checkout_id)` constraint has been removed from `workspaces`, allowing multiple workspaces to use the same checkout. The composite foreign key enforcing checkout ownership is retained.
+- Multiple workspaces may share a checkout. The redundant `UNIQUE (project_id, checkout_id)` constraint is not present on `workspaces`; the composite foreign key enforcing checkout ownership is retained.
 - Composite foreign keys require the referenced composite columns to be unique. The schema above provides those unique constraints.
 - `ON DELETE RESTRICT` preserves history and prevents accidental destruction.
 - Archiving is the normal lifecycle operation for configurations, projects, and workspaces. No general destructive deletion is provided.
 
 ## 5. Migration and transaction design
 
-- Add one identifiable migration, e.g. `platform_registry_v1`, to `EvoStore`'s existing `schema_migrations` table.
-- Perform registry schema creation and migration-record insertion in one explicit transaction.
-- Use `BEGIN IMMEDIATE` for the migration.
-- Execute DDL statements individually; do not use `executescript()` inside the transaction because its transaction behavior can undermine intended atomicity.
-- On any failure, roll back the complete migration.
-- Make initialization safely repeatable.
-- Do not modify existing migrations or `ResultsDB` migration behavior.
-- Fail closed: if registry migration fails, application startup must not expose a partially initialized registry.
+Registry migration integration (accurate to `src/evo_core/store.py`):
 
-Existing migration mechanism:
-
-- `EvoStore._initialize()` creates `schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)` (`src/evo_core/store.py:60`).
-- Existing migrations are identified by a string `name` and checked with `SELECT 1 FROM schema_migrations WHERE name=?` (`src/evo_core/store.py:108-110`).
-- Existing migrations are applied individually and recorded with `INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?)` (`src/evo_core/store.py:120-122`).
-- The registry migration will use the same table and same name-based idempotency check.
-- It will run under `EvoStore`'s existing `threading.RLock` and on the existing `sqlite3.Connection`, not an independent connection.
-- It will use `BEGIN IMMEDIATE`, execute each DDL and seed statement individually, insert the migration row, and commit. On any exception it will roll back the whole transaction.
-- Repeat initialization will see the migration row and skip registry schema creation.
-- If the migration fails, startup must not register or expose registry routes/services; the application should fail closed rather than continue with a partially initialized registry.
-
-The exact existing mechanism uses `executescript()` for base schema creation before migrations. The registry migration itself must not use `executescript()` inside its transaction. This is a design requirement based on the inspected source, not an assumption.
+- `EvoStore._initialize()` creates the base schema with `executescript()`, including `schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`.
+- Existing migrations are identified through the `name` column, not a general-purpose migration framework. The current implementation uses a hardcoded migration name (`supersedes_direction_current_to_old_v1`) checked with `SELECT 1 FROM schema_migrations WHERE name=?` and recorded with `INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?)`.
+- The registry does not introduce a parallel migration table or an independent database connection. It adds one identifiable migration row (e.g. `platform_registry_v1`) to the existing `schema_migrations` table.
+- Registry initialization is a separate operation that runs after `EvoStore` exists, using the existing `EvoStore` connection and `threading.RLock`, following the same pattern as existing `initialize_*` calls in `create_app()`.
+- The registry migration uses explicit transaction handling: `BEGIN IMMEDIATE`, individual DDL statements, migration-record insertion, commit on success, rollback on any failure. It must not use `executescript()` inside the transaction.
+- Base-schema initialization and `ResultsDB` migration behavior are not changed.
+- If the registry migration fails, startup must not register or expose registry routes/services; the application fails closed rather than continuing with a partially initialized registry.
 
 Configuration creation transaction:
 
-1. Insert `ai_configurations` with `current_revision_id = NULL`.
-2. Insert the initial `ai_configuration_revisions` row.
-3. Update `ai_configurations.current_revision_id` to the new revision.
-4. Commit.
+1. Generate `configuration_id` and the initial `revision_id` before any insertion.
+2. `BEGIN IMMEDIATE`.
+3. Insert `ai_configurations` with `current_revision_id` set to the predetermined initial revision ID.
+4. Insert the initial `ai_configuration_revisions` row in the same transaction.
+5. Commit. The deferred composite foreign key permits either insertion order; both rows must exist at commit.
+6. On any failure, roll back; no configuration or revision is committed.
 
 Revision creation transaction:
 
 1. Read and validate the parent configuration and current state.
-2. Insert the new immutable revision.
-3. Optionally update `ai_configurations.current_revision_id` and `updated_at` if the operation is a normal edit rather than a restore-only or comparison operation.
-4. Commit.
+2. Require the expected configuration version.
+3. `BEGIN IMMEDIATE`.
+4. Insert the new immutable revision.
+5. Update `ai_configurations.current_revision_id` and `updated_at` if the operation is a normal edit.
+6. Commit. Revision insertion and current-pointer update occur atomically.
+7. A stale version returns a conflict and leaves no partial revision behind.
 
 Workspace creation transaction:
 
@@ -245,17 +238,17 @@ All multi-row operations must use transactions. Use `BEGIN IMMEDIATE` where conc
 
 Current-revision invariant:
 
-- A configuration is created with `current_revision_id = NULL`, then its initial revision is inserted, then the pointer is updated in the same transaction.
-- If any step fails, the entire transaction rolls back. No configuration or revision is committed.
-- A configuration with `current_revision_id = NULL` must not be treated as usable by application code.
-- The nullable foreign key alone does not prove completeness; the service layer must require that a usable configuration has a non-null current revision and that the revision belongs to it.
+- `ai_configurations.current_revision_id` is `NOT NULL`.
+- A configuration's initial revision ID is predetermined, so the configuration row can reference it directly.
+- The deferred composite foreign key permits the two-row insert order within one transaction.
+- A configuration cannot be committed without a valid current revision, including when someone bypasses the service layer and attempts direct SQL insertion. An insert of `ai_configurations` referencing a non-existent revision fails the foreign-key constraint at commit.
 - The composite foreign key prevents a current revision from belonging to a different configuration.
 - Revision creation that updates the current pointer must validate the expected configuration version and perform both inserts/updates atomically. A stale version leaves no partial revision behind.
 
 Archived entities:
 
 - Archiving is reversible in v1 unless a later design explicitly makes it terminal.
-- An archived configuration, project, or workspace may be reactivated by changing status from `archived` to `active` using the same optimistic-concurrency rules.
+- An archived configuration, project, or workspace may be reactivated by changing status from `archived` to `active` using the same optimistic-concurrency rules (for example, via PATCH with `status: active` and a required `expected_version`).
 - Archiving must not delete revisions, history, checkouts, or experiment references.
 - An archived project's checkouts remain registered but unavailable for new workspace creation unless explicitly reactivated or unless the design later permits archived-project checkout use.
 - Unregistering a checkout is distinct from archiving a project and must not delete filesystem contents.
@@ -303,21 +296,28 @@ Unavailable checkouts:
 - Restoring an older revision creates a new revision containing the restored definition, preserving history.
 - No hard-delete API is provided for configurations, revisions, projects, checkouts, or workspaces. Archiving is the normal lifecycle operation.
 
+Configuration JSON authority:
+
+- `schema_version` has one authoritative source: the `schema_version` field inside the definition JSON. Request models do not accept a separate `schema_version` parameter. If a caller supplies one, it is not used; the definition's value governs.
+- The definition's `name` is authoritative for a configuration's display name. `ai_configurations.name` is a synchronized cache of the current revision's definition name and is updated transactionally when the current revision changes. The service layer must reject or reconcile any mismatch rather than silently storing conflicting values.
+- `ai_configurations.description` is likewise synchronized from the current revision's definition description.
+- Provider-specific extensions and secret references are preserved as specified above.
+
 ## 7. Service/repository contracts
 
 Define a dedicated registry service module, preferably `src/evo_core/platform_registry.py`. It receives the existing `EvoStore` instance and uses its connection and lock. It must not open the database independently.
 
 AI configurations:
 
-- `create_configuration(name, description, definition, schema_version=1, change_summary="") -> ConfigurationRevisionResult`
+- `create_configuration(definition, change_summary="") -> ConfigurationRevisionResult`
 - `get_configuration(configuration_id) -> ConfigurationRecord`
 - `list_configurations(status=None) -> list[ConfigurationRecord]`
-- `create_revision(configuration_id, definition, schema_version=1, parent_revision_id=None, change_summary="", expected_version=None) -> ConfigurationRevisionResult`
+- `update_configuration(configuration_id, updates, expected_version) -> ConfigurationRecord`
+- `create_revision(configuration_id, definition, parent_revision_id=None, change_summary="", expected_version) -> ConfigurationRevisionResult`
 - `get_revision(configuration_id, revision_id) -> RevisionRecord`
 - `list_revisions(configuration_id) -> list[RevisionRecord]`
-- `restore_revision(configuration_id, revision_id, change_summary="", expected_version=None) -> ConfigurationRevisionResult`
+- `restore_revision(configuration_id, revision_id, change_summary="", expected_version) -> ConfigurationRevisionResult`
 - `archive_configuration(configuration_id, expected_version) -> ConfigurationRecord`
-- `compare_revisions(configuration_id, left_revision_id, right_revision_id) -> RevisionComparison` if straightforward without expanding scope
 
 Projects:
 
@@ -359,7 +359,7 @@ Transaction boundaries:
 - Version increments atomically.
 - Stale versions return a conflict, not silent last-write-wins behavior.
 - AI configurations, projects, checkouts, and workspaces support active/archived lifecycle states where applicable.
-- Archiving is the normal terminal lifecycle operation.
+- Archiving is the normal lifecycle operation and is reversible via the same optimistic-concurrency rules.
 - No hard-delete API is provided for core registry entities.
 - Revisions are immutable.
 - A workspace pins an exact configuration revision and must not silently follow a configuration's current revision.
@@ -379,7 +379,8 @@ Optimistic concurrency:
 
 - Every mutation of an existing mutable record requires an expected version.
 - Creating a new independent record does not require an expected version.
-- Creating a configuration revision that updates the current revision requires the expected configuration version.
+- `create_revision()` requires the expected configuration version.
+- `restore_revision()` requires the expected configuration version.
 - Revision insertion and current-revision pointer update must occur in one transaction.
 - A stale version returns a conflict and leaves no partial revision behind.
 - Creating a revision that does not update the current pointer still requires the expected configuration version if it modifies configuration metadata or revision history in a way that races with other writers.
@@ -418,18 +419,20 @@ A minimal consistent route set is preferred over implementing every speculative 
 
 Do not silently change active runtime configuration when a registry definition changes.
 
+Archived-entity reactivation uses the existing PATCH endpoints with `status: active` and a required `expected_version`; no separate reactivation route is required.
+
 ### Essential v1 route matrix
 
 | Method | Path | Request | Response | Success | Errors |
 |---|---|---|---|---|---|
 | GET | `/api/v1/configurations` | query: `status` optional | `ConfigurationListResponse` | 200 | 400, 500 |
-| POST | `/api/v1/configurations` | `ConfigurationCreateRequest`: `name`, `description`, `definition`, `schema_version`, `change_summary` | `ConfigurationRevisionResult` | 201 | 400, 422, 500 |
+| POST | `/api/v1/configurations` | `ConfigurationCreateRequest`: `definition`, `change_summary` | `ConfigurationRevisionResult` | 201 | 400, 422, 500 |
 | GET | `/api/v1/configurations/{configuration_id}` | path ID | `ConfigurationRecord` | 200 | 404, 500 |
 | GET | `/api/v1/configurations/{configuration_id}/revisions` | path ID | `RevisionListResponse` | 200 | 404, 500 |
 | GET | `/api/v1/configurations/{configuration_id}/revisions/{revision_id}` | path IDs | `RevisionRecord` | 200 | 404, 500 |
-| POST | `/api/v1/configurations/{configuration_id}/revisions` | `RevisionCreateRequest`: `definition`, `schema_version`, `parent_revision_id`, `change_summary`, `expected_version` | `ConfigurationRevisionResult` | 201 | 404, 409, 422, 500 |
+| POST | `/api/v1/configurations/{configuration_id}/revisions` | `RevisionCreateRequest`: `definition`, `parent_revision_id`, `change_summary`, `expected_version` | `ConfigurationRevisionResult` | 201 | 404, 409, 422, 500 |
 | POST | `/api/v1/configurations/{configuration_id}/restore/{revision_id}` | path IDs, `RestoreRevisionRequest`: `change_summary`, `expected_version` | `ConfigurationRevisionResult` | 201 | 404, 409, 422, 500 |
-| PATCH | `/api/v1/configurations/{configuration_id}` | `ConfigurationUpdateRequest`: metadata fields and `expected_version` | `ConfigurationRecord` | 200 | 404, 409, 422, 500 |
+| PATCH | `/api/v1/configurations/{configuration_id}` | `ConfigurationUpdateRequest`: permitted metadata fields and `expected_version` | `ConfigurationRecord` | 200 | 404, 409, 422, 500 |
 | POST | `/api/v1/configurations/{configuration_id}/archive` | `ArchiveRequest`: `expected_version` | `ConfigurationRecord` | 200 | 404, 409, 422, 500 |
 | GET | `/api/v1/projects` | query: `status` optional | `ProjectListResponse` | 200 | 400, 500 |
 | POST | `/api/v1/projects` | `ProjectCreateRequest`: `name`, `description`, `git_remote`, `default_ref`, `project_type` | `ProjectRecord` | 201 | 422, 500 |
@@ -448,10 +451,38 @@ Do not silently change active runtime configuration when a registry definition c
 | POST | `/api/v1/workspaces/{workspace_id}/archive` | `ArchiveRequest`: `expected_version` | `WorkspaceRecord` | 200 | 404, 409, 422, 500 |
 | GET | `/api/v1/workspaces/{workspace_id}/resolve` | path ID | `ResolvedWorkspace` | 200 | 404, 500 |
 
-Deferred endpoints include revision comparison, restore, export/import, and workspace events. These are intentionally not essential v1 endpoints.
+### Response model fields
+
+The following defines the concrete fields returned by the essential endpoints above. Field types are JSON-serializable scalars/objects; timestamps are ISO 8601 UTC strings.
+
+- `ConfigurationRecord`: `configuration_id`, `name`, `description`, `status`, `current_revision_id`, `created_at`, `updated_at`, `version`.
+- `ConfigurationListResponse`: `items: list[ConfigurationRecord]`, `total: integer`.
+- `ConfigurationRevisionResult`: `configuration: ConfigurationRecord`, `revision: RevisionRecord`.
+- `RevisionRecord`: `revision_id`, `configuration_id`, `revision_number`, `schema_version`, `definition` (object), `content_hash`, `parent_revision_id` (string or null), `change_summary`, `created_at`, `provenance` (object).
+- `RevisionListResponse`: `items: list[RevisionRecord]`, `total: integer`.
+- `ProjectRecord`: `project_id`, `name`, `description`, `git_remote` (string or null), `default_ref` (string or null), `project_type` (string or null), `status`, `created_at`, `updated_at`, `version`.
+- `ProjectListResponse`: `items: list[ProjectRecord]`, `total: integer`.
+- `CheckoutRecord`: `checkout_id`, `project_id`, `canonical_path`, `branch_or_ref` (string or null), `last_known_commit` (string or null), `availability_status`, `created_at`, `updated_at`, `version`.
+- `CheckoutListResponse`: `items: list[CheckoutRecord]`, `total: integer`.
+- `WorkspaceRecord`: `workspace_id`, `name`, `description`, `project_id`, `checkout_id` (string or null), `configuration_id`, `configuration_revision_id`, `status`, `created_at`, `updated_at`, `version`.
+- `WorkspaceListResponse`: `items: list[WorkspaceRecord]`, `total: integer`.
+- `ResolvedWorkspace`: `workspace: WorkspaceRecord`, `configuration: ConfigurationRecord`, `revision: RevisionRecord`, `project: ProjectRecord`, `checkout: CheckoutRecord | null`.
+- `ArchiveRequest`: `expected_version: integer`.
+- `AvailabilityUpdateRequest`: `expected_version: integer`.
+- `ConfigurationCreateRequest`: `definition: object`, `change_summary: string` (default empty).
+- `ConfigurationUpdateRequest`: `status: "active" | "archived"` (optional), `expected_version: integer` (required). Name and description are derived from revisions and are not directly mutable here.
+- `ProjectCreateRequest`: `name`, `description`, `git_remote`, `default_ref`, `project_type`.
+- `ProjectUpdateRequest`: permitted metadata fields plus `expected_version: integer`.
+- `CheckoutRegisterRequest`: `canonical_path`, `branch_or_ref`, `last_known_commit`.
+- `CheckoutUpdateRequest`: permitted metadata fields plus `expected_version: integer`.
+- `WorkspaceCreateRequest`: `name`, `description`, `project_id`, `configuration_id`, `configuration_revision_id`, `checkout_id` (nullable).
+- `WorkspaceUpdateRequest`: permitted fields plus `expected_version: integer`.
+- `RevisionCreateRequest`: `definition: object`, `parent_revision_id` (string or null), `change_summary: string`, `expected_version: integer` (required).
+- `RestoreRevisionRequest`: `change_summary: string`, `expected_version: integer` (required).
+
+Deferred endpoints include revision comparison, export/import, and workspace events. Restore is an essential v1 endpoint, not deferred.
 
 ## 11. Desktop integration
-
 
 Add a Platform area to the existing desktop navigation without replacing Chat, Agents, Memory, Hardware, or Experiments.
 
@@ -488,6 +519,7 @@ Tests should cover:
 - Checkout/project relationship integrity.
 - Workspace creation and relationship validation.
 - Configuration revision ownership enforcement.
+- Current-revision invariant, including direct SQL insertion attempts that bypass the service layer.
 - Atomicity and rollback.
 - Concurrent update/conflict behavior.
 - Canonical path uniqueness and missing paths.
@@ -512,7 +544,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-Do not start implementation until the unresolved schema and scope decisions below have been explicitly resolved.
+Do not start implementation until the unresolved decisions in section 16 have been explicitly resolved.
 
 ## 14. Acceptance criteria
 
@@ -559,16 +591,13 @@ Residual risks:
 
 ## 16. Unresolved decisions requiring source-level resolution
 
-1. Exact SQLite composite foreign-key implementation for same-configuration revision ownership and same-project checkout ownership.
-2. Whether the minimal append-only `workspace_events` table belongs in v1.
-3. Whether secret-free configuration export and import are included in v1 or deferred.
-4. Exact JSON schema, versioning, validation, and forward-compatibility behavior.
-5. Exact optimistic concurrency token and conflict response semantics.
-6. Checkout canonicalization, symlink handling, unavailable-path behavior, and registration rules.
-7. Exact request/response contracts and route conventions after source inspection.
-8. Exact persistence integration between `EvoStore` and `ResultsDB`, including transaction and migration behavior.
-9. Whether archived entities can be reactivated; this design proposes reversibility unless later changed.
-10. Whether multiple workspaces may share a checkout; the proposed schema currently contains a constraint that may need removal.
+1. Whether the minimal append-only `workspace_events` table belongs in v1. It is not required for core invariants but may be needed for auditability; inclusion affects migration scope.
+2. Whether secret-free configuration export and import are included in v1 or deferred. Deferred unless separately approved, but the schema should not prevent later addition.
+3. Exact JSON schema validation rules and forward-compatibility behavior. Common structure is specified, but strictness and evolution policy remain open.
+4. Exact optimistic concurrency token and conflict response semantics. Integer versions are proposed; exact error payload and retry guidance remain open.
+5. Checkout canonicalization, symlink handling, unavailable-path behavior, and registration rules. Security-sensitive and requires source-level inspection of `Workspace`.
+6. Exact request/response contracts and route conventions after source inspection. The matrix and field definitions above are proposed, not final.
+7. Exact persistence integration between `EvoStore` and `ResultsDB`, including transaction and migration behavior. Cross-database operations need concrete locking and failure semantics.
 
 ## 17. Source references
 
