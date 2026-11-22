@@ -1,79 +1,120 @@
-# Evo 4 architecture (substantial-v1)
+# Evo 4 Architecture
 
-## Phase 1 objective
+This document describes Evo4's intended architecture. It distinguishes current implementation from designed and long-term capabilities.
 
-Increase the useful capabilities of the user's existing workstation through measured software, inference, memory, and workflow improvements. Self-modification and autonomous self-evolution are not part of Phase 1.
+## Evo's identity
 
-## Applications
+Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
 
-### Evo assistant (`src/evo_core`)
+The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. Target areas include memory architectures, context management, agent architectures, orchestration, tool integration, evaluation, hardware/resource efficiency, autonomous research and software development, and controlled self-improvement.
 
-- `config.py`: loads the shared TOML configuration, including selectable named OpenAI-compatible provider profiles; profile secrets are read from environment variables.
-- `provider.py`: OpenAI-compatible streaming chat adapter.
-- `store.py`: durable SQLite state for conversations, messages, memories, tasks, research captures, agent runs, and tool events.
-- `assistant.py`: conversation orchestration and lexical memory retrieval.
-- `memory_eval.py`: deterministic synthetic retrieval benchmark (hit rate, recall@k, MRR) isolated from the user's live database.
-- `cli.py`: interactive terminal interface and data-management commands.
-- `workspace.py`: constrained project workspace API.
-- `coding_agent.py`: bounded model-directed tool loop with project orientation, explicit verification policy, approval-gated writes and command execution.
-- `run_feedback`: records user assessment of agent outcomes and links reusable lessons to their originating runs.
+Evo is not a foundation-model trainer, custom neural-network engineering project, or general-purpose machine-learning laboratory. Existing models and frameworks are components that Evo uses and experiments with; they are not the foundation of Evo's architecture.
 
-### Evo Lab (`src/evo_experiments`)
+The personal assistant and coding-agent experiences are configurations assembled using Evo, not Evo's fundamental identity.
 
-The experiment harness remains independently usable. It runs repeatable tasks, records model/runtime manifests, deterministic checks, timing, and sampled hardware telemetry. Streaming finish reasons are retained: only explicit stop responses count as completed, length is truncated, other reported endings are incomplete, and missing finish reasons are unknown. Incomplete runs are not scored and are excluded from latency/throughput aggregates. Optional configured seeds increment by repetition; allowlisted live llama.cpp /props fields are snapshotted when available, while unexposed launch/runtime settings remain user-supplied. Aggregate performance includes mean, median, and sample standard deviation. Its role is to evaluate both models and future Evo subsystems from outside their implementation.
+## Fundamental entities
 
-## Persistence
+### Evo
+The portable application providing shared infrastructure, management, integration interfaces, experimentation, evaluation, orchestration, resource management, and development capabilities.
 
-SQLite is the initial system of record. WAL mode and foreign keys are enabled. Memories retain category, tags, source, confidence, timestamps, and access counts. User-directed supersession marks the old record as superseded, creates a replacement, and stores an explicit relation so the history is not destroyed. Users can also mark two records as supporting or contradicting; retrieved relations are shown to the model as explicit evidence, not silently resolved. Conversation messages are append-only. Tasks have explicit status transitions. Research documents retain title, URL, content, source type, and capture time. A SQLite online-backup operation creates a consistent copy of both assistant and lab state.
+### AI configurations
+Reusable, independently versioned definitions of AI systems. A configuration may specify model/provider assignments, agent definitions and roles, memory architecture and namespaces, retrieval/context strategies, tools and integrations, orchestration strategies, execution preferences, resource requirements and limits, permissions and policies, and component versions/dependencies.
 
-Context construction now applies a configurable conservative character-based budget derived from `assistant.context_window_tokens`. The base system policy and current request are retained; retrieved memory/relations/lessons/research take priority over older conversation history, which is trimmed oldest-first. The estimate uses approximately 3.5 characters per token and is not a substitute for the target model's tokenizer or server-side context accounting.
+Configurations must be independently developed, versioned, branched, compared, restored, and promoted. They must not belong to a particular software project.
 
-FTS5 is used for memory retrieval when available. A relevance-ranked lexical LIKE fallback searches memory content, categories, and tags when FTS5 is unavailable. The synthetic benchmark can force either backend so regressions can be compared independently. Retrieval is not semantic and does not imply perfect recall. `evo memory evaluate` seeds an isolated in-memory database from a versioned synthetic fixture and reports hit rate, recall@k, and mean reciprocal rank. It is a retrieval regression test, not a measurement of real-world personal-memory recall.
+### Software projects
+Independent development targets with their own source code, repository references, branches, permissions, dependencies, and history. A project may be Evo itself or unrelated software.
 
-A separate lessons store retains user corrections and experiential rules with trigger phrases, provenance, category, and confidence. Relevant lessons are retrieved into later prompts using query-match relevance before confidence/recency tie-breakers. Saved research similarly ranks title matches ahead of content-only matches. Agent runs and tool events form an append-oriented execution record. The `run_feedback` table links explicit user assessments (success, partial, failure) to a run and, optionally, to a reusable lesson created from that assessment. This makes the experiential loop inspectable: run → observed tool history → user assessment/correction → lesson → later retrieval. `evo runs summary` aggregates run status, verification signals, review coverage, feedback outcomes, and average tool-call counts so later iterations can be compared against a growing record. Lessons created this way carry `user-run-feedback` provenance. Evo does not infer verified success from a model self-report or autonomously promote generated claims into trusted lessons. Saved research documents are also retrieved lexically and injected as source material, with URLs and capture timestamps. A conservative rule-based capture pass detects a limited set of explicit first-person preferences, goals, project facts, and environment statements. These become tentative memory candidates with source, confidence, and conversation provenance. Candidates are excluded from retrieval until accepted. An explicit "remember that ..." request is saved directly as a user-sourced memory. This is a deliberately modest first step, not general automatic memory understanding.
+### Workspaces and sessions
+Runtime environments connecting an AI configuration to one or more authorized development targets. A workspace establishes actual assignments and access boundaries. One configuration should eventually be usable against multiple projects with independent sessions/workspaces, and multiple configurations should be usable against the same project. The configuration does not own the project, and the project does not own the configuration.
 
-## Provider boundary
+### Experiments
+Persistent, identifiable investigations combining a configuration, target, hypothesis, methodology, and evaluation. They must preserve hypothesis/objectives, exact configuration version, exact software-project commit/revision, relevant execution environment, model/provider identities, settings and dependencies, methodology and inputs, resource consumption, results and measurements, failures and incomplete runs, conclusions and decisions, reproducibility information, and references to source changes/artifacts. Failed experiments are valuable engineering knowledge.
 
-The assistant depends on a narrow chat interface and currently ships one OpenAI-compatible SSE provider. This supports llama.cpp and compatible endpoints without coupling application state to a particular model. Named profiles in `[providers.*]` can select different compatible endpoints and model IDs at launch with `--provider NAME`; secrets are loaded from environment variables using `api_key_env`. This makes optional free/cloud-compatible endpoints pluggable without making them a dependency. It is not yet a multi-provider router or automatic fallback system, and non-OpenAI-compatible providers still need an adapter.
+### Execution environments
+Infrastructure on which models, agents, tools, and experiments execute. The architecture must eventually support local execution, connected machines, external cloud providers, containers/isolated environments, and distributed execution. Execution location must not be hardcoded into the fundamental architecture.
 
-## Coding-agent loop
+### Resource management
+A distinct subsystem responsible for discovering and managing compute, memory, models, endpoints, concurrency, provider quotas, costs, task priorities, reservations, and scheduling. It must accommodate both resource-constrained single-user installations and large distributed deployments. Coordination overhead and available resources must inform scheduling; more agents do not automatically improve results.
 
-The coding agent sends OpenAI-compatible function definitions to the provider and reassembles streamed tool-call deltas. It begins with a bounded project-inspection tool that returns safe top-level entries, a capped file list, and selected project manifests/instructions while excluding ignored and credential-like paths. Its system policy asks it to inspect before editing, minimize scope, run relevant checks, and report only observed outcomes. It supports workspace listing, reading, literal search, writing, and allowlisted command execution. Read-only operations are automatic; writes and commands require an explicit approval callback. Each run and tool event is persisted. After successful writes, Evo tracks the latest write and any later recognized test-runner command, recording a verification signal of passed, failed, or not_run. Lint-only commands and `git diff --check` no longer count as test verification. This remains a command-pattern heuristic: exit code zero is evidence that a test runner completed, not proof that the tests cover the changed behavior or that the implementation is correct. Reaching the hard tool-round limit is recorded as a failed/incomplete run, not a completed one.
+## Conceptual relationship
 
-This is not yet a general autonomous software engineer: tool-call support varies by model/server, command allowlists need local configuration, and no target-machine validation has been performed.
+```text
+Evo provides the platform.
+AI configurations define reusable AI systems.
+Software projects define development targets.
+Workspaces and sessions connect configurations to authorized targets.
+Experiments investigate and evaluate combinations of configurations, targets, and execution environments.
+The experiment registry and artifact storage preserve results and evidence.
+Resource management determines what can execute and where.
+```
 
-## Workspace safety boundary
+These entities must be independently identifiable and maintain appropriate histories.
 
-Workspace paths are resolved beneath a configured root. Reads are bounded by file size. Secret filtering covers common credential names and token/password/private-key filename patterns. Test/spec paths require an explicit approved write; the CLI calls out these writes separately, and the agent policy forbids weakening assertions or disabling tests. Writes refuse to overwrite existing files unless explicitly authorized by the caller. Commands are argv arrays, never shell strings, and must match an explicitly configured command prefix. The workspace is a bounded tool foundation; the coding agent drives it through the approval-gated loop described above.
+## Version control and persistent engineering knowledge
 
-## Data ownership and migration
+AI configurations and software projects must have independent version histories. The architecture should support independent Git-backed histories and branching without assuming every entity requires a separate physical Git repository.
 
-- Keep experiment history and assistant state durable across application versions.
-- Use additive schema migrations when changing existing tables.
-- Do not silently reinterpret or delete user memories. Superseded records remain stored and linked to their replacements; contradiction links preserve both claims.
-- Preserve provenance and confidence when transforming memory records.
-- New agent actions should create auditable tool-event records.
-- Avoid coupling the lab database schema to internal assistant implementation details.
+Use Git for source code, configuration definitions, versioned documentation, and reproducible development states. Use a persistent experiment registry for structured experiment records and searchable findings. Use artifact storage for large logs, datasets, benchmark outputs, and other large files.
 
-## Implemented since the original architecture snapshot
+Every experiment should reference exact relevant source commits, configuration revisions, and execution environment. Successful approaches, failures, abandoned hypotheses, and unexpected discoveries should be retained. Evo should be able to search historical findings and avoid unknowingly repeating unsuccessful experiments. Git should not become an indiscriminate dumping ground for large binary artifacts.
 
-- A React/Vite desktop application with Chat, Agents, Memory, Hardware, and Experiments workspaces.
-- Runtime discovery, persistent runtime profiles, architecture-derived KV estimates, and conservative workload admission.
-- A persistent reservation-based workload queue with priority ordering, resource accounting for outstanding reservations, five-minute unstarted reservation leases, and explicit lifecycle transitions.
-- An allowlisted managed-execution worker for explicitly user-launched reserved jobs. It uses argv arrays without a shell, runs in the configured workspace, captures bounded output, enforces timeouts, and records exit status and restart interruption.
-- A durable background coding-agent task ledger with atomic worker claims, append-only lifecycle events, safe-boundary cancellation, approval-state visibility, and conservative restart recovery. Existing coding-agent tool calls remain individually approval-gated; interrupted tasks are recorded rather than replayed.
-- Approval-first agent orchestration: model-generated structured plans, durable ordered steps, explicit plan approval, sequential execution through the existing coding-agent boundary, per-step outcomes, and restart interruption without replay.
+## Current implementation status
 
-## Deliberately not implemented yet
+Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
-- Automatic memory extraction beyond narrow first-person heuristics, semantic deduplication, automatic contradiction adjudication, and consolidation.
-- Automated outcome adjudication or autonomous lesson promotion; current experiential feedback is explicitly user-confirmed.
-- Semantic embeddings/vector retrieval or reranking.
-- Browser/web research agent and source verification pipeline.
-- Fully autonomous, unattended coding-agent operation; the current loop requires per-action approval.
-- Checkpointed coding-agent pause/resume, redirect, durable approval recovery, per-step retry, and restart-safe continuation. Background Agent Execution v1 and Agent Orchestration v1 record lifecycle and interruption, but do not replay or resume in-flight model/tool calls.
-- Automatic resource admission for agent plans. The current hardware scheduler requires reliable per-job RAM/VRAM estimates; orchestration does not invent those estimates or pretend unknown demand is safe.
-- Hard CPU/RAM/VRAM isolation for child workloads, live resource monitoring per managed command, model loading/unloading, applying runtime profiles, and direct GPU/process arbitration.
-- Autonomous self-modification or online weight training.
+This architecture is not fully implemented. In particular, AI configurations, software-project management, workspaces/sessions, experiment registry, resource management, agent lifecycle, and development control plane are designed or proposed capabilities, not validated runtime features.
 
-These are future layers, not reasons to discard the current foundation.
+## Long-term self-development
+
+Evo should eventually participate extensively in its own development: understanding its architecture and history, identifying weaknesses and opportunities, researching solutions, designing and running isolated experiments, implementing improvements in controlled environments, validating changes independently, proposing or integrating approved improvements, and improving its own research and development processes.
+
+Autonomy should increase as reliability is demonstrated. Routine, reversible, authorized work should eventually be autonomous. Consequential operations require safeguards and appropriate approval. Safety, authorization, demonstrated reliability, and available resources constrain autonomy; there is no arbitrary prohibition on self-development.
+
+Evo must not be allowed to declare its own improvements successful without independent evidence.
+
+Self-improvement is a long-term capability, not something required in the initial release.
+
+## Agent collaboration and governance
+
+Retain the hybrid model:
+
+- Hierarchical governance for authority, permissions, accountability, and consequential decisions.
+- Cooperative agent-to-agent communication, research, challenges, task delegation, and handoffs within authorized scopes.
+- Dynamic, replaceable roles rather than permanent model-specific dependencies.
+- One accountable owner per task.
+- No requirement for the user to manually relay messages once authorized direct integrations are available.
+- Bounded delegation, concurrency, budgets, timeouts, and loop prevention.
+- Persistent task history, communication records, evidence, and decisions.
+- Explicit capability, trust, and authority separation.
+- Progressive agent evaluation and authorization.
+- Immediate suspension and revocation capability.
+- Provider-specific compliance verification.
+
+Provider terms, licensing, API permissions, automation restrictions, and data-handling rules must be respected. No bypasses or undocumented interfaces.
+
+Agent lifecycle: discovery, evaluation, registration, authorization, availability, assignment, active work, suspension, retirement, and revocation.
+
+The development control plane is a first-class Evo subsystem, with an independent minimal bootstrap and recovery mechanism outside it.
+
+## Development philosophy and implementation strategy
+
+Real AI models are not required to make substantial progress. Use deterministic mocks, simulated agents, fixtures, and conventional tests to develop and validate the platform. Real models become integration targets and experimental subjects.
+
+Build interfaces for eventual capabilities without implementing all of them prematurely. Keep scope focused on improving AI systems through software architecture and engineering. Reuse existing software and research where practical. Preserve useful existing implementation rather than assuming a rewrite is necessary.
+
+Every significant milestone should deliver a reusable capability, an experimentally validated improvement, or a measurable increase in what Evo can support.
+
+## Initial deployment and portability
+
+Initial release: single user, local-first, no mandatory accounts or cloud services, local project/configuration storage, optional cloud providers, secrets stored separately from project/configuration repositories, portable definitions where practical.
+
+Eventually support export/import, reconstruction on another machine, and multi-user authentication. Do not make future multi-user support a prerequisite for initial development. Design for portability without sacrificing immediate optimization for the user's existing hardware.
+
+## Current vs designed vs long-term
+
+1. Current implemented capabilities: described in `README.md` and existing docs.
+2. Designed but not yet implemented architecture: this document and `docs/DEVELOPMENT-CONTROL-PLANE.md`.
+3. Long-term ambitions: increasingly capable, potentially superintelligent AI systems through software engineering, including controlled self-improvement.
+
+No proposed capability should be described as already implemented.

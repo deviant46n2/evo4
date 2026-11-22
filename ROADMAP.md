@@ -1,38 +1,39 @@
 # Evo4 Roadmap
 
-This document records agreed planning decisions and a provisional development sequence. It is not a statement that any proposed capability is already implemented.
+Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
+
+The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. The personal assistant and coding-agent experiences are configurations built on this platform, not its fundamental identity.
+
+This roadmap is provisional. Dependencies and acceptance criteria must be refined before implementation.
 
 ## Agreed principles
 
-- Evo's first objective remains maximizing useful capabilities on the user's existing hardware.
-- Local operation must remain useful; optional cloud providers must not become a paid dependency.
-- Autonomous self-modification is not the current objective.
+- Evo is not a foundation-model trainer or general-purpose ML laboratory.
+- Models and external frameworks are replaceable components, not architectural foundations.
+- Evo owns its interfaces, integration contracts, experiment records, evaluation criteria, and orchestration.
+- Real models are integration targets and experimental subjects, not prerequisites for development.
 - GitHub remains the immediate shared engineering workspace and permanent source of truth.
-- Human steering and accountability remain mandatory for consequential decisions.
-- Provider compliance is mandatory: use supported interfaces and official APIs only.
-- Roles are contracts, not fixed model identities. Provider/model identities must be replaceable.
-- Every task has one accountable owner, even when several agents contribute.
-- Cooperative agent communication is allowed, but authority, permissions, and consequential decisions remain governed.
-- Agents may propose and execute bounded low-risk work only within explicitly granted scopes.
-- Agents cannot grant themselves permissions or expand their own authority.
-- A minimal independent bootstrap/recovery mechanism must remain outside the control plane.
+- Human steering, accountability, provider compliance, and safety constraints remain mandatory.
+- Every task has one accountable owner.
+- Routine, reversible, authorized work may eventually become autonomous; consequential actions require safeguards and authorization.
+- Evo must not declare its own improvements successful without independent evidence.
 
 ## Proposed roadmap
 
-This sequence is provisional. Dependencies and acceptance criteria must be refined before implementation.
+0. Architectural reconciliation and development governance.
+1. Portable application foundation, persistent storage, and entity management.
+2. Independent software-project and AI-configuration management.
+3. Git integration, version histories, branching, and workspace isolation.
+4. Provider/model/agent integration contracts and execution adapters.
+5. Resource discovery and resource-aware execution management.
+6. Persistent experiment registry, artifacts, evaluation, and reproducibility.
+7. Agent lifecycle, communication, and orchestration.
+8. Memory, context, retrieval, and intelligence experimentation.
+9. Autonomous research and increasingly capable software development.
+10. Controlled self-improvement and more advanced autonomous development.
 
-0. Development governance: authority model, roles, task ownership, approval boundaries, decision records.
-1. Shared engineering records: GitHub-first synchronization, durable tasks, decisions, evidence, and status.
-2. Diagnostics and reproducibility: structured logs, diagnostic bundles, run identities, sanitized evidence.
-3. Automated quality infrastructure: CI, tests, builds, security checks, regression gates, machine-readable results.
-4. Agent abstraction: provider-independent identities, capabilities, adapters, and role assignment.
-5. Communication protocol: persistent messages, task handoffs, context exchange, event records.
-6. Development control plane: unified coordination, oversight, permissions, approvals, and monitoring.
-7. Lifecycle supervision: builds, runtime identity, startup/shutdown, health checks, safe activation, rollback, recovery.
-8. Compliance and integration governance: provider-specific policy records, verification, data handling, and ongoing review.
-
-Dependencies and adjustments should be revisited before each milestone. Avoid building elaborate orchestration before simpler GitHub-first foundations are proven.
+Do not treat this order as immutable. Refine dependencies where architecture justifies it. Avoid building elaborate orchestration before simpler GitHub-first foundations are proven.
 
 ## Current implementation status
 
-Implemented capabilities are described in `README.md` and the existing docs. In particular, `docs/AGENT-ORCHESTRATION.md` describes the current Agent Orchestration v1 implementation and its limitations. This roadmap does not mark any proposed capability as complete.
+Implemented capabilities remain described in `README.md` and existing docs. Proposed architecture is described in `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT-CONTROL-PLANE.md`. Nothing in this roadmap should be read as claiming that proposed capabilities are already implemented.

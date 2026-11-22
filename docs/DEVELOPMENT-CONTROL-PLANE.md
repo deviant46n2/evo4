@@ -47,3 +47,7 @@ Every integration and communication mechanism must comply with the applicable pr
 This is proposed architecture only. GitHub remains the immediate shared engineering workspace. Direct agent-to-agent integrations should be considered only when supported by provider terms and when they offer a meaningful advantage over the GitHub-first workflow.
 
 No autonomous self-modification or self-deployment is authorized by this document.
+
+## Relationship to core architecture
+
+The development control plane is one proposed subsystem within Evo's broader architecture. See `docs/ARCHITECTURE.md` for the fundamental entities, their relationships, version-control strategy, and the distinction between current implementation and proposed architecture.

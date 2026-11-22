@@ -4,6 +4,8 @@ This document is the continuity record for future Evo4 conversations. Important 
 
 ## Central vision
 
+See `docs/ARCHITECTURE.md` for the definitive entity model and architectural relationships.
+
 Evo4 is a model-agnostic AI development and experimentation platform designed to assemble, evaluate, coordinate, and continuously improve AI systems using existing models, agents, tools, and infrastructure.
 
 The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software development: memory, context management, orchestration, tools, agent collaboration, evaluation, and controlled self-improvement.
