@@ -96,16 +96,41 @@ class OpenAICompatibleProvider:
         completion_tokens = usage.get("completion_tokens")
         generation_time = finished-first_token if first_token else None
         parsed_calls = []
-        for index in sorted(tool_call_parts):
-            call = tool_call_parts[index]
-            try:
-                arguments = json.loads(call["function"]["arguments"] or "{}")
-            except json.JSONDecodeError as exc:
-                raise ProviderError(f"Model returned invalid tool-call JSON: {exc}") from exc
-            parsed_calls.append({"id":call["id"],"type":"function",
-                                 "function":{"name":call["function"]["name"],"arguments":arguments}})
-        return {"content":"".join(pieces),"tool_calls":parsed_calls,"elapsed_seconds":elapsed,
-                "ttft_seconds":first_token-started if first_token else None,
-                "prompt_tokens":usage.get("prompt_tokens"),"completion_tokens":completion_tokens,
-                "tokens_per_second":(completion_tokens/generation_time if completion_tokens and generation_time and generation_time>0 else None),
-                "finish_reason":finish_reason,"truncated":finish_reason=="length"}
+
+        # A length-finished response is incomplete by definition. Tool-call
+        # argument fragments may contain partial JSON, so do not parse or
+        # expose any of them. The coding agent will see finish_reason="length"
+        # and perform its bounded safe continuation without executing calls.
+        if finish_reason != "length":
+            for index in sorted(tool_call_parts):
+                call = tool_call_parts[index]
+                try:
+                    arguments = json.loads(call["function"]["arguments"] or "{}")
+                except json.JSONDecodeError as exc:
+                    raise ProviderError(
+                        f"Model returned invalid tool-call JSON: {exc}"
+                    ) from exc
+                parsed_calls.append({
+                    "id": call["id"],
+                    "type": "function",
+                    "function": {
+                        "name": call["function"]["name"],
+                        "arguments": arguments,
+                    },
+                })
+
+        return {
+            "content": "".join(pieces),
+            "tool_calls": parsed_calls,
+            "elapsed_seconds": elapsed,
+            "ttft_seconds": first_token - started if first_token else None,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": completion_tokens,
+            "tokens_per_second": (
+                completion_tokens / generation_time
+                if completion_tokens and generation_time and generation_time > 0
+                else None
+            ),
+            "finish_reason": finish_reason,
+            "truncated": finish_reason == "length",
+        }

@@ -84,5 +84,28 @@ class ProviderToolTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
+    def test_truncated_partial_tool_arguments_are_discarded_without_json_parse(self):
+        server=ThreadingHTTPServer(("127.0.0.1",0),ToolSSEHandler)
+        server.finish_reason="length"
+        server.partial_tool_args=True
+        thread=threading.Thread(target=server.serve_forever,daemon=True)
+        thread.start()
+        try:
+            provider=OpenAICompatibleProvider(
+                f"http://127.0.0.1:{server.server_port}","key","fake",3
+            )
+            result=provider.chat(
+                [{"role":"user","content":"read"}],
+                tools=[{"type":"function"}],
+            )
+            self.assertEqual(result["finish_reason"],"length")
+            self.assertTrue(result["truncated"])
+            self.assertEqual(result["tool_calls"],[])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 if __name__=="__main__":
     unittest.main()
