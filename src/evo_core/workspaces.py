@@ -122,6 +122,8 @@ def create_workspace(
     description="",
 ):
     name = _text(name, "name", required=True)
+    if description is None:
+        raise WorkspaceValidationError("description must be a string")
     description = _text(description, "description")
     if not isinstance(project_id, str) or not project_id.strip():
         raise WorkspaceValidationError("project_id must be a non-empty string")
@@ -177,8 +179,11 @@ def get_workspace(store, workspace_id):
 
 
 def list_workspaces(store, *, project_id=None, configuration_id=None, status=None):
-    if status is not None and status not in {"active", "archived"}:
-        raise WorkspaceValidationError("status must be active or archived")
+    if status is not None:
+        if not isinstance(status, str):
+            raise WorkspaceValidationError("status must be a string")
+        if status not in {"active", "archived"}:
+            raise WorkspaceValidationError("status must be active or archived")
     if project_id is not None:
         if not isinstance(project_id, str) or not project_id.strip():
             raise WorkspaceValidationError("project_id must be a non-empty string")

@@ -115,6 +115,26 @@ class WorkspaceCreationTests(unittest.TestCase):
         with self.assertRaises(WorkspaceValidationError):
             create_workspace(self.store, "ws", self.project["project_id"], self.configuration["configuration_id"], self.revision["revision_id"], checkout_id="")
 
+    def test_description_none_rejected(self):
+        before = len(list_workspaces(self.store))
+        with self.assertRaises(WorkspaceValidationError):
+            create_workspace(
+                self.store,
+                "ws",
+                self.project["project_id"],
+                self.configuration["configuration_id"],
+                self.revision["revision_id"],
+                description=None,
+            )
+        after = len(list_workspaces(self.store))
+        self.assertEqual(before, after)
+
+    def test_list_status_invalid_type(self):
+        with self.assertRaises(WorkspaceValidationError):
+            list_workspaces(self.store, status=["active"])
+        with self.assertRaises(WorkspaceValidationError):
+            list_workspaces(self.store, status={"status": "active"})
+
     def test_nonexistent_project(self):
         with self.assertRaises(WorkspaceRelationshipError):
             create_workspace(self.store, "ws", "missing", self.configuration["configuration_id"], self.revision["revision_id"])
