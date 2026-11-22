@@ -40,6 +40,7 @@ Design decisions:
 - The registry service receives the existing `EvoStore` instance and uses its connection and lock. It must not open the database independently.
 - Initialize the registry in `create_app()` after `EvoStore` exists, using the same pattern as existing `initialize_*` calls.
 - Preserve existing `EvoStore`, `ResultsDB`, assistant, and Evo Lab behavior.
+- The registry uses `EvoStore` only and does not operate across `EvoStore` and `ResultsDB`; no cross-database transaction semantics are introduced in v1.
 
 ## 3. Final domain model
 
@@ -187,7 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_configuration ON workspaces(configurat
 
 Notes:
 
-- `ai_configurations.current_revision_id` is `NOT NULL`. The deferred composite foreign key allows the configuration row and its initial revision row to be inserted in either order within one transaction; the constraint is checked at commit.
+- `ai_configurations.current_revision_id` is `NOT NULL`. The deferred composite foreign key allows the configuration row to be inserted first with a predetermined revision ID, then the initial revision row, in one transaction; the constraint is checked at commit. The reverse order is not permitted because the revision-to-configuration foreign key is immediate.
 - `workspaces.checkout_id` is nullable; a workspace may exist without a registered checkout.
 - Multiple workspaces may share a checkout. The redundant `UNIQUE (project_id, checkout_id)` constraint is not present on `workspaces`; the composite foreign key enforcing checkout ownership is retained.
 - Composite foreign keys require the referenced composite columns to be unique. The schema above provides those unique constraints.
@@ -200,7 +201,9 @@ The exact complete proposed DDL above was executed in an isolated in-memory SQLi
 
 Full-DDL tests performed:
 
+- PRAGMA verification: `PRAGMA foreign_keys=ON` was executed; `PRAGMA foreign_keys` subsequently returned `1`.
 - Schema creation: the complete DDL, including all tables, composite foreign keys, indexes, and triggers, executed successfully via `executescript()` on a fresh database. Result: success, no syntax errors.
+- Insertion order: inserting the initial revision before its configuration failed with `FOREIGN KEY constraint failed`; only the configuration-first order is valid.
 - Repeated creation was not separately exercised; the DDL uses `CREATE TABLE IF NOT EXISTS` and `CREATE TRIGGER IF NOT EXISTS`, so repeated initialization is structurally supported.
 - Configuration creation with predetermined IDs: `BEGIN IMMEDIATE`, insert `ai_configurations` with `current_revision_id` set to a predetermined revision ID, insert the initial `ai_configuration_revisions` row, commit. Result: success; both rows present.
 - Deferred FK invariant: inserting `ai_configurations` referencing a non-existent revision and committing without inserting the revision failed with `FOREIGN KEY constraint failed`.
@@ -231,7 +234,7 @@ Configuration creation transaction:
 2. `BEGIN IMMEDIATE`.
 3. Insert `ai_configurations` with `current_revision_id` set to the predetermined initial revision ID.
 4. Insert the initial `ai_configuration_revisions` row in the same transaction.
-5. Commit. The deferred composite foreign key permits either insertion order; both rows must exist at commit.
+5. Commit. The deferred composite foreign key permits the configuration-first insertion order described above; both rows must exist at commit. The reverse order is not permitted because `ai_configuration_revisions.configuration_id` references `ai_configurations` through an immediate foreign key.
 6. On any failure, roll back; no configuration or revision is committed.
 
 Revision creation transaction:
@@ -259,7 +262,7 @@ Current-revision invariant:
 
 - `ai_configurations.current_revision_id` is `NOT NULL`.
 - A configuration's initial revision ID is predetermined, so the configuration row can reference it directly.
-- The deferred composite foreign key permits the two-row insert order within one transaction.
+- The deferred composite foreign key permits the configuration-first two-row insert order within one transaction; the reverse order is not permitted.
 - A configuration cannot be committed without a valid current revision, including when someone bypasses the service layer and attempts direct SQL insertion. An insert of `ai_configurations` referencing a non-existent revision fails the foreign-key constraint at commit.
 - The composite foreign key prevents a current revision from belonging to a different configuration.
 - Revision creation that updates the current pointer must validate the expected configuration version and perform both inserts/updates atomically. A stale version leaves no partial revision behind.
@@ -353,6 +356,7 @@ Checkouts:
 - `list_checkouts(project_id) -> list[CheckoutRecord]`
 - `update_checkout(project_id, checkout_id, updates, expected_version) -> CheckoutRecord`
 - `mark_checkout_unavailable(project_id, checkout_id, expected_version) -> CheckoutRecord`
+- `refresh_checkout_availability(project_id, checkout_id, expected_version) -> CheckoutRecord`
 - `unregister_checkout(project_id, checkout_id, expected_version) -> None`
 
 Workspaces:
@@ -423,6 +427,11 @@ For v1:
 - If a registered directory later disappears, mark it unavailable without deleting the record.
 - Unregistering removes registry metadata only and must not touch filesystem contents.
 - A workspace referencing a checkout must prevent its deletion through the foreign key; return a conflict with a useful explanation.
+- Missing directories are detected by explicit availability checks that test whether the canonical path exists and is an accessible directory. If the path does not exist, `availability_status` becomes `missing`; if it exists but is not an accessible directory or cannot be validated, it becomes `unavailable`.
+- Availability checks are explicit operations; ordinary registry reads do not perform filesystem checks.
+- A checkout transitions back to `available` only through an explicit availability refresh after the path again exists and is an accessible directory. That refresh requires `expected_version`.
+- Filesystem operations are limited to path validation during registration and explicit availability checks. Registry lifecycle operations do not otherwise access the filesystem.
+- Unregistering a checkout never deletes filesystem contents.
 
 Canonicalization reduces but does not eliminate symlink or TOCTOU risks. Residual filesystem race considerations must be documented and tested.
 
@@ -462,6 +471,7 @@ Archived-entity reactivation uses the existing PATCH endpoints with `status: act
 | POST | `/api/v1/projects/{project_id}/checkouts` | `CheckoutRegisterRequest`: `canonical_path`, `branch_or_ref`, `last_known_commit` | `CheckoutRecord` | 201 | 404, 409, 422, 500 |
 | PATCH | `/api/v1/projects/{project_id}/checkouts/{checkout_id}` | `CheckoutUpdateRequest`: metadata fields and `expected_version` | `CheckoutRecord` | 200 | 404, 409, 422, 500 |
 | POST | `/api/v1/projects/{project_id}/checkouts/{checkout_id}/unavailable` | `AvailabilityUpdateRequest`: `expected_version` | `CheckoutRecord` | 200 | 404, 409, 422, 500 |
+| POST | `/api/v1/projects/{project_id}/checkouts/{checkout_id}/availability` | `AvailabilityRefreshRequest`: `expected_version` | `CheckoutRecord` | 200 | 404, 409, 422, 500 |
 | DELETE | `/api/v1/projects/{project_id}/checkouts/{checkout_id}` | query: `expected_version` | 204 | 204 | 404, 409, 422, 500 |
 | GET | `/api/v1/workspaces` | query: `status` optional | `WorkspaceListResponse` | 200 | 400, 500 |
 | POST | `/api/v1/workspaces` | `WorkspaceCreateRequest`: `name`, `description`, `project_id`, `configuration_id`, `configuration_revision_id`, `checkout_id` | `WorkspaceRecord` | 201 | 404, 409, 422, 500 |
@@ -488,6 +498,7 @@ The following defines the concrete fields returned by the essential endpoints ab
 - `ResolvedWorkspace`: `workspace: WorkspaceRecord`, `configuration: ConfigurationRecord`, `revision: RevisionRecord`, `project: ProjectRecord`, `checkout: CheckoutRecord | null`.
 - `ArchiveRequest`: `expected_version: integer`.
 - `AvailabilityUpdateRequest`: `expected_version: integer`.
+- `AvailabilityRefreshRequest`: `expected_version: integer`.
 - `ConfigurationCreateRequest`: `definition: object`, `change_summary: string` (default empty).
 - `ConfigurationUpdateRequest`: `status: "active" | "archived"` (optional), `expected_version: integer` (required). Name and description are derived from revisions and are not directly mutable here.
 - `ProjectCreateRequest`: `name`, `description`, `git_remote`, `default_ref`, `project_type`.
@@ -563,7 +574,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-Implementation may proceed once the blocking decisions in section 16 are resolved: checkout canonicalization/symlink handling and cross-database transaction/failure semantics. The remaining items are contract refinements to finalize during implementation.
+Implementation may proceed once the blocking decision in section 16 is resolved: checkout canonicalization, symlink handling, and unavailable-path behavior. The remaining items are contract refinements to finalize during implementation.
 
 ## 14. Acceptance criteria
 
@@ -605,7 +616,7 @@ Residual risks:
 - Symlink and TOCTOU behavior around registered directories.
 - SQLite composite foreign-key behavior under deferred constraints.
 - Concurrent update conflict semantics.
-- Compatibility of existing `EvoStore` and `ResultsDB` transaction behavior.
+- Compatibility of registry transaction behavior with existing `EvoStore` behavior.
 - Desktop testing limitations due to the absence of an evident frontend test framework.
 
 ## 16. Unresolved decisions requiring source-level resolution
@@ -613,9 +624,8 @@ Residual risks:
 1. Exact JSON schema validation strictness and forward-compatibility behavior. The common structure is specified, but strictness, unknown-field handling, and evolution policy remain open.
 2. Exact conflict response payload and retry/error semantics for stale optimistic-concurrency versions. Integer versions are chosen, but the response body and client retry guidance remain open.
 3. Checkout canonicalization, symlink handling, and unavailable-path behavior. This is security-sensitive and requires source-level inspection of `Workspace`; registration rules themselves are specified in section 9.
-4. Cross-database transaction and failure semantics between `EvoStore` and `ResultsDB`. Locking, partial-failure, and recovery behavior for operations touching both stores remain open.
 
-Resolved and removed from this section: `workspace_events` inclusion (optional, not required for v1); secret-free export/import (deferred unless separately approved); integer optimistic concurrency model; `Workspace` security boundary and checkout registration rules; `EvoStore`/`ResultsDB` connection and migration architecture; and API contracts specified in sections 7-10.
+Resolved and removed from this section: `workspace_events` inclusion (optional, not required for v1); secret-free export/import (deferred unless separately approved); integer optimistic concurrency model; `Workspace` security boundary and checkout registration rules; `EvoStore`/`ResultsDB` connection and migration architecture; cross-database transaction semantics (the registry uses `EvoStore` only); and API contracts specified in sections 7-10.
 
 ## 17. Source references
 
