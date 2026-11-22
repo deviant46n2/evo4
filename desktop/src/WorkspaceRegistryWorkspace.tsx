@@ -356,8 +356,7 @@ export function WorkspaceRegistryWorkspace() {
         setSelected(created);
         setMode("view");
         setNotice("Workspace created. Its project and exact configuration revision are now pinned.");
-        const items = await fetchList(filter);
-        if (token === viewGeneration.current) setWorkspaces(items);
+        setFilter("active");
       }
     } catch (e) {
       if (token === viewGeneration.current) setError(errorText(e));
