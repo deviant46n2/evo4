@@ -132,7 +132,7 @@ This inventory is based on inspection of the current implementation, routes, com
 ### Phase 2 — Project lifecycle, provisioning, and isolation
 
 - Existing implementation: Platform Registry v1 implements AI configurations (`src/evo_core/ai_configurations.py`), software projects and checkouts (`src/evo_core/project_checkouts.py`), workspaces (`src/evo_core/workspaces.py`), and registered-workspace execution boundaries (`src/evo_core/api.py`). Desktop workspaces exist in `desktop/src/ProjectsWorkspace.tsx`, `desktop/src/WorkspaceRegistryWorkspace.tsx`, and `desktop/src/Workspaces.tsx`.
-- Status: Implemented for registry entities; project provisioning/deletion workflow is not fully implemented as described by the redesign.
+- Status: Partially implemented.
 - Redesign gap: Default project creation should create a dedicated folder, initialize Git, and provision an initial framework. Project deletion with verified cleanup is not yet implemented. Project-specific instruction/memory scoping needs UX integration.
 - Backend gap: New backend functionality is required for provisioning, deletion safeguards, and project-scoped instructions/memory.
 - Preservation and reuse: Reuse existing project, checkout, configuration, and workspace entities and validation.
