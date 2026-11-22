@@ -655,6 +655,10 @@ class ReadLockConcurrencyTests(unittest.TestCase):
             self.assertFalse(t_writer.is_alive())
             self.assertFalse(t_reader.is_alive())
         finally:
+            t_writer.join(timeout=5.0)
+            t_reader.join(timeout=5.0)
+            if t_writer.is_alive() or t_reader.is_alive():
+                raise AssertionError("worker thread did not terminate")
             self.store.lock = real_lock
 
 
