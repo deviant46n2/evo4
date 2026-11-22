@@ -36,6 +36,20 @@ class ConfigurationArchivedError(ConfigurationValidationError):
     pass
 
 
+def _require_expected_version(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigurationValidationError("expected_version must be a positive integer")
+    if value <= 0:
+        raise ConfigurationValidationError("expected_version must be a positive integer")
+    return value
+
+
+def _require_text(value, field_name):
+    if not isinstance(value, str):
+        raise ConfigurationValidationError(f"{field_name} must be a string")
+    return value
+
+
 def _reject_non_finite(obj):
     if isinstance(obj, float):
         if obj != obj or obj in (float("inf"), float("-inf")):
@@ -48,12 +62,27 @@ def _reject_non_finite(obj):
             _reject_non_finite(value)
 
 
+def _validate_secret_reference(value, field_name):
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationValidationError(f"{field_name} must be a non-empty string")
+    return value
+
+
 def _check_sensitive_keys(obj):
     if isinstance(obj, dict):
         for key, value in obj.items():
             if key in SENSITIVE_KEYS:
                 raise ConfigurationValidationError(f"sensitive credential field is not allowed: {key}")
-            if key not in {"secret_ref", "secret_refs"}:
+            if key == "secret_ref":
+                _validate_secret_reference(value, "secret_ref")
+            elif key == "secret_refs":
+                if not isinstance(value, dict):
+                    raise ConfigurationValidationError("secret_refs must be an object")
+                for ref_name, ref_value in value.items():
+                    if not isinstance(ref_name, str) or not ref_name.strip():
+                        raise ConfigurationValidationError("secret_refs keys must be non-empty strings")
+                    _validate_secret_reference(ref_value, "secret_refs value")
+            else:
                 _check_sensitive_keys(value)
     elif isinstance(obj, list):
         for value in obj:
@@ -165,19 +194,21 @@ def _decode_row(row):
 
 
 def _fetch_configuration(store, configuration_id):
-    row = store.db.execute(
-        "SELECT * FROM ai_configurations WHERE configuration_id=?", (configuration_id,)
-    ).fetchone()
+    with store.lock:
+        row = store.db.execute(
+            "SELECT * FROM ai_configurations WHERE configuration_id=?", (configuration_id,)
+        ).fetchone()
     if row is None:
         raise ConfigurationNotFoundError(f"configuration not found: {configuration_id}")
     return row
 
 
 def _fetch_revision(store, configuration_id, revision_id):
-    row = store.db.execute(
-        "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
-        (configuration_id, revision_id),
-    ).fetchone()
+    with store.lock:
+        row = store.db.execute(
+            "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
+            (configuration_id, revision_id),
+        ).fetchone()
     if row is None:
         raise ConfigurationNotFoundError(
             f"revision not found: {revision_id} for configuration {configuration_id}"
@@ -186,6 +217,9 @@ def _fetch_revision(store, configuration_id, revision_id):
 
 
 def create_configuration(store, definition, *, name="", description="", change_summary=""):
+    name = _require_text(name, "name")
+    description = _require_text(description, "description")
+    change_summary = _require_text(change_summary, "change_summary")
     validated = validate_definition(definition)
     canonical = canonical_json(validated)
     digest = content_hash(validated)
@@ -231,40 +265,44 @@ def create_configuration(store, definition, *, name="", description="", change_s
 
 
 def get_configuration(store, configuration_id):
-    row = _fetch_configuration(store, configuration_id)
-    config = _decode_row(row)
-    revision_row = store.db.execute(
-        "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
-        (configuration_id, config["current_revision_id"]),
-    ).fetchone()
-    config["current_revision"] = _decode_row(revision_row)
+    with store.lock:
+        row = _fetch_configuration(store, configuration_id)
+        config = _decode_row(row)
+        revision_row = store.db.execute(
+            "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
+            (configuration_id, config["current_revision_id"]),
+        ).fetchone()
+        config["current_revision"] = _decode_row(revision_row)
     return config
 
 
 def list_configurations(store, status=None):
-    if status is not None:
-        rows = store.db.execute(
-            "SELECT * FROM ai_configurations WHERE status=? ORDER BY updated_at DESC, configuration_id ASC",
-            (status,),
-        ).fetchall()
-    else:
-        rows = store.db.execute(
-            "SELECT * FROM ai_configurations ORDER BY updated_at DESC, configuration_id ASC"
-        ).fetchall()
+    with store.lock:
+        if status is not None:
+            rows = store.db.execute(
+                "SELECT * FROM ai_configurations WHERE status=? ORDER BY updated_at DESC, configuration_id ASC",
+                (status,),
+            ).fetchall()
+        else:
+            rows = store.db.execute(
+                "SELECT * FROM ai_configurations ORDER BY updated_at DESC, configuration_id ASC"
+            ).fetchall()
     return [_decode_row(row) for row in rows]
 
 
 def get_revision(store, configuration_id, revision_id):
-    row = _fetch_revision(store, configuration_id, revision_id)
+    with store.lock:
+        row = _fetch_revision(store, configuration_id, revision_id)
     return _decode_row(row)
 
 
 def list_revisions(store, configuration_id):
-    _fetch_configuration(store, configuration_id)
-    rows = store.db.execute(
-        "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? ORDER BY revision_number ASC",
-        (configuration_id,),
-    ).fetchall()
+    with store.lock:
+        _fetch_configuration(store, configuration_id)
+        rows = store.db.execute(
+            "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? ORDER BY revision_number ASC",
+            (configuration_id,),
+        ).fetchall()
     return [_decode_row(row) for row in rows]
 
 
@@ -279,8 +317,12 @@ def create_revision(
     name=None,
     description=None,
 ):
-    if expected_version is None:
-        raise ConfigurationValidationError("expected_version is required")
+    expected_version = _require_expected_version(expected_version)
+    change_summary = _require_text(change_summary, "change_summary")
+    if name is not None:
+        name = _require_text(name, "name")
+    if description is not None:
+        description = _require_text(description, "description")
     validated = validate_definition(definition)
     canonical = canonical_json(validated)
     digest = content_hash(validated)
@@ -296,7 +338,7 @@ def create_revision(
             config = dict(config_row)
             if config["status"] == "archived":
                 raise ConfigurationArchivedError("cannot revise an archived configuration")
-            if int(config["version"]) != int(expected_version):
+            if int(config["version"]) != expected_version:
                 raise ConfigurationConflictError("stale configuration version")
             next_number = store.db.execute(
                 "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM ai_configuration_revisions WHERE configuration_id=?",
@@ -364,8 +406,8 @@ def restore_revision(
     expected_version,
     change_summary="",
 ):
-    if expected_version is None:
-        raise ConfigurationValidationError("expected_version is required")
+    expected_version = _require_expected_version(expected_version)
+    change_summary = _require_text(change_summary, "change_summary")
     historical = _fetch_revision(store, configuration_id, revision_id)
     definition = json.loads(historical["definition_json"])
     validated = validate_definition(definition)
@@ -383,7 +425,7 @@ def restore_revision(
             config = dict(config_row)
             if config["status"] == "archived":
                 raise ConfigurationArchivedError("cannot restore into an archived configuration")
-            if int(config["version"]) != int(expected_version):
+            if int(config["version"]) != expected_version:
                 raise ConfigurationConflictError("stale configuration version")
             next_number = store.db.execute(
                 "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM ai_configuration_revisions WHERE configuration_id=?",
@@ -425,8 +467,7 @@ def restore_revision(
 
 
 def archive_configuration(store, configuration_id, *, expected_version):
-    if expected_version is None:
-        raise ConfigurationValidationError("expected_version is required")
+    expected_version = _require_expected_version(expected_version)
     with store.lock:
         store.db.execute("BEGIN IMMEDIATE")
         try:
@@ -436,7 +477,7 @@ def archive_configuration(store, configuration_id, *, expected_version):
             if config_row is None:
                 raise ConfigurationNotFoundError(f"configuration not found: {configuration_id}")
             config = dict(config_row)
-            if int(config["version"]) != int(expected_version):
+            if int(config["version"]) != expected_version:
                 raise ConfigurationConflictError("stale configuration version")
             now = utc_now()
             cursor = store.db.execute(
@@ -456,8 +497,7 @@ def archive_configuration(store, configuration_id, *, expected_version):
 
 
 def reactivate_configuration(store, configuration_id, *, expected_version):
-    if expected_version is None:
-        raise ConfigurationValidationError("expected_version is required")
+    expected_version = _require_expected_version(expected_version)
     with store.lock:
         store.db.execute("BEGIN IMMEDIATE")
         try:
@@ -467,7 +507,7 @@ def reactivate_configuration(store, configuration_id, *, expected_version):
             if config_row is None:
                 raise ConfigurationNotFoundError(f"configuration not found: {configuration_id}")
             config = dict(config_row)
-            if int(config["version"]) != int(expected_version):
+            if int(config["version"]) != expected_version:
                 raise ConfigurationConflictError("stale configuration version")
             now = utc_now()
             cursor = store.db.execute(
@@ -487,8 +527,7 @@ def reactivate_configuration(store, configuration_id, *, expected_version):
 
 
 def update_configuration(store, configuration_id, updates, *, expected_version):
-    if expected_version is None:
-        raise ConfigurationValidationError("expected_version is required")
+    expected_version = _require_expected_version(expected_version)
     if not isinstance(updates, dict):
         raise ConfigurationValidationError("updates must be an object")
     with store.lock:
@@ -500,15 +539,19 @@ def update_configuration(store, configuration_id, updates, *, expected_version):
             if config_row is None:
                 raise ConfigurationNotFoundError(f"configuration not found: {configuration_id}")
             config = dict(config_row)
-            if int(config["version"]) != int(expected_version):
+            if int(config["version"]) != expected_version:
                 raise ConfigurationConflictError("stale configuration version")
             now = utc_now()
             assignments = []
             values = []
             if "name" in updates:
+                if not isinstance(updates["name"], str):
+                    raise ConfigurationValidationError("name must be a string")
                 assignments.append("name=?")
                 values.append(updates["name"])
             if "description" in updates:
+                if not isinstance(updates["description"], str):
+                    raise ConfigurationValidationError("description must be a string")
                 assignments.append("description=?")
                 values.append(updates["description"])
             if "status" in updates:

@@ -376,5 +376,251 @@ class CanonicalHashPersistenceTests(unittest.TestCase):
         self.assertEqual(stored["content_hash"], content_hash(json.loads(stored["definition_json"])))
 
 
+
+class SecretReferenceTests(unittest.TestCase):
+    def test_valid_secret_ref(self):
+        d = validate_definition({"schema_version": 1, "components": {"a": {"secret_ref": "ref:1"}}})
+        self.assertEqual(d["components"]["a"]["secret_ref"], "ref:1")
+
+    def test_valid_secret_refs(self):
+        d = validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": {"api_key": "ref:1", "token": "ref:2"}}}})
+        self.assertEqual(d["components"]["a"]["secret_refs"]["api_key"], "ref:1")
+
+    def test_secret_ref_non_string_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_ref": 123}}})
+
+    def test_secret_ref_empty_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_ref": "   "}}})
+
+    def test_secret_refs_non_mapping_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": "ref"}}})
+
+    def test_secret_refs_empty_key_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": {"": "ref"}}}})
+
+    def test_secret_refs_non_string_value_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": {"k": 1}}}})
+
+    def test_nested_object_in_secret_refs_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": {"k": {"nested": "x"}}}}})
+
+    def test_hidden_credential_in_secret_refs_value_string_allowed(self):
+        # Values are references by contract; keys are reference names.
+        d = validate_definition({"schema_version": 1, "components": {"a": {"secret_refs": {"password": "ref:pw"}}}})
+        self.assertEqual(d["components"]["a"]["secret_refs"]["password"], "ref:pw")
+
+    def test_sensitive_key_elsewhere_rejected(self):
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition({"schema_version": 1, "components": {"a": {"password": "x"}}})
+
+
+class DirectImmutabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "cfg.sqlite3"
+        self.store = make_store(self.db_path)
+        self.result = create_configuration(self.store, VALID_DEFINITION, name="cfg")
+        self.cfg_id = self.result["configuration"]["configuration_id"]
+        self.rev_id = self.result["revision"]["revision_id"]
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def test_direct_update_rejected(self):
+        before = get_revision(self.store, self.cfg_id, self.rev_id)
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.store.lock:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.db.execute(
+                        "UPDATE ai_configuration_revisions SET change_summary='x' WHERE revision_id=?",
+                        (self.rev_id,),
+                    )
+                    self.store.db.commit()
+                except Exception:
+                    self.store.db.rollback()
+                    raise
+        after = get_revision(self.store, self.cfg_id, self.rev_id)
+        self.assertEqual(before["change_summary"], after["change_summary"])
+        self.assertEqual(before["content_hash"], after["content_hash"])
+        self.assertEqual(before["revision_number"], after["revision_number"])
+        self.assertEqual(before["parent_revision_id"], after["parent_revision_id"])
+
+    def test_direct_delete_rejected(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.store.lock:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.db.execute(
+                        "DELETE FROM ai_configuration_revisions WHERE revision_id=?", (self.rev_id,)
+                    )
+                    self.store.db.commit()
+                except Exception:
+                    self.store.db.rollback()
+                    raise
+        rev = get_revision(self.store, self.cfg_id, self.rev_id)
+        self.assertIsNotNone(rev)
+
+
+class ExpectedVersionStrictTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "cfg.sqlite3"
+        self.store = make_store(self.db_path)
+        self.result = create_configuration(self.store, VALID_DEFINITION, name="cfg")
+        self.cfg_id = self.result["configuration"]["configuration_id"]
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def _invalid_values(self):
+        return [True, False, 1.0, "1", 0, -1, None]
+
+    def test_create_revision_invalid_expected_version(self):
+        for value in self._invalid_values():
+            with self.subTest(value=value):
+                before = len(list_revisions(self.store, self.cfg_id))
+                with self.assertRaises(ConfigurationValidationError):
+                    create_revision(self.store, self.cfg_id, VALID_DEFINITION, expected_version=value)
+                after = len(list_revisions(self.store, self.cfg_id))
+                self.assertEqual(before, after)
+
+    def test_restore_invalid_expected_version(self):
+        rev_id = self.result["revision"]["revision_id"]
+        for value in self._invalid_values():
+            with self.subTest(value=value):
+                before = len(list_revisions(self.store, self.cfg_id))
+                with self.assertRaises(ConfigurationValidationError):
+                    restore_revision(self.store, self.cfg_id, rev_id, expected_version=value)
+                after = len(list_revisions(self.store, self.cfg_id))
+                self.assertEqual(before, after)
+
+    def test_archive_invalid_expected_version(self):
+        for value in self._invalid_values():
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigurationValidationError):
+                    archive_configuration(self.store, self.cfg_id, expected_version=value)
+        cfg = get_configuration(self.store, self.cfg_id)
+        self.assertEqual(cfg["status"], "active")
+
+    def test_reactivate_invalid_expected_version(self):
+        archive_configuration(self.store, self.cfg_id, expected_version=1)
+        for value in self._invalid_values():
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigurationValidationError):
+                    reactivate_configuration(self.store, self.cfg_id, expected_version=value)
+        cfg = get_configuration(self.store, self.cfg_id)
+        self.assertEqual(cfg["status"], "archived")
+
+    def test_update_invalid_expected_version(self):
+        for value in self._invalid_values():
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigurationValidationError):
+                    update_configuration(self.store, self.cfg_id, {"name": "x"}, expected_version=value)
+        cfg = get_configuration(self.store, self.cfg_id)
+        self.assertEqual(cfg["name"], "cfg")
+
+
+class MetadataValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "cfg.sqlite3"
+        self.store = make_store(self.db_path)
+        self.result = create_configuration(self.store, VALID_DEFINITION, name="cfg")
+        self.cfg_id = self.result["configuration"]["configuration_id"]
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def test_create_invalid_name_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            create_configuration(self.store, VALID_DEFINITION, name=123)
+
+    def test_create_invalid_description_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            create_configuration(self.store, VALID_DEFINITION, description=123)
+
+    def test_create_invalid_change_summary_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            create_configuration(self.store, VALID_DEFINITION, change_summary=123)
+
+    def test_revision_invalid_change_summary_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            create_revision(self.store, self.cfg_id, VALID_DEFINITION, expected_version=1, change_summary=123)
+
+    def test_update_invalid_name_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            update_configuration(self.store, self.cfg_id, {"name": 123}, expected_version=1)
+
+    def test_update_invalid_description_type(self):
+        with self.assertRaises(ConfigurationValidationError):
+            update_configuration(self.store, self.cfg_id, {"description": 123}, expected_version=1)
+
+
+class ReadLockConcurrencyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "cfg.sqlite3"
+        self.store = make_store(self.db_path)
+        self.result = create_configuration(self.store, VALID_DEFINITION, name="cfg")
+        self.cfg_id = self.result["configuration"]["configuration_id"]
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def test_read_waits_for_write_transaction(self):
+        import threading
+
+        barrier = threading.Barrier(2)
+        reader_started = threading.Event()
+        reader_finished = threading.Event()
+        holding = threading.Event()
+        read_result = {}
+
+        def writer():
+            barrier.wait()
+            with self.store.lock:
+                self.store.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store.db.execute(
+                        "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
+                        ("changed", self.cfg_id),
+                    )
+                    holding.set()
+                    reader_started.wait(timeout=2.0)
+                    self.store.db.commit()
+                except Exception:
+                    self.store.db.rollback()
+                    raise
+
+        def reader():
+            barrier.wait()
+            holding.wait(timeout=2.0)
+            reader_started.set()
+            try:
+                read_result["value"] = list_configurations(self.store)
+            finally:
+                reader_finished.set()
+
+        t_writer = threading.Thread(target=writer)
+        t_reader = threading.Thread(target=reader)
+        t_writer.start()
+        t_reader.start()
+        t_writer.join()
+        self.assertTrue(reader_finished.wait(timeout=2.0))
+        self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
+        t_reader.join()
+
+
 if __name__ == "__main__":
     unittest.main()
