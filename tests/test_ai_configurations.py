@@ -593,11 +593,8 @@ class ReadLockConcurrencyTests(unittest.TestCase):
 
             def acquire(self, blocking=True, timeout=-1):
                 if blocking:
-                    try:
-                        if self._wrapped.acquire(False):
-                            return True
-                    except Exception:
-                        pass
+                    if self._wrapped.acquire(False):
+                        return True
                     blocked_on_lock.set()
                     return self._wrapped.acquire(blocking, timeout)
                 return self._wrapped.acquire(blocking, timeout)
@@ -655,6 +652,8 @@ class ReadLockConcurrencyTests(unittest.TestCase):
             self.assertFalse(errors)
             self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
             t_reader.join(timeout=5.0)
+            self.assertFalse(t_writer.is_alive())
+            self.assertFalse(t_reader.is_alive())
         finally:
             self.store.lock = real_lock
 
