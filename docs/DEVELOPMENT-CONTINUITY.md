@@ -69,11 +69,15 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Outstanding stabilization tasks
 
-- Provider streaming reliability.
-- Tool-call argument validation.
 - Workspace filesystem boundary hardening.
 - Untrusted retrieved context isolation.
 - Experiment lifecycle interruption.
 - ResourceMonitor shutdown race.
+
+Accepted in commit `af10694ab35481929e565523c1306cf378b2ddad`:
+- Provider streaming reliability.
+- Tool-call argument validation.
+
+Reported validation for that commit: 503 Python tests passed, compileall passed, desktop production build passed, `git diff --check` passed. Validation was reported by the implementation run, not independently rerun by GPT-6.
 
 See `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`.

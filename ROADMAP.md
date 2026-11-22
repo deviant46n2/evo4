@@ -48,14 +48,14 @@ Feature development is frozen until all confirmed serious audit findings have be
 
 Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 
-### Priority 1: Provider streaming reliability
+### Priority 1: Provider streaming reliability — completed and accepted
 - Problem: SSE error frames without choices are silently ignored.
 - Affected subsystem: Provider streaming.
 - Required remediation: Detect and raise provider errors from error frames; do not accept empty successful responses silently.
 - Required tests: Provider streaming tests for error frames and empty choices.
 - Acceptance criteria: Provider errors surface to callers; no silent empty success.
 
-### Priority 2: Tool-call argument validation
+### Priority 2: Tool-call argument validation — completed and accepted
 - Problem: Non-dict tool arguments can crash downstream dispatch.
 - Affected subsystem: Coding agent.
 - Required remediation: Validate parsed arguments are dictionaries before dispatch.

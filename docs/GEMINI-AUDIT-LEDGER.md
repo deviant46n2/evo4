@@ -36,7 +36,9 @@ Evidence types:
 - Unverified assumptions: None
 - Required remediation: Detect `error` frames and raise `ProviderError`; do not silently accept empty successful responses.
 - Acceptance criteria: Error frames surface as provider errors; empty-choice successful responses are rejected or explicitly handled.
-- Status: Unresolved; scheduled in stabilization roadmap.
+- Status: Implemented and accepted in commit `af10694ab35481929e565523c1306cf378b2ddad`.
+- Fix: SSE error frames raise `ProviderError`; streams with no valid events are rejected; empty non-truncated completions are rejected; usage-only events and truncated responses are preserved.
+- New tests: `tests/test_provider_tools.py` (`ProviderReliabilityTests`: error frame, usage-only then content, empty completion, malformed SSE).
 
 ## C. Tool-call argument validation
 
@@ -50,7 +52,9 @@ Evidence types:
 - Unverified assumptions: None
 - Required remediation: Validate parsed arguments are a dict before dispatch; reject or recover malformed tool calls through the existing malformed-tool-call path.
 - Acceptance criteria: Non-dict arguments do not crash the agent; the run records a clear malformed-tool-call outcome.
-- Status: Unresolved; scheduled in stabilization roadmap.
+- Status: Implemented and accepted in commit `af10694ab35481929e565523c1306cf378b2ddad`.
+- Fix: tool calls are validated for dict structure, non-empty ID, non-empty function name, and dictionary arguments before dispatch; invalid calls enter bounded recovery and no tool in the response batch executes.
+- New tests: `tests/test_coding_agent.py` (`MalformedToolArgumentTests`).
 
 ## D. Untrusted retrieved context
 
