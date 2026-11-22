@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 const API = "http://127.0.0.1:8765/api/v1";
 
@@ -100,6 +100,7 @@ export function ConfigurationsWorkspace() {
   const [description, setDescription] = useState("");
   const [changeSummary, setChangeSummary] = useState("");
   const [mode, setMode] = useState<"view" | "create" | "edit">("view");
+  const detailGeneration = useRef(0);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -114,11 +115,12 @@ export function ConfigurationsWorkspace() {
     return result.items;
   }, []);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string, generation: number) => {
     const [configuration, history] = await Promise.all([
       api<Configuration>(`/configurations/${encodeURIComponent(id)}`),
       api<RevisionList>(`/configurations/${encodeURIComponent(id)}/revisions`),
     ]);
+    if (generation !== detailGeneration.current) return null;
     setSelected(configuration);
     setRevisions(history.items);
     return { configuration, revisions: history.items };
@@ -126,12 +128,14 @@ export function ConfigurationsWorkspace() {
 
   const refresh = useCallback(async () => {
     if (loading) return;
+    const generation = ++detailGeneration.current;
     setLoading(true);
     setError("");
     try {
       const items = await loadConfigurations(filter);
+      if (generation !== detailGeneration.current) return;
       if (selectedId && items.some(item => item.configuration_id === selectedId)) {
-        await loadDetail(selectedId);
+        await loadDetail(selectedId, generation);
       } else {
         setSelectedId(null);
         setSelected(null);
@@ -140,21 +144,22 @@ export function ConfigurationsWorkspace() {
         setMode("view");
       }
     } catch (e) {
-      setError(errorText(e));
+      if (generation === detailGeneration.current) setError(errorText(e));
     } finally {
-      setLoading(false);
+      if (generation === detailGeneration.current) setLoading(false);
     }
   }, [filter, selectedId, loading, loadConfigurations, loadDetail]);
 
   useEffect(() => {
+    const generation = ++detailGeneration.current;
     let alive = true;
     setLoading(true);
     setError("");
     loadConfigurations(filter)
       .then(items => {
-        if (!alive) return;
+        if (!alive || generation !== detailGeneration.current) return;
         if (selectedId && items.some(item => item.configuration_id === selectedId)) {
-          return loadDetail(selectedId);
+          return loadDetail(selectedId, generation);
         }
         setSelectedId(null);
         setSelected(null);
@@ -164,17 +169,21 @@ export function ConfigurationsWorkspace() {
         return undefined;
       })
       .catch(e => {
-        if (alive) setError(errorText(e));
+        if (alive && generation === detailGeneration.current) setError(errorText(e));
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (alive && generation === detailGeneration.current) setLoading(false);
       });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      detailGeneration.current += 1;
+    };
   // Filter changes intentionally reload the list; selection is reconciled by ID.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
   async function selectConfiguration(id: string) {
+    const generation = ++detailGeneration.current;
     setError("");
     setNotice("");
     setSelectedRevision(null);
@@ -182,17 +191,20 @@ export function ConfigurationsWorkspace() {
     setSelectedId(id);
     setLoading(true);
     try {
-      await loadDetail(id);
+      await loadDetail(id, generation);
     } catch (e) {
-      setError(errorText(e));
-      setSelectedId(null);
-      setSelected(null);
+      if (generation === detailGeneration.current) {
+        setError(errorText(e));
+        setSelectedId(null);
+        setSelected(null);
+      }
     } finally {
-      setLoading(false);
+      if (generation === detailGeneration.current) setLoading(false);
     }
   }
 
   function beginCreate() {
+    detailGeneration.current += 1;
     setError("");
     setNotice("");
     setSelectedId(null);
@@ -325,6 +337,7 @@ export function ConfigurationsWorkspace() {
     const action = nextStatus === "archived" ? "Archive" : "Reactivate";
     if (!window.confirm(`${action} "${selected.name || "Untitled configuration"}"?`)) return;
 
+    detailGeneration.current += 1;
     setSaving(true);
     setError("");
     setNotice("");
