@@ -153,14 +153,21 @@ class ResourceMonitor:
         self.stop_event.set()
         thread = self.thread
         if thread is None or not thread.is_alive():
+            self.thread = None
             return
         if thread is threading.current_thread():
             raise RuntimeError("ResourceMonitor.stop() cannot be called from its worker thread")
         interrupted = False
+        unexpected = None
         while thread.is_alive():
             try:
                 thread.join()
             except KeyboardInterrupt:
                 interrupted = True
+            except BaseException as exc:  # Defensive: keep waiting even if join is interrupted unexpectedly.
+                unexpected = exc
+        self.thread = None
+        if unexpected is not None:
+            raise unexpected
         if interrupted:
             raise KeyboardInterrupt

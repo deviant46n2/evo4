@@ -165,12 +165,29 @@ def run_tasks(config, tasks_path, repetitions=None):
                     raise
                 finally:
                     if monitor is not None:
+                        cleanup_exc = None
+                        interrupted = False
                         try:
                             monitor.stop()
-                        except Exception as cleanup_exc:
+                        except KeyboardInterrupt:
+                            interrupted = True
+                        except Exception as exc:
+                            cleanup_exc = exc
                             import sys, traceback
-                            sys.stderr.write(f"Secondary monitor cleanup failure: {type(cleanup_exc).__name__}: {cleanup_exc}\n")
-                            traceback.print_exception(type(cleanup_exc), cleanup_exc, cleanup_exc.__traceback__, file=sys.stderr)
+                            sys.stderr.write(f"Secondary monitor cleanup failure: {type(exc).__name__}: {exc}\n")
+                            traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+                        thread = monitor.thread
+                        while thread is not None and thread.is_alive():
+                            try:
+                                thread.join()
+                            except KeyboardInterrupt:
+                                interrupted = True
+                        if interrupted:
+                            if active_interrupt is None:
+                                active_interrupt = KeyboardInterrupt()
+                            raise active_interrupt
+                        if cleanup_exc is not None:
+                            raise cleanup_exc
     finally:
         try:
             db.close()
