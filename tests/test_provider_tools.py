@@ -8,9 +8,14 @@ class ToolSSEHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         size=int(self.headers.get("Content-Length","0"))
         self.server.payload=json.loads(self.rfile.read(size))
+        second_arguments = (
+            ""
+            if getattr(self.server, "partial_tool_args", False)
+            else '"a.py"}'
+        )
         events=[
           {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"read_","arguments":'{"path":'}}]}}]},
-          {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":'"a.py"}'}}]}}]},
+          {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"file","arguments":second_arguments}}]}}]},
           {"choices":[{"delta":{},"finish_reason":getattr(self.server,"finish_reason","tool_calls")}]},
           {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}
         ]
