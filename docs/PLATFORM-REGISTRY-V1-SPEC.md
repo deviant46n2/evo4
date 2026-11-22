@@ -4,7 +4,7 @@
 **Version:** 0.1  
 **Scope:** Persistent management of AI configurations, software projects, local checkouts, and workspaces.
 
-## 2.1 Purpose
+## 1. Purpose
 
 The Platform Registry establishes the persistent foundation for managing the systems Evo works with and the AI systems Evo can assemble.
 
@@ -19,7 +19,7 @@ This is foundational platform infrastructure, not a replacement for the existing
 
 The design must support Evo's longer-term ambition as a portable, model-agnostic AI development and experimentation platform. It must work initially as a single-user, local-first installation while remaining extensible to remote execution, multiple machines, cloud providers, and agent swarms.
 
-## 2.2 Design principles
+## 2. Design principles
 
 1. **Independent identity:** AI configurations, software projects, and workspaces are separate domain entities.
 2. **Explicit relationships:** Connections between entities must be represented and validated, not inferred from names or filesystem paths.
@@ -32,7 +32,7 @@ The design must support Evo's longer-term ambition as a portable, model-agnostic
 9. **Backward compatibility:** Existing Evo capabilities must continue working.
 10. **Model independence:** No specific model, provider, agent framework, or execution location may become a foundational dependency.
 
-## 2.3 Domain model
+## 3. Domain model
 
 The following entities must remain conceptually and structurally distinct.
 
@@ -138,7 +138,7 @@ The model must permit:
 
 Do not assume one configuration equals one project or one running agent.
 
-## 2.4 Definition payload and validation
+## 4. Definition payload and validation
 
 AI configuration definitions should use a structured, versioned JSON representation.
 
@@ -160,7 +160,7 @@ Secret values must be managed separately through an appropriate secret-storage m
 
 Do not prematurely constrain the schema to currently installed providers or agents. Unknown provider-specific configuration should be representable without compromising validation of the common structure.
 
-## 2.5 Lifecycle and invariants
+## 5. Lifecycle and invariants
 
 ### AI configurations
 
@@ -210,7 +210,7 @@ Important invariants:
 6. Invalid relationships must be rejected transactionally.
 7. Registry operations must not silently change active runtime configuration.
 
-## 2.6 Persistence and SQLite
+## 6. Persistence and SQLite
 
 Use the existing Evo persistence infrastructure where practical rather than introducing an unnecessary second database.
 
@@ -250,7 +250,7 @@ The final migration SQL must be reviewed for actual SQLite behavior. Any illustr
 
 Use atomic transactions and appropriate concurrency control. Consider `BEGIN IMMEDIATE` for multi-step write operations where necessary.
 
-## 2.7 Backend service architecture
+## 7. Backend service architecture
 
 Keep persistence operations separate from API routing.
 
@@ -269,7 +269,7 @@ Operations should return structured results and predictable errors.
 
 Avoid coupling registry services directly to model inference, active agent processes, or the existing runtime configuration loader.
 
-## 2.8 API design
+## 8. API design
 
 Follow existing Evo API conventions and namespace the new endpoints under `/api/v1`.
 
@@ -315,7 +315,7 @@ Use typed request and response models. Define stable error responses for missing
 
 Use optimistic concurrency where concurrent updates could otherwise overwrite newer metadata or relationships.
 
-## 2.9 Export and import
+## 9. Export and import
 
 Recommended capability: export an AI configuration definition and its revision history without secret values.
 
@@ -329,7 +329,7 @@ Import should:
 
 Whether this belongs in v1 implementation is an explicit scope decision. Do not let export/import delay the foundational registry if it materially expands the milestone.
 
-## 2.10 Desktop application
+## 10. Desktop application
 
 Add a **Platform** area to the existing desktop navigation.
 
@@ -346,7 +346,7 @@ Keep the initial interface focused on management, not a full visual orchestratio
 
 Use existing desktop architecture and styling conventions. Do not replace existing Chat, Agents, Memory, Hardware, or Experiments functionality.
 
-## 2.11 Integration boundaries
+## 11. Integration boundaries
 
 The registry must be designed to integrate with existing Evo systems without conflating their current responsibilities.
 
@@ -360,7 +360,7 @@ In particular:
 
 Do not replace or rename existing Evo Lab inference experiments as part of this milestone.
 
-## 2.12 Experiment registry boundary
+## 12. Experiment registry boundary
 
 A broader persistent experiment registry is part of Evo's long-term architecture, but it is not the same thing as this Platform Registry milestone.
 
@@ -381,7 +381,7 @@ Preserve failed experiments and unexpected findings.
 
 For this milestone, do not build a generic experiment framework merely because the platform will eventually need one. Keep the registry interfaces compatible with that future capability.
 
-## 2.13 Security and filesystem safety
+## 13. Security and filesystem safety
 
 - Registry registration is not permission to execute project code.
 - Project paths must be validated and canonicalized.
@@ -392,7 +392,7 @@ For this milestone, do not build a generic experiment framework merely because t
 - Do not execute arbitrary hooks, scripts, or dependencies during registration.
 - Preserve existing workspace access restrictions.
 
-## 2.14 Error handling and operational behavior
+## 14. Error handling and operational behavior
 
 Provide predictable, structured failures for:
 
@@ -409,7 +409,7 @@ A failed multi-step operation must not leave partially updated relationships.
 
 Archiving and unregistering must have clearly defined semantics and must not cause destructive side effects.
 
-## 2.15 Testing strategy
+## 15. Testing strategy
 
 Use deterministic tests. A real model or provider must not be required to validate registry functionality.
 
@@ -435,7 +435,7 @@ Tests should cover:
 
 Test invalid cross-entity references at the database level, not only through service methods.
 
-## 2.16 Performance and scale
+## 16. Performance and scale
 
 The initial implementation is single-user and local-first, but the data model must not assume that all future execution happens on one machine.
 
@@ -445,7 +445,7 @@ Avoid unnecessary database connections or duplicated persistence systems.
 
 Large artifacts, logs, datasets, and benchmark results belong in appropriate artifact storage, not in registry rows or Git.
 
-## 2.17 Implementation sequence
+## 17. Implementation sequence
 
 Recommended dependency-aware sequence:
 
@@ -462,7 +462,7 @@ Recommended dependency-aware sequence:
 
 Do not start implementation until the unresolved schema and scope decisions below have been explicitly resolved.
 
-## 2.18 Acceptance criteria
+## 18. Acceptance criteria
 
 The v1 registry foundation is acceptable when:
 
@@ -480,7 +480,7 @@ The v1 registry foundation is acceptable when:
 - No real model connection is required for registry tests.
 - Tests demonstrate the required invariants and regression safety.
 
-## 2.19 Explicitly deferred capabilities
+## 19. Explicitly deferred capabilities
 
 Do not include these in the initial registry implementation unless separately approved:
 
@@ -497,7 +497,7 @@ Do not include these in the initial registry implementation unless separately ap
 
 The data model and interfaces should not prevent these future capabilities.
 
-## 2.20 Decisions requiring resolution before implementation
+## 20. Decisions requiring resolution before implementation
 
 Record these as open design decisions rather than silently treating proposals as final:
 
@@ -511,39 +511,3 @@ Record these as open design decisions rather than silently treating proposals as
 8. **Persistence integration:** Exact relationship between existing `EvoStore` and `ResultsDB`, including transaction and migration behavior.
 
 These decisions must be resolved using the actual source code, not assumptions.
-
-## 2.21 Definition of done for this documentation milestone
-
-This document is present in Git, linked from the relevant architecture and roadmap documents, and committed without unrelated changes.
-
-It is a proposed engineering baseline, not authorization to begin implementation. Implementation approval follows source inspection and resolution of the open decisions.
-
-## 3. Important implementation cautions
-
-Before committing, verify that the document does not imply that illustrative schema or endpoint proposals are already implemented.
-
-Do not invent current repository behavior. Where implementation details require source inspection, label them as unresolved.
-
-Do not rewrite the specification into a short summary. Preserve the full technical detail.
-
-## 4. Commit and report
-
-After the document and links are added:
-
-- Run `git diff --check`.
-- Review the complete diff.
-- Confirm only the intended documentation files are staged and committed.
-- Push the commit to the existing branch.
-- Do not merge or deploy.
-- Do not restart or reconfigure any service.
-
-Report:
-
-1. Exact commit SHA.
-2. Branch.
-3. Files changed.
-4. Whether the push succeeded.
-5. Confirmation that unrelated changes and generated files were untouched.
-6. Any issues or open decisions discovered while integrating the document.
-
-Stop after this documentation milestone. Do not begin implementation.
