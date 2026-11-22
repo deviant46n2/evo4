@@ -497,7 +497,7 @@ Do not include these in the initial registry implementation unless separately ap
 
 The data model and interfaces should not prevent these future capabilities.
 
-## 20. Decisions requiring resolution before implementation
+## 20. Resolved decisions and remaining non-blocking refinements
 
 Status is reconciled with `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-DESIGN.md` section 16. Settled items are marked resolved; deferred items are not blockers.
 

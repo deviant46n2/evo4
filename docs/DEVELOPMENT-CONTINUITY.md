@@ -59,8 +59,9 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Current development state
 
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD before this documentation commit: `7b5d78dd5d5be2ed8dc7153681c3c50deefec127`.
+- HEAD before the architecture-readiness documentation commit: `7b5d78dd5d5be2ed8dc7153681c3c50deefec127` (parent of `d4f5fb497b38fa02b6cd54678f2cabe7dee37205`).
 - Latest documentation commit: `d4f5fb497b38fa02b6cd54678f2cabe7dee37205` (architecture-readiness documentation).
+- Latest documentation commit: `86742f004e8ef283f68de0cffccdf3b9ed4cef4a` (Registry specification and continuity status reconciliation).
 - Original approved Registry design baseline remains `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
 - Tracked working tree was clean before this documentation task. Pre-existing untracked files remain untouched: `desktop/dist/`, `desktop/tsconfig.tsbuildinfo`, `diagnostics/coding-acceptance-direct-1ab0d44c.md`, and `diagnostics/coding-acceptance-plan-33ebabb2.md`.
 - Platform Registry v1 design baseline is approved at commit `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
