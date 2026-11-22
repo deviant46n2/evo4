@@ -579,6 +579,7 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_read_waits_for_write_transaction(self):
+        import queue
         import threading
 
         real_lock = self.store.lock
@@ -586,7 +587,7 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         writer_holds_lock = threading.Event()
         read_completed = threading.Event()
         read_result = {}
-        errors = []
+        errors = queue.Queue()
 
         class TrackingLock:
             def __init__(self, wrapped):
@@ -626,53 +627,49 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                         )
                         if not blocked_on_lock.wait(timeout=2.0):
                             raise AssertionError("reader did not block on lock acquisition")
-                        self.assertFalse(read_completed.is_set())
+                        if read_completed.is_set():
+                            raise AssertionError("read completed while writer held lock")
                         self.store.db.commit()
                     except Exception:
                         self.store.db.rollback()
                         raise
-            except Exception as exc:  # pragma: no cover - surfaced below
-                errors.append(exc)
+            except Exception as exc:
+                errors.put(exc)
 
         def reader():
             try:
                 read_result["value"] = list_configurations(self.store)
-            except Exception as exc:  # pragma: no cover - surfaced below
-                errors.append(exc)
+            except Exception as exc:
+                errors.put(exc)
             finally:
                 read_completed.set()
 
-        t_writer = threading.Thread(target=writer)
+        t_writer = None
         t_reader = None
-        t_writer.start()
-        if not writer_holds_lock.wait(timeout=2.0):
-            t_writer.join(timeout=5.0)
-            if errors:
-                raise errors[0]
-            raise AssertionError("writer did not acquire the lock")
-        if errors:
-            t_writer.join(timeout=5.0)
-            raise errors[0]
-        t_reader = threading.Thread(target=reader)
-        t_reader.start()
         try:
-            t_writer.join(timeout=5.0)
-            if errors:
-                raise errors[0]
+            t_writer = threading.Thread(target=writer)
+            t_writer.start()
+            if not writer_holds_lock.wait(timeout=2.0):
+                raise AssertionError("writer did not acquire lock")
+            t_reader = threading.Thread(target=reader)
+            t_reader.start()
+            if not blocked_on_lock.wait(timeout=2.0):
+                raise AssertionError("reader did not block on lock acquisition")
+            self.assertFalse(read_completed.is_set())
             self.assertTrue(read_completed.wait(timeout=2.0))
-            self.assertFalse(errors)
+            if not errors.empty():
+                raise errors.get_nowait()
             self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
-            t_reader.join(timeout=5.0)
-            self.assertFalse(t_writer.is_alive())
-            self.assertFalse(t_reader.is_alive())
         finally:
-            t_writer.join(timeout=5.0)
+            if t_writer is not None:
+                t_writer.join(timeout=5.0)
             if t_reader is not None:
                 t_reader.join(timeout=5.0)
-            if t_writer.is_alive() or (t_reader is not None and t_reader.is_alive()):
+            if (t_writer is not None and t_writer.is_alive()) or (t_reader is not None and t_reader.is_alive()):
                 raise AssertionError("worker thread did not terminate")
             self.store.lock = real_lock
-
+            if not errors.empty():
+                raise errors.get_nowait()
 
 if __name__ == "__main__":
     unittest.main()
