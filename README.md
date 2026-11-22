@@ -1,6 +1,10 @@
 # Evo 4
 
-Evo 4 is a local-first assistant and permanent experimental platform for increasing the useful capabilities of existing hardware. Phase 1 is hardware/capability optimization. Autonomous self-modification is explicitly out of scope.
+Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
+
+The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. The personal assistant and coding-agent experiences are configurations built on this platform, not its fundamental identity.
+
+Hardware optimization is one capability and potential experiment area, not the defining purpose of Evo4.
 
 The repository contains two independently usable applications:
 
