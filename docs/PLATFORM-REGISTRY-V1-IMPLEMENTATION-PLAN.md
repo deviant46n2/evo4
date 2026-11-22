@@ -281,5 +281,3 @@ Known risks:
 Resolved design decisions should not be reopened without new source evidence. Implementation-time verification is expected for SQLite behavior, migration behavior, security boundaries, and API contracts.
 
 Non-blocking refinements may be finalized during implementation without reopening settled design decisions.
-PYEOF
-echo written
