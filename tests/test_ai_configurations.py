@@ -582,9 +582,9 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         import threading
 
         barrier = threading.Barrier(2)
-        reader_started = threading.Event()
-        reader_finished = threading.Event()
         holding = threading.Event()
+        read_attempted = threading.Event()
+        read_completed = threading.Event()
         read_result = {}
 
         def writer():
@@ -597,7 +597,8 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                         ("changed", self.cfg_id),
                     )
                     holding.set()
-                    reader_started.wait(timeout=2.0)
+                    read_attempted.wait(timeout=2.0)
+                    self.assertFalse(read_completed.is_set())
                     self.store.db.commit()
                 except Exception:
                     self.store.db.rollback()
@@ -606,20 +607,20 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         def reader():
             barrier.wait()
             holding.wait(timeout=2.0)
-            reader_started.set()
+            read_attempted.set()
             try:
                 read_result["value"] = list_configurations(self.store)
             finally:
-                reader_finished.set()
+                read_completed.set()
 
         t_writer = threading.Thread(target=writer)
         t_reader = threading.Thread(target=reader)
         t_writer.start()
         t_reader.start()
-        t_writer.join()
-        self.assertTrue(reader_finished.wait(timeout=2.0))
+        t_writer.join(timeout=5.0)
+        self.assertTrue(read_completed.wait(timeout=2.0))
         self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
-        t_reader.join()
+        t_reader.join(timeout=5.0)
 
 
 if __name__ == "__main__":

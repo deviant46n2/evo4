@@ -250,17 +250,18 @@ def create_configuration(store, definition, *, name="", description="", change_s
             except Exception:
                 pass
             raise
-    configuration = _decode_row(
-        store.db.execute(
-            "SELECT * FROM ai_configurations WHERE configuration_id=?", (configuration_id,)
-        ).fetchone()
-    )
-    revision = _decode_row(
-        store.db.execute(
-            "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
-            (configuration_id, revision_id),
-        ).fetchone()
-    )
+    with store.lock:
+        configuration = _decode_row(
+            store.db.execute(
+                "SELECT * FROM ai_configurations WHERE configuration_id=?", (configuration_id,)
+            ).fetchone()
+        )
+        revision = _decode_row(
+            store.db.execute(
+                "SELECT * FROM ai_configuration_revisions WHERE configuration_id=? AND revision_id=?",
+                (configuration_id, revision_id),
+            ).fetchone()
+        )
     return {"configuration": configuration, "revision": revision}
 
 
