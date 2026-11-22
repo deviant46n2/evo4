@@ -82,3 +82,24 @@ Accepted:
 Latest reported validation for this branch: 525 Python tests passed; compileall passed; `git diff --check` passed; no desktop build was run for the Priority 6 follow-up. Validation was reported by Kilo implementation runs, not independently rerun by GPT-6.
 
 See `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`.
+
+## Accepted product direction
+
+- Evo's underlying identity remains the existing model-agnostic AI development and experimentation platform.
+- The accepted user-experience direction is chat-first, with other application areas acting as windows into backend capabilities.
+- Projects are independent and must not blend instructions, memory, filesystem access, or task scope by default.
+- Automatic project selection/switching is reliability-gated and requires demonstrated isolation before enablement.
+- Project provisioning includes a dedicated folder, `git init`, and a complete initial framework.
+- Project deletion must remove project-owned files, Git history, and Evo-managed resources with verified cleanup and safeguards.
+- Global and project-specific instructions/memory are distinct.
+- Memory is a persistent context system with provenance, confidence, review, search, inspection, and editing.
+- AI configuration/Cyberdeck visualization must reflect actual backend configuration and runtime state.
+- Chat visuals are configurable rather than fixed.
+- Agent activity appears inline with reliable expansion; background orchestration and configurable autonomy/interruption are required goals.
+
+## Product redesign planning status
+
+- Redesign planning document: `docs/PRODUCT-REDESIGN-PLAN.md`.
+- No redesign implementation has been authorized.
+- The stabilization freeze remains active.
+- The redesign track is a prerequisite to further feature expansion, subject to user authorization and completion of stabilization review.

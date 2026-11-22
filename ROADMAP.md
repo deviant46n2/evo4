@@ -42,6 +42,26 @@ Registry v1 capabilities through M5 are implemented and validated: AI configurat
 
 Implemented capabilities are described in `README.md` and existing docs. Registry v1 through M5 is implemented and validated. Proposed later architecture is described in `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT-CONTROL-PLANE.md`. Nothing in this roadmap should be read as claiming that proposed later capabilities are already implemented.
 
+
+## Product redesign track (planning only)
+
+Evo's underlying identity remains the existing model-agnostic AI development and experimentation platform. The redesign concerns the primary user experience and how people interact with that platform.
+
+A detailed redesign plan is recorded in `docs/PRODUCT-REDESIGN-PLAN.md`.
+
+Confirmed direction includes:
+
+- Chat-first application with a familiar multi-conversation model.
+- Minimal sidebar and inline agent activity.
+- Independent projects with dedicated filesystem locations, Git initialization, project-specific instructions/memory/configuration, and verified deletion cleanup.
+- Global and project-specific instructions coexist; projects remain independent by default.
+- Project selection reliability is a gate; automatic switching is not promised before isolation is demonstrated.
+- Persistent memory as a context system with provenance, confidence, review controls, and clear global/project scoping.
+- Node-based AI configuration/Cyberdeck visualization reflecting actual backend state.
+- Configurable chat visuals.
+
+This redesign track is a prerequisite to further feature expansion, subject to user authorization and the active stabilization freeze. It is planning, not implementation authorization. The completed stabilization audit section remains authoritative for remediation status.
+
 ## Stabilization and Gemini Audit Remediation
 
 Feature development is frozen until all confirmed serious audit findings have been fixed, tested, reviewed, and accepted.
