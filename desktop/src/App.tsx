@@ -108,21 +108,43 @@ export default function App() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, [refreshConversations]);
 
+  const healthInFlight = useRef(false);
+  const refreshHealth = useCallback(async () => {
+    if (healthInFlight.current) return;
+    healthInFlight.current = true;
+    try {
+      const info = await request<Health>("/health");
+      setHealth(info);
+      setStatus("connected");
+      return info;
+    } catch {
+      setHealth(null);
+      setStatus("offline");
+      return null;
+    } finally {
+      healthInFlight.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    (async () => {
-      try {
-        const info = await request<Health>("/health");
-        if (!alive) return;
-        setHealth(info);
-        setStatus("connected");
-        await refreshConversations("");
-      } catch {
-        if (alive) setStatus("offline");
+    const guardedRefresh = async () => {
+      if (!alive) return;
+      const info = await refreshHealth();
+      if (alive && info) {
+        try { await refreshConversations(""); } catch { /* keep the last conversation list */ }
       }
-    })();
-    return () => { alive = false; };
-  }, []);
+    };
+    void guardedRefresh();
+    const interval = window.setInterval(() => { void refreshHealth(); }, 15000);
+    const onFocus = () => { void refreshHealth(); };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      alive = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refreshHealth, refreshConversations]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
