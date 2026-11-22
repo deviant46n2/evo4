@@ -57,45 +57,15 @@ The personal assistant and coding-agent experience are configurations built on t
 - Whether an explicit `blocked` verification status is needed when no permitted command is available.
 
 ## Current development state
-
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD before the architecture-readiness documentation commit: `7b5d78dd5d5be2ed8dc7153681c3c50deefec127` (parent of `d4f5fb497b38fa02b6cd54678f2cabe7dee37205`).
-- Architecture-readiness documentation commit: `d4f5fb497b38fa02b6cd54678f2cabe7dee37205`.
-- Latest Registry specification/continuity reconciliation commit: `dcff06f49c8015ecd4b178465c12292e3ee9bef0`.
-- Subsequent continuity-only cleanup commit: `a7577506453a8ee8fbb79b0677fe990b7d524308`.
-- Original approved Registry design baseline remains `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
-- Tracked working tree was clean before this documentation task. Pre-existing untracked files remain untouched: `desktop/dist/`, `desktop/tsconfig.tsbuildinfo`, `diagnostics/coding-acceptance-direct-1ab0d44c.md`, and `diagnostics/coding-acceptance-plan-33ebabb2.md`.
-- Platform Registry v1 design baseline is approved at commit `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
-- `docs/ARCHITECTURE.md` is the authoritative cross-cutting architecture, including platform-wide design principles and engineering contracts.
-- `docs/ARCHITECTURE-READINESS-REVIEW.md` is the Registry readiness decision record. It finds no blocking incompatibility, but Milestone 1 remains unauthorized and no Registry implementation has started.
-- `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md` defines the approved implementation sequence.
-- M2 implementation code and tests have been added (`src/evo_core/ai_configurations.py`, `tests/test_ai_configurations.py`) and are pending GPT-6 review. M2 is not accepted and Milestone 1 authorization does not imply M2 acceptance.
-- The implementation plan's Milestone 1 now includes mandatory safeguards (foreign-key verification before migration, realistic database migration, concurrent/repeated initialization, shared-connection preservation, injected-failure rollback/retry, and fail-closed startup) as explicit completion gates. No implementation code has been changed and Milestone 1 remains unauthorized.
-- Platform Registry v1 implementation plan is now recorded in `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md`.
-- Verified baseline in this worktree:
-  - Python tests: 263 passed using the main repository virtual environment because this worktree has no `.venv`.
-  - Python compile check: passed.
-  - Desktop production build: not run successfully; `desktop/node_modules` and `package-lock.json` are absent and `tsc` is unavailable. No environment changes were made.
-- Implemented and validated in this branch: agent lifecycle reconciliation, verified background coding, build identity, truncated-response safety, malformed-tool-call recovery, verification completion guards, and documentation reconciliation.
-- Identity, architecture, roadmap, and development-continuity documentation has been reconciled with the revised Evo platform vision.
-- Historical coding-agent acceptance evidence:
-  - An earlier live coding-agent attempt failed because the model produced malformed tool-call JSON. No files were written.
-  - A later attempt failed because the model hit its completion-token limit twice, including one bounded continuation. Truncated tool-call content was not executed and no successful file writes occurred.
-- A separate plan-first acceptance run created files but could not run verification because the configured allowlist did not include `python test_calculator.py`. The plan was marked completed despite failed verification commands. This is historical evidence for the verification-authority concern, not the current top-level project priority.
-- The development control plane and lifecycle supervisor are documented as proposed architecture only.
-- No Platform Registry implementation code has been written.
-
-## Outstanding tasks and blockers
-
-- Milestone 1 (persistence foundation and migration) is the recommended first code milestone but is not yet authorized or started.
-- Verification-authority question for plan completion in a user-configurable allowlist environment remains open.
-- Repeat live coding-agent acceptance after provider/model reliability and allowlist configuration are addressed.
-- Define and implement the development control plane only after design review.
-- Define lifecycle supervisor architecture only after the current coding-agent milestone closes.
-
-## Next recommended engineering decision
-
-GPT-6 should review the committed architecture deliverables, including `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE-READINESS-REVIEW.md`, and the Registry baseline, and determine whether any blocking issue remains. Milestone 1 is not authorized until that review is complete. No Registry implementation has started.
+- HEAD after documentation reconciliation: `9c4dc03` (this commit series).
+- Platform Registry v1 has been implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are implemented and validated.
+- Registered-workspace execution boundary: implemented and accepted. API execution requires an active registered `workspace_id`; direct and plan-backed workers re-resolve before constructing `CodingAgent`; legacy plans fail closed.
+- Desktop `AgentsWorkspace` selection race correction: implemented and accepted.
+- The codebase is in a stabilization phase. Feature development is frozen until confirmed serious audit findings are fixed, tested, reviewed, and accepted.
+- Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
+- Canonical roadmap stabilization section: `ROADMAP.md`.
+- Latest validation before this documentation pass: 475 Python tests passed; compileall passed; desktop production build passed.
 
 ## Outstanding stabilization tasks
 
