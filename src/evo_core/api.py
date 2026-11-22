@@ -160,6 +160,8 @@ def create_app(config_path="config.toml", provider_name=None):
     app = FastAPI(title="Evo 4 Local API", version="0.1.0")
     from .platform_registry_api import build_configuration_router
     app.include_router(build_configuration_router(store))
+    from .project_checkouts_api import build_project_checkout_router
+    app.include_router(build_project_checkout_router(store))
     app.state.config = config
     app.state.store = store
     app.state.lab_db = lab_db
