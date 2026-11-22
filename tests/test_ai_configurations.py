@@ -582,7 +582,7 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         import threading
 
         real_lock = self.store.lock
-        acquire_started = threading.Event()
+        blocked_on_lock = threading.Event()
         read_completed = threading.Event()
         read_result = {}
         errors = []
@@ -592,7 +592,14 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                 self._wrapped = wrapped
 
             def acquire(self, blocking=True, timeout=-1):
-                acquire_started.set()
+                if blocking:
+                    try:
+                        if self._wrapped.acquire(False):
+                            return True
+                    except Exception:
+                        pass
+                    blocked_on_lock.set()
+                    return self._wrapped.acquire(blocking, timeout)
                 return self._wrapped.acquire(blocking, timeout)
 
             def release(self):
@@ -618,8 +625,8 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                             "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
                             ("changed", self.cfg_id),
                         )
-                        if not acquire_started.wait(timeout=2.0):
-                            raise AssertionError("reader did not attempt lock acquisition")
+                        if not blocked_on_lock.wait(timeout=2.0):
+                            raise AssertionError("reader did not block on lock acquisition")
                         self.assertFalse(read_completed.is_set())
                         self.store.db.commit()
                     except Exception:
