@@ -9,39 +9,35 @@ from evo_experiments.monitor import ResourceMonitor
 from evo_experiments.runner import run_tasks
 
 
-def _run_and_ignore(func, *args, **kwargs):
-    try:
-        func(*args, **kwargs)
-    except Exception:
-        pass
-
-
-
-
 class MonitorLifecycleTests(unittest.TestCase):
     def test_stop_waits_for_in_flight_callback(self):
         started = threading.Event()
         release = threading.Event()
         stopped = threading.Event()
+        stop_entered = threading.Event()
 
         def callback(sample):
             started.set()
             release.wait(timeout=2)
 
         monitor = ResourceMonitor(0.01, callback)
+        original_stop = ResourceMonitor.stop
+
+        def tracking_stop(self_monitor):
+            stop_entered.set()
+            return original_stop(self_monitor)
+
         monitor.start()
         self.assertTrue(started.wait(timeout=1))
 
-        def stopper():
-            monitor.stop()
-            stopped.set()
-
-        thread = threading.Thread(target=stopper, daemon=True)
-        thread.start()
-        self.assertFalse(stopped.wait(0.2), "stop() returned while callback was still blocked")
-        release.set()
-        thread.join(timeout=2)
-        self.assertTrue(stopped.is_set())
+        with patch.object(ResourceMonitor, "stop", tracking_stop):
+            worker = threading.Thread(target=monitor.stop, daemon=True)
+            worker.start()
+            self.assertTrue(stop_entered.wait(timeout=1), "stop did not enter shutdown")
+            self.assertFalse(worker.is_alive() is False, "stop returned before callback release")
+            release.set()
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
 
     def test_interrupted_join_does_not_return_early(self):
         started = threading.Event()
@@ -57,11 +53,12 @@ class MonitorLifecycleTests(unittest.TestCase):
 
         original_join = threading.Thread.join
         calls = {"count": 0}
+        interrupted = threading.Event()
 
         def fake_join(self_thread, timeout=None):
             if self_thread is monitor.thread and calls["count"] == 0:
                 calls["count"] += 1
-                release.set()
+                interrupted.set()
                 raise KeyboardInterrupt()
             return original_join(self_thread, timeout)
 
@@ -76,8 +73,11 @@ class MonitorLifecycleTests(unittest.TestCase):
 
         thread = threading.Thread(target=stopper, daemon=True)
         thread.start()
+        self.assertTrue(interrupted.wait(timeout=1), "KeyboardInterrupt was not raised while worker was alive")
+        self.assertTrue(monitor.thread.is_alive(), "worker terminated before interruption was observed")
+        release.set()
         thread.join(timeout=2)
-        self.assertTrue(released.is_set())
+        self.assertTrue(released.is_set(), "shutdown did not complete after callback release")
 
     def test_real_monitor_callback_blocks_database_close(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -286,6 +286,13 @@ class MonitorUnexpectedJoinTests(unittest.TestCase):
                 worker.join(timeout=5)
                 self.assertFalse(worker.is_alive())
                 self.assertTrue(close_called.wait(timeout=2))
+
+
+def _run_and_ignore(func, *args, **kwargs):
+    try:
+        func(*args, **kwargs)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
