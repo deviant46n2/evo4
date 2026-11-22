@@ -69,7 +69,7 @@ Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Required tests: Sensitive file exclusion, traversal, truncation, command boundary tests.
 - Acceptance criteria: Sensitive files are not exposed; truncation is communicated.
 
-### Priority 4: Untrusted retrieved context isolation
+### Priority 4: Untrusted retrieved context isolation — remediation implemented; pending GPT-6 review
 - Problem: Retrieved memory/lesson content is not clearly isolated as untrusted.
 - Affected subsystem: Assistant context.
 - Required remediation: Delimit retrieved context as untrusted while preserving `_fit_context`.

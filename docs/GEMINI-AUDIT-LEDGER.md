@@ -68,7 +68,10 @@ Evidence types:
 - Unverified assumptions: Whether current model behavior is affected has not been tested.
 - Required remediation: Wrap retrieved context in explicit untrusted-data delimiters while preserving `_fit_context`.
 - Acceptance criteria: Retrieved content cannot be mistaken for system instructions; context budget behavior remains intact.
-- Status: Partially confirmed; scheduled for investigation/remediation.
+- Status: Remediation implemented; pending GPT-6 review.
+- Fix: retrieved memories, relations, lessons, and research are placed in a separate user-role untrusted context message; trusted system prompt explicitly states retrieved context is untrusted; candidate memories remain excluded until accepted.
+- New tests: `tests/test_hardening_features.py` (`RetrievedContextTrustBoundaryTests`).
+- Remaining limitations: prompt injection cannot be eliminated solely by prompt formatting; model behavior still requires evaluation.
 
 ## E. Workspace isolation and filesystem boundaries
 

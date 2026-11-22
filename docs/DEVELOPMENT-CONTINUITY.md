@@ -70,7 +70,7 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Outstanding stabilization tasks
 
 - Workspace filesystem boundary hardening.
-- Untrusted retrieved context isolation.
+- Untrusted retrieved context isolation — remediation implemented; pending GPT-6 review.
 - Experiment lifecycle interruption.
 - ResourceMonitor shutdown race.
 
