@@ -83,8 +83,8 @@ class EvoCoreTests(unittest.TestCase):
             cid=assistant.new_conversation()
             self.assertEqual(store.search_memories("older model runtime setting"),[])
             messages=assistant._build_messages(cid,"older model runtime setting")
-            self.assertIn("supersedes an older memory",messages[0]["content"])
-            self.assertIn("Qwen configuration profile B",messages[0]["content"])
+            self.assertIn("supersedes an older memory",messages[1]["content"])
+            self.assertIn("Qwen configuration profile B",messages[1]["content"])
             assistant.close()
 
     def test_memory_relation_history_is_ranked_by_query_relevance(self):
@@ -110,9 +110,9 @@ class EvoCoreTests(unittest.TestCase):
             second=assistant.store.add_memory("The local server uses port 8080","environment")
             assistant.store.relate_memories(first,second,"contradicts","The user supplied conflicting endpoint values.")
             messages=assistant._build_messages(cid,"local server port")
-            self.assertIn("explicitly marked as contradictory",messages[0]["content"])
-            self.assertIn("18997",messages[0]["content"])
-            self.assertIn("8080",messages[0]["content"])
+            self.assertIn("explicitly marked as contradictory",messages[1]["content"])
+            self.assertIn("18997",messages[1]["content"])
+            self.assertIn("8080",messages[1]["content"])
             assistant.close()
 
     def test_failed_supersession_rolls_back_new_memory_and_status_change(self):
@@ -159,11 +159,14 @@ class EvoCoreTests(unittest.TestCase):
             assistant=EvoAssistant(config,store,provider)
             cid=assistant.new_conversation("test")
             assistant.turn(cid,"What is the project called?")
-            self.assertEqual(len(provider.calls[0]),2)
-            self.assertIn("Evo 4",provider.calls[0][0]["content"])
+            self.assertEqual(len(provider.calls[0]),3)
+            self.assertIn("Evo 4",provider.calls[0][1]["content"])
+            self.assertIn("untrusted",provider.calls[0][0]["content"].lower())
             self.assertEqual(provider.calls[0][-1]["content"],"What is the project called?")
             assistant.turn(cid,"And what is its priority?")
-            self.assertEqual([m["role"] for m in provider.calls[1]],["system","user","assistant","user"])
+            self.assertEqual(provider.calls[1][0]["role"],"system")
+            self.assertEqual(provider.calls[1][-1]["role"],"user")
+            self.assertEqual(provider.calls[1][-1]["content"],"And what is its priority?")
             messages=store.get_messages(cid,10)
             self.assertEqual([m["role"] for m in messages],["user","assistant","user","assistant"])
             assistant.close()
@@ -218,7 +221,7 @@ class EvoCoreTests(unittest.TestCase):
             assistant.store.add_lesson("Always run the repository tests before claiming a coding task is complete.",
                                        trigger_text="coding tests",category="coding",source="user",confidence=1.0)
             messages=assistant._build_messages(cid,"coding tests")
-            self.assertIn("Always run the repository tests",messages[0]["content"])
+            self.assertIn("Always run the repository tests",messages[1]["content"])
             self.assertEqual(len(assistant.store.search_lessons("coding tests")),1)
             assistant.close()
 
@@ -260,8 +263,8 @@ class EvoCoreTests(unittest.TestCase):
                 "Write-ahead logging allows readers and a writer to proceed concurrently.",
                 "https://sqlite.org/wal.html","web")
             messages=assistant._build_messages(cid,"How does SQLite WAL concurrency work?")
-            self.assertIn("SQLite WAL concurrency",messages[0]["content"])
-            self.assertIn("https://sqlite.org/wal.html",messages[0]["content"])
+            self.assertIn("SQLite WAL concurrency",messages[1]["content"])
+            self.assertIn("https://sqlite.org/wal.html",messages[1]["content"])
             assistant.close()
 
     def test_tasks_persist_and_transition(self):
