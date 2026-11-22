@@ -75,5 +75,70 @@ class VerifiedCodingTests(unittest.TestCase):
             })
 
 
+    def test_one_of_two_passed_is_not_run(self):
+        step = self.plan["steps"][0]
+        # Reconfigure to two distinct commands.
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"], ["python", "-m", "pytest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "not_run")
+
+    def test_one_passed_one_failed_is_failed(self):
+        step = self.plan["steps"][0]
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"], ["python", "-m", "pytest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "pytest"], "failed", 1, "", "boom")
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "failed")
+
+    def test_duplicate_evidence_does_not_satisfy_other_command(self):
+        step = self.plan["steps"][0]
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"], ["python", "-m", "pytest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "not_run")
+
+    def test_all_configured_commands_passed(self):
+        step = self.plan["steps"][0]
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "passed")
+
+    def test_denied_verification_persisted_as_failed(self):
+        step = self.plan["steps"][0]
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "denied", None, "", "denied")
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "failed")
+        self.assertEqual(plan["steps"][0]["verification_checks"][0]["status"], "denied")
+
+    def test_partial_verification_survives_restart(self):
+        step = self.plan["steps"][0]
+        with self.db:
+            self.db.execute("UPDATE agent_plan_steps SET verification_commands_json=? WHERE id=?",
+                            (json.dumps([["python", "-m", "unittest"], ["python", "-m", "pytest"]]), step["id"]))
+        orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
+        # Reopen database to simulate restart.
+        self.db.close()
+        import sqlite3
+        self.db = sqlite3.connect(self.db_path)
+        self.db.row_factory = sqlite3.Row
+        plan = orchestration.get_plan(self.db, self.plan["id"])
+        self.assertEqual(plan["steps"][0]["verification_status"], "not_run")
+        self.assertEqual(plan["steps"][0]["verification_checks"][0]["status"], "passed")
+
+
 if __name__ == "__main__":
     unittest.main()

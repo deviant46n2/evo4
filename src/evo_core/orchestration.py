@@ -240,15 +240,29 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
     return True
 
 def step_verification_status(step):
-    commands = step.get("verification_commands") or []
+    commands = [list(command) for command in (step.get("verification_commands") or [])]
     checks = step.get("verification_checks") or []
     if not commands:
         return "not_configured"
     if not checks:
         return "not_run"
-    if all(check.get("status") == "passed" for check in checks) and len(checks) >= len(commands):
-        return "passed"
-    return "failed"
+    if any(check.get("status") != "passed" for check in checks):
+        return "failed"
+    remaining = [list(command) for command in commands]
+    for check in checks:
+        if check.get("status") != "passed":
+            continue
+        try:
+            command = list(check.get("command") or [])
+        except TypeError:
+            command = []
+        for index, configured in enumerate(remaining):
+            if command == configured:
+                del remaining[index]
+                break
+    if remaining:
+        return "not_run"
+    return "passed"
 
 def finish_plan(connection, plan_id, outcome, error=""):
     if outcome not in {"completed", "failed", "cancelled", "interrupted"}:

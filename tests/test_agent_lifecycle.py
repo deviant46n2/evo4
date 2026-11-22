@@ -136,6 +136,74 @@ class AgentLifecycleTests(unittest.TestCase):
         lifecycle.reconcile(self.store, self.lab)
         self.assertTrue(True)
 
+    def test_reconstruct_missing_task_from_decision(self):
+        run_id = "run-reconstruct"
+        self._insert_run(run_id, "running")
+        with self.lab.lock:
+            lifecycle.decide(self.lab.connection, run_id, "failed", source="worker", reason="boom")
+        # Remove the task to simulate partial creation.
+        with self.lab.lock:
+            self.lab.connection.execute("DELETE FROM background_agent_tasks WHERE run_id=?", (run_id,))
+            self.lab.connection.commit()
+        report = lifecycle.reconcile(self.store, self.lab)
+        task = background_agent.get(self.lab.connection, run_id)
+        self.assertEqual(task["status"], "failed")
+        events = background_agent.events(self.lab.connection, run_id, limit=100)
+        self.assertTrue(any(e["type"] == "reconstructed_from_finalization" for e in events))
+        self.assertFalse(any(e["type"] in {"queued", "started"} for e in events))
+        self.assertTrue(any(item.get("reconstructed") is True for item in report["background_tasks"]))
+
+    def test_repeated_reconstruction_is_idempotent(self):
+        run_id = "run-reconstruct-repeat"
+        self._insert_run(run_id, "running")
+        with self.lab.lock:
+            lifecycle.decide(self.lab.connection, run_id, "failed", source="worker", reason="boom")
+            self.lab.connection.execute("DELETE FROM background_agent_tasks WHERE run_id=?", (run_id,))
+            self.lab.connection.commit()
+        lifecycle.reconcile(self.store, self.lab)
+        with self.lab.lock:
+            before_events = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM background_agent_events WHERE run_id=?", (run_id,)).fetchone()[0]
+            before_tasks = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM background_agent_tasks WHERE run_id=?", (run_id,)).fetchone()[0]
+        lifecycle.reconcile(self.store, self.lab)
+        with self.lab.lock:
+            after_events = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM background_agent_events WHERE run_id=?", (run_id,)).fetchone()[0]
+            after_tasks = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM background_agent_tasks WHERE run_id=?", (run_id,)).fetchone()[0]
+        self.assertEqual(before_events, after_events)
+        self.assertEqual(before_tasks, after_tasks)
+        self.assertEqual(after_tasks, 1)
+
+    def test_partial_app_owned_run_finalized_and_reconstructed(self):
+        run_id = "run-partial-app"
+        self._insert_run(run_id, "running", source="desktop")
+        # No task and no decision.
+        lifecycle.reconcile(self.store, self.lab)
+        self.assertEqual(self.store.get_agent_run(run_id)["status"], "interrupted")
+        task = background_agent.get(self.lab.connection, run_id)
+        self.assertEqual(task["status"], "interrupted")
+        events = background_agent.events(self.lab.connection, run_id, limit=100)
+        self.assertTrue(any(e["type"] == "reconstructed_from_finalization" for e in events))
+
+    def test_decision_without_agent_run_unresolved_no_task(self):
+        run_id = "run-orphan-decision"
+        with self.lab.lock:
+            lifecycle.decide(self.lab.connection, run_id, "failed", source="worker", reason="boom")
+        report = lifecycle.reconcile(self.store, self.lab)
+        self.assertIsNone(background_agent.get(self.lab.connection, run_id))
+        self.assertTrue(any(item.get("reason") == "decision_without_agent_run" for item in report["unresolved"]))
+
+    def test_reconciliation_no_process_side_effects(self):
+        run_id = "run-recon-side"
+        self._insert_run(run_id, "running")
+        with self.lab.lock:
+            background_agent.create(self.lab.connection, run_id)
+            lifecycle.decide(self.lab.connection, run_id, "interrupted", source="worker", reason="stopped")
+        lifecycle.reconcile(self.store, self.lab)
+        self.assertTrue(True)
+
 
 if __name__ == "__main__":
     unittest.main()

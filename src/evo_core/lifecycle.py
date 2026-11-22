@@ -406,17 +406,45 @@ def reconcile(store, lab_db, *, live_run_ids=None):
                 "detail": (f"Durable decision is {decision['outcome']!r} but the agent run is "
                            f"{result.get('existing')!r}; the existing record is preserved.")})
 
-    # 3. Repair background tasks that disagree with their decision.
+    # 3. Repair or reconstruct background tasks for durable decisions.
     for run_id in sorted(decision_rows):
+        decision = decision_rows[run_id]
+        outcome = decision["outcome"]
+        reconstructed = False
         if run_id not in task_rows:
-            continue
-        outcome = decision_rows[run_id]["outcome"]
+            run = store.get_agent_run(run_id)
+            if run is None:
+                report["unresolved"].append({
+                    "entity_type": "background_agent_task", "entity_id": run_id,
+                    "reason": "decision_without_agent_run",
+                    "detail": "The durable decision has no corresponding agent-run record; no task was created."})
+                report["background_tasks"].append({
+                    "run_id": run_id, "applied": False,
+                    "reason": "missing_agent_run", "reconstructed": False})
+                continue
+            with lab_db.lock:
+                reconstructed = background_agent.reconstruct_terminal(
+                    connection, run_id, outcome,
+                    decided_at=decision.get("decided_at"),
+                    source=decision.get("source", "lifecycle"),
+                    reason=decision.get("reason", ""))
+                if reconstructed:
+                    _record_event(
+                        connection, f"background_task:{run_id}:reconstructed",
+                        "background_agent_task", run_id, "reconstructed_from_finalization",
+                        outcome, {"source": decision.get("source", "lifecycle")}, commit=False)
+                    connection.commit()
+                task = background_agent.get(connection, run_id)
+                if task is not None:
+                    task_rows[run_id] = task
         with lab_db.lock:
-            result = apply_background_from_decision(connection, decision_rows[run_id])
+            result = apply_background_from_decision(connection, decision)
             if result.get("applied"):
                 _record_event(connection, f"background_task:{run_id}:{outcome}",
                               "background_agent_task", run_id, "terminal_state_repaired",
                               outcome, {"previous": result.get("previous")})
+        result = dict(result)
+        result["reconstructed"] = reconstructed
         report["background_tasks"].append({"run_id": run_id, **result})
         if result.get("reason") == "conflict":
             report["unresolved"].append({

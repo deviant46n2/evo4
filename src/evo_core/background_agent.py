@@ -166,3 +166,33 @@ def recover(connection):
                    {"previous_status": row["status"], "resume_safe": False})
             recovered.append(row["run_id"])
     return recovered
+
+
+def reconstruct_terminal(connection, run_id, outcome, *, decided_at=None,
+                         source="lifecycle", reason=""):
+    """Reconstruct a missing task from an authoritative terminal decision.
+
+    This does not represent a worker launch or fabricate prior task history.
+    It creates only the terminal record and an explicit reconstruction event.
+    """
+    if outcome not in TERMINAL:
+        raise ValueError("Invalid terminal background task status")
+
+    stamp = decided_at or now()
+    cursor = connection.execute(
+        """INSERT OR IGNORE INTO background_agent_tasks
+           (run_id,status,cancel_requested,worker_token,created_at,updated_at)
+           VALUES(?,?,0,NULL,?,?)""",
+        (run_id, outcome, stamp, stamp),
+    )
+    created = cursor.rowcount == 1
+    if created:
+        _event(connection, run_id, "reconstructed_from_finalization", {
+            "outcome": outcome,
+            "source": str(source)[:200],
+            "reason": str(reason)[:1000],
+            "worker_started": False,
+            "execution_replayed": False,
+        })
+        connection.commit()
+    return created
