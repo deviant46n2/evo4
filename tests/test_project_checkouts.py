@@ -159,11 +159,31 @@ class CheckoutTests(unittest.TestCase):
         with self.assertRaises(CheckoutPathError):
             register_checkout(self.store, self.pid, file_path)
 
+    def test_empty_path_rejected(self):
+        with self.assertRaises(CheckoutPathError):
+            register_checkout(self.store, self.pid, "")
+
+    def test_whitespace_path_rejected(self):
+        with self.assertRaises(CheckoutPathError):
+            register_checkout(self.store, self.pid, "   ")
+
     def test_duplicate_canonical_path_rejected(self):
-        register_checkout(self.store, self.pid, self.checkout_dir)
+        first = register_checkout(self.store, self.pid, self.checkout_dir)
         other_project = register_project(self.store, "Other")
+        before_count = len(list_checkouts(self.store, self.pid)) + len(list_checkouts(self.store, other_project["project_id"]))
         with self.assertRaises(CheckoutPathConflictError):
             register_checkout(self.store, other_project["project_id"], self.checkout_dir)
+        # Original checkout remains intact.
+        fetched = get_checkout(self.store, first["checkout_id"])
+        self.assertEqual(fetched["checkout_id"], first["checkout_id"])
+        # No extra checkout row was created.
+        after_count = len(list_checkouts(self.store, self.pid)) + len(list_checkouts(self.store, other_project["project_id"]))
+        self.assertEqual(before_count, after_count)
+        # A subsequent valid operation succeeds; transaction state is clean.
+        another_dir = self.root / "another"
+        another_dir.mkdir()
+        new_checkout = register_checkout(self.store, other_project["project_id"], another_dir)
+        self.assertIsNotNone(new_checkout["checkout_id"])
 
     def test_register_archived_project_rejected(self):
         project = register_project(self.store, "ArchivedProject")

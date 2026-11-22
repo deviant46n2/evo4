@@ -104,9 +104,11 @@ def _checkout_row(db, checkout_id):
 def _canonical_directory(path):
     if not isinstance(path, (str, os.PathLike)):
         raise CheckoutPathError("checkout path must be a filesystem path")
+    if isinstance(path, str) and not path.strip():
+        raise CheckoutPathError("checkout path must not be empty")
     try:
         supplied = Path(path).expanduser()
-        if not str(supplied):
+        if not str(supplied).strip():
             raise CheckoutPathError("checkout path must not be empty")
         canonical = supplied.resolve(strict=True)
         if not stat.S_ISDIR(canonical.stat().st_mode):
