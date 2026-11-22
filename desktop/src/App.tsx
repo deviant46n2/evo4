@@ -5,6 +5,7 @@ import "./style.css";
 import { AgentsWorkspace, MemoryWorkspace, HardwareWorkspace, ExperimentsWorkspace } from "./Workspaces";
 import { ConfigurationsWorkspace } from "./ConfigurationsWorkspace";
 import { ProjectsWorkspace } from "./ProjectsWorkspace";
+import { WorkspaceRegistryWorkspace } from "./WorkspaceRegistryWorkspace";
 
 type Conversation = { id: string; title: string; updated_at?: string; message_count?: number };
 type Message = { role: "user" | "assistant"; content: string; created_at?: string };
@@ -62,7 +63,7 @@ function Markdown({ content }: { content: string }) {
 }
 
 export default function App() {
-  const [view, setView] = useState<"chat" | "agents" | "memory" | "hardware" | "experiments" | "configurations" | "projects">("chat");
+  const [view, setView] = useState<"chat" | "agents" | "memory" | "hardware" | "experiments" | "configurations" | "projects" | "workspaces">("chat");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -284,6 +285,7 @@ export default function App() {
       <button className={"nav-item " + (view === "experiments" ? "selected" : "")} onClick={() => setView("experiments")}><span className="nav-icon">⌁</span> Experiments {view === "experiments" && <span className="nav-current">CURRENT</span>}</button>
       <button className={"nav-item " + (view === "projects" ? "selected" : "")} onClick={() => setView("projects")}><span className="nav-icon">▣</span> Projects {view === "projects" && <span className="nav-current">CURRENT</span>}</button>
       <button className={"nav-item " + (view === "configurations" ? "selected" : "")} onClick={() => setView("configurations")}><span className="nav-icon">⚙</span> Configurations {view === "configurations" && <span className="nav-current">CURRENT</span>}</button>
+      <button className={"nav-item " + (view === "workspaces" ? "selected" : "")} onClick={() => setView("workspaces")}><span className="nav-icon">▦</span> Workspaces {view === "workspaces" && <span className="nav-current">CURRENT</span>}</button>
       <div className="history-head"><span>CONVERSATIONS</span><span>{conversations.length}</span></div>
       <div className="search-wrap"><span>⌕</span><input aria-label="Search conversations" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chats…" /></div>
       <div className="history">
@@ -303,7 +305,7 @@ export default function App() {
     </aside>
     <main className="main">
       <header className="topbar">
-        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : view === "memory" ? "Memory" : view === "hardware" ? "Hardware" : view === "projects" ? "Projects" : view === "configurations" ? "Configurations" : "Experiments"}</strong></div>
+        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : view === "memory" ? "Memory" : view === "hardware" ? "Hardware" : view === "projects" ? "Projects" : view === "configurations" ? "Configurations" : view === "workspaces" ? "Workspaces" : "Experiments"}</strong></div>
         <div className="topbar-right"><span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div><div className="build-pill" title={`Frontend build: ${FRONTEND_BUILD_TIME || "unknown"} (${FRONTEND_BUILD_COMMIT || "unknown"})\nBackend started: ${health?.backend_started_at || health?.build?.backend_started_at || "unknown"}\nBackend revision: ${health?.backend_revision || health?.build?.backend_revision || "unknown"}${(health?.backend_dirty ?? health?.build?.backend_dirty) ? " (dirty)" : ""}`}>{import.meta.env.DEV ? "FE DEV SERVER" : `FE ${formatBuildTime(FRONTEND_BUILD_TIME)}`} <span className="build-separator">/</span> {health ? (health.backend_revision || health.build?.backend_revision || "BE unknown") : "BE unavailable"}</div></div>
       </header>
       {view === "chat" ? <section className="chat-area">
@@ -329,7 +331,7 @@ export default function App() {
           </div>
           <div className="composer-footer"><span>Enter to send <b>·</b> Shift + Enter for a new line</span><span>Generation cannot yet be stopped from the desktop client</span></div>
         </div>
-      </section> : view === "agents" ? <AgentsWorkspace/> : view === "memory" ? <MemoryWorkspace/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace/> : view === "configurations" ? <ConfigurationsWorkspace/> : <ExperimentsWorkspace/>}
+      </section> : view === "agents" ? <AgentsWorkspace/> : view === "memory" ? <MemoryWorkspace/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace/> : view === "configurations" ? <ConfigurationsWorkspace/> : view === "workspaces" ? <WorkspaceRegistryWorkspace/> : <ExperimentsWorkspace/>}
     </main>
   </div>;
 }
