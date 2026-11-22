@@ -233,5 +233,19 @@ class ProjectCheckoutApiTests(unittest.TestCase):
             self.assertEqual(status, 422)
 
 
+
+    def test_project_description_null_rejected(self):
+        status, project = asgi_request(self.app, "POST", "/api/v1/projects", {"name": "Project"})
+        pid = project["project_id"]
+        version = project["version"]
+        original_description = project["description"]
+        status, body = asgi_request(self.app, "PATCH", f"/api/v1/projects/{pid}", {"description": None, "expected_version": version})
+        self.assertEqual(status, 422)
+        status, fetched = asgi_request(self.app, "GET", f"/api/v1/projects/{pid}")
+        self.assertEqual(status, 200)
+        self.assertEqual(fetched["description"], original_description)
+        self.assertEqual(fetched["version"], version)
+
+
 if __name__ == "__main__":
     unittest.main()

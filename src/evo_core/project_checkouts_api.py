@@ -27,7 +27,7 @@ class ProjectUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: Optional[str] = Field(default=None, max_length=200)
-    description: Optional[str] = Field(default=None, max_length=4000)
+    description: str = Field(default="", max_length=4000)
     git_remote: Optional[str] = Field(default=None, max_length=2048)
     default_ref: Optional[str] = Field(default=None, max_length=512)
     project_type: Optional[str] = Field(default=None, max_length=100)
