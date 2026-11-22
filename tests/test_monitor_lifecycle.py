@@ -1,6 +1,5 @@
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +7,15 @@ from unittest.mock import patch
 from evo_experiments.config import load_config
 from evo_experiments.monitor import ResourceMonitor
 from evo_experiments.runner import run_tasks
+
+
+def _run_and_ignore(func, *args, **kwargs):
+    try:
+        func(*args, **kwargs)
+    except Exception:
+        pass
+
+
 
 
 class MonitorLifecycleTests(unittest.TestCase):
@@ -87,9 +95,11 @@ class MonitorLifecycleTests(unittest.TestCase):
             callback_entered = threading.Event()
             callback_release = threading.Event()
             close_called = threading.Event()
+            shutdown_entered = threading.Event()
 
             original_add_sample = __import__("evo_experiments.db", fromlist=["ResultsDB"]).ResultsDB.add_sample
             original_close = __import__("evo_experiments.db", fromlist=["ResultsDB"]).ResultsDB.close
+            original_stop = ResourceMonitor.stop
 
             def blocking_add_sample(self_db, experiment_id, sample):
                 callback_entered.set()
@@ -100,17 +110,23 @@ class MonitorLifecycleTests(unittest.TestCase):
                 close_called.set()
                 return original_close(self_db)
 
+            def tracking_stop(self_monitor):
+                shutdown_entered.set()
+                return original_stop(self_monitor)
+
             with patch("evo_experiments.runner.stream_chat_completion", return_value={
                     "response": "hello", "finish_reason": "stop",
                     "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
                     "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
                  patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
                  patch("evo_experiments.db.ResultsDB.add_sample", blocking_add_sample), \
-                 patch("evo_experiments.db.ResultsDB.close", tracking_close):
+                 patch("evo_experiments.db.ResultsDB.close", tracking_close), \
+                 patch("evo_experiments.runner.ResourceMonitor.stop", tracking_stop):
                 worker = threading.Thread(target=lambda: run_tasks(load_config(config_path), tasks_path), daemon=True)
                 worker.start()
                 self.assertTrue(callback_entered.wait(timeout=2))
-                self.assertFalse(close_called.wait(timeout=0.1), "database closed while real monitor callback was blocked")
+                self.assertTrue(shutdown_entered.wait(timeout=2), "runner did not enter monitor shutdown")
+                self.assertFalse(close_called.is_set(), "database closed before callback exited")
                 callback_release.set()
                 worker.join(timeout=5)
                 self.assertFalse(worker.is_alive())
@@ -134,6 +150,7 @@ class MonitorShutdownFailureTests(unittest.TestCase):
             callback_entered = threading.Event()
             callback_release = threading.Event()
             close_called = threading.Event()
+            guard_entered = threading.Event()
 
             class FailingStopMonitor:
                 def __init__(self, interval, callback):
@@ -164,33 +181,40 @@ class MonitorShutdownFailureTests(unittest.TestCase):
                 callback_entered.wait(timeout=1)
                 callback_release.wait(timeout=2)
 
-            timer = threading.Timer(0.2, callback_release.set)
-            timer.start()
-            try:
-                with patch("evo_experiments.runner.ResourceMonitor", FailingStopMonitor), \
-                     patch("evo_experiments.runner.stream_chat_completion", return_value={
-                         "response": "hello", "finish_reason": "stop",
-                         "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
-                         "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
-                     patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
-                     patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample), \
-                     patch("evo_experiments.db.ResultsDB.close", tracking_close):
-                    with self.assertRaises(RuntimeError):
-                        run_tasks(load_config(config_path), tasks_path)
-                self.assertTrue(close_called.wait(timeout=2))
-            finally:
-                timer.cancel()
-                callback_release.set()
+            original_join = threading.Thread.join
 
+            def join_guard(self_thread, timeout=None):
+                if callback_entered.is_set() and not callback_release.is_set():
+                    guard_entered.set()
+                return original_join(self_thread, timeout)
+
+            with patch("evo_experiments.runner.ResourceMonitor", FailingStopMonitor), \
+                 patch("threading.Thread.join", join_guard), \
+                 patch("evo_experiments.runner.stream_chat_completion", return_value={
+                     "response": "hello", "finish_reason": "stop",
+                     "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
+                     "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
+                 patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
+                 patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample), \
+                 patch("evo_experiments.db.ResultsDB.close", tracking_close):
+                worker = threading.Thread(target=lambda: _run_and_ignore(run_tasks, load_config(config_path), tasks_path), daemon=True)
+                worker.start()
+                self.assertTrue(callback_entered.wait(timeout=2))
+                self.assertTrue(guard_entered.wait(timeout=2), "runner did not enter independent join guard")
+                self.assertFalse(callback_release.is_set())
+                self.assertFalse(close_called.is_set(), "database closed while worker was alive")
+                callback_release.set()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertTrue(close_called.wait(timeout=2))
 
 
 class MonitorUnexpectedJoinTests(unittest.TestCase):
     def test_unexpected_join_failure_does_not_close_database_while_worker_alive(self):
-        temp = tempfile.TemporaryDirectory()
-        try:
-            db_path = Path(temp.name) / "results.db"
-            config_path = Path(temp.name) / "config.toml"
-            tasks_path = Path(temp.name) / "tasks.jsonl"
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "results.db"
+            config_path = Path(temp) / "config.toml"
+            tasks_path = Path(temp) / "tasks.jsonl"
             config_path.write_text(
                 '[server]\nbase_url="http://127.0.0.1:1"\nmodel="fake"\ntimeout_seconds=1\n'
                 f'[experiment]\ndatabase="{db_path}"\n'
@@ -202,6 +226,7 @@ class MonitorUnexpectedJoinTests(unittest.TestCase):
             callback_entered = threading.Event()
             callback_release = threading.Event()
             close_called = threading.Event()
+            join_failed = threading.Event()
 
             class FailingJoinMonitor:
                 def __init__(self, interval, callback):
@@ -228,7 +253,7 @@ class MonitorUnexpectedJoinTests(unittest.TestCase):
             def fake_join(self_thread, timeout=None):
                 if calls["count"] == 0:
                     calls["count"] += 1
-                    callback_release.set()
+                    join_failed.set()
                     raise RuntimeError("join failed")
                 return original_join(self_thread, timeout)
 
@@ -242,16 +267,25 @@ class MonitorUnexpectedJoinTests(unittest.TestCase):
                 callback_entered.wait(timeout=1)
                 callback_release.wait(timeout=2)
 
-            with patch("evo_experiments.runner.ResourceMonitor", FailingJoinMonitor),                  patch("threading.Thread.join", fake_join),                  patch("evo_experiments.runner.stream_chat_completion", return_value={
+            with patch("evo_experiments.runner.ResourceMonitor", FailingJoinMonitor), \
+                 patch("threading.Thread.join", fake_join), \
+                 patch("evo_experiments.runner.stream_chat_completion", return_value={
                      "response": "hello", "finish_reason": "stop",
                      "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
-                     "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}),                  patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})),                  patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample),                  patch("evo_experiments.db.ResultsDB.close", tracking_close):
-                with self.assertRaises(RuntimeError):
-                    run_tasks(load_config(config_path), tasks_path)
-            self.assertTrue(close_called.wait(timeout=2))
-        finally:
-            temp.cleanup()
-
+                     "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
+                 patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
+                 patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample), \
+                 patch("evo_experiments.db.ResultsDB.close", tracking_close):
+                worker = threading.Thread(target=lambda: _run_and_ignore(run_tasks, load_config(config_path), tasks_path), daemon=True)
+                worker.start()
+                self.assertTrue(callback_entered.wait(timeout=2))
+                self.assertTrue(join_failed.wait(timeout=2), "join failure was not observed")
+                self.assertFalse(callback_release.is_set(), "worker was released before the guard waited")
+                self.assertFalse(close_called.is_set(), "database closed while worker was alive")
+                callback_release.set()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertTrue(close_called.wait(timeout=2))
 
 
 if __name__ == "__main__":
