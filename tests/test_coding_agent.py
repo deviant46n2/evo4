@@ -414,3 +414,130 @@ class CodingAgentTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+
+class MalformedToolArgumentTests(unittest.TestCase):
+    def make_assistant(self, tmp, provider):
+        config = EvoConfig("http://localhost", "no-key", "fake", 3, Path(tmp) / "state.db", 100, 0,
+                           "You are a coding agent.", 8, 8)
+        return EvoAssistant(config, EvoStore(config.database), provider)
+
+    def _run_with_calls(self, calls, tmp):
+        root = Path(tmp) / "project"
+        root.mkdir()
+        (root / "main.py").write_text("print('ok')\n", encoding="utf-8")
+        provider = ToolProvider(calls)
+        assistant = self.make_assistant(tmp, provider)
+        cid = assistant.new_conversation()
+        agent = CodingAgent(assistant, root)
+        result = agent.run(cid, "Do work", lambda *_: False)
+        assistant.close()
+        return root, result
+
+    def test_non_dict_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", ["bad"], "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertFalse((root / "main.py").read_text().endswith("unsafe"))
+            self.assertIn("stopped", result["content"])
+
+    def test_null_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", None, "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_string_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", "bad", "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_number_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", 42, "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_boolean_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", True, "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_array_arguments_do_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [call("write_file", [1, 2], "call-1")]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_missing_function_name_does_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad_call = {"id": "call-1", "type": "function", "function": {"arguments": {}}}
+            calls = [
+                {"content": "", "tool_calls": [bad_call]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_missing_call_id_does_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad_call = {"type": "function", "function": {"name": "write_file", "arguments": {}}}
+            calls = [
+                {"content": "", "tool_calls": [bad_call]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_multiple_calls_with_one_malformed_does_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = [
+                {"content": "", "tool_calls": [
+                    call("read_file", {"path": "main.py"}, "call-1"),
+                    call("write_file", "bad", "call-2"),
+                ]},
+                {"content": "stopped", "tool_calls": []},
+            ]
+            root, result = self._run_with_calls(calls, tmp)
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")
+
+    def test_truncated_tool_call_does_not_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            (root / "main.py").write_text("print('ok')\n", encoding="utf-8")
+            provider = ToolProvider([
+                {
+                    "content": "cut off",
+                    "tool_calls": [call("write_file", {"path": "main.py", "content": "unsafe"}, "call-1")],
+                    "finish_reason": "length",
+                    "truncated": True,
+                },
+                {"content": "stopped", "tool_calls": []},
+            ])
+            assistant = self.make_assistant(tmp, provider)
+            cid = assistant.new_conversation()
+            agent = CodingAgent(assistant, root)
+            result = agent.run(cid, "Do work", lambda *_: False)
+            assistant.close()
+            self.assertEqual((root / "main.py").read_text(), "print('ok')\n")

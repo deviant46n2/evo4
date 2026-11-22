@@ -114,3 +114,141 @@ class ProviderToolTests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main()
+
+
+class ErrorSSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        body = 'data: {"error":{"message":"provider failed"}}\n\ndata: [DONE]\n\n'
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class UsageThenContentSSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        events = [
+            {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 0}},
+            {"choices": [{"delta": {"content": "hello"}, "finish_reason": "stop"}],
+             "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+        ]
+        body = "".join("data: " + json.dumps(e) + "\n\n" for e in events) + "data: [DONE]\n\n"
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class EmptyCompletionSSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        events = [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+        body = "".join("data: " + json.dumps(e) + "\n\n" for e in events) + "data: [DONE]\n\n"
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class MalformedSSESSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        body = "data: {not json}\n\ndata: [DONE]\n\n"
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class ProviderReliabilityTests(unittest.TestCase):
+    def _request(self, handler):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}", "key", "fake", 3)
+            return provider
+        finally:
+            pass
+
+    def test_sse_error_frame_raises(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ErrorSSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}", "key", "fake", 3)
+            with self.assertRaises(ProviderError) as raised:
+                provider.chat([{"role": "user", "content": "hi"}])
+            self.assertIn("provider failed", str(raised.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_usage_only_then_content_succeeds(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), UsageThenContentSSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}", "key", "fake", 3)
+            result = provider.chat([{"role": "user", "content": "hi"}])
+            self.assertEqual(result["content"], "hello")
+            self.assertEqual(result["prompt_tokens"], 1)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_empty_completion_raises(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), EmptyCompletionSSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}", "key", "fake", 3)
+            with self.assertRaises(ProviderError) as raised:
+                provider.chat([{"role": "user", "content": "hi"}])
+            self.assertIn("empty completion", str(raised.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_malformed_sse_raises(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MalformedSSESSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}", "key", "fake", 3)
+            with self.assertRaises(ProviderError) as raised:
+                provider.chat([{"role": "user", "content": "hi"}])
+            self.assertIn("malformed SSE", str(raised.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)

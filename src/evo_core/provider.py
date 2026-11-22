@@ -49,6 +49,8 @@ class OpenAICompatibleProvider:
         tool_call_parts = {}
         content_type = ""
         saw_event = False
+        valid_event = False
+        malformed_event = False
         finish_reason = None
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
@@ -64,7 +66,19 @@ class OpenAICompatibleProvider:
                     try:
                         event = json.loads(data)
                     except json.JSONDecodeError:
+                        malformed_event = True
                         continue
+                    if not isinstance(event, dict):
+                        malformed_event = True
+                        continue
+                    valid_event = True
+                    if event.get("error") is not None:
+                        error = event["error"]
+                        if isinstance(error, dict):
+                            message = error.get("message") or error.get("detail") or str(error)
+                        else:
+                            message = str(error)
+                        raise ProviderError(f"Chat completion stream error: {message}")
                     if event.get("usage"):
                         usage = event["usage"]
                     choices = event.get("choices") or []
@@ -97,6 +111,10 @@ class OpenAICompatibleProvider:
             raise ProviderError(f"Chat completion request failed: {exc}") from exc
         if not saw_event:
             raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
+        if not valid_event:
+            raise ProviderError(f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})")
+        if not pieces and not tool_call_parts and finish_reason != "length":
+            raise ProviderError("Server returned an empty completion")
         finished = time.perf_counter()
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")

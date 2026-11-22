@@ -58,7 +58,7 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Current development state
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD after documentation reconciliation: `80bb5d1` (this commit).
+- Verified baseline HEAD before this stabilization pass: `bdfed18ec0fade94b2c634aac97b1e5b4ed16cb4`. The final resulting commit SHA is supplied in the engineering handoff; this document intentionally does not claim to contain its own final commit hash.
 - Platform Registry v1 has been implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are implemented and validated.
 - Registered-workspace execution boundary: implemented and accepted. API execution requires an active registered `workspace_id`; direct and plan-backed workers re-resolve before constructing `CodingAgent`; legacy plans fail closed.
 - Desktop `AgentsWorkspace` selection race correction: implemented and accepted.

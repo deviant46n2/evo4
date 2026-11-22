@@ -189,6 +189,27 @@ class CodingAgent:
                             on_token=on_token,
                             tools=TOOL_SPECS,
                         )
+                        for call in result.get("tool_calls") or []:
+                            if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                                raise InvalidToolCallError(
+                                    "Model returned a malformed tool call.",
+                                    finish_reason=result.get("finish_reason"),
+                                )
+                            if not isinstance(call.get("id"), str) or not call.get("id"):
+                                raise InvalidToolCallError(
+                                    "Model returned a tool call without a valid id.",
+                                    finish_reason=result.get("finish_reason"),
+                                )
+                            if not isinstance(call["function"].get("name"), str) or not call["function"].get("name"):
+                                raise InvalidToolCallError(
+                                    "Model returned a tool call without a valid function name.",
+                                    finish_reason=result.get("finish_reason"),
+                                )
+                            if not isinstance(call["function"].get("arguments"), dict):
+                                raise InvalidToolCallError(
+                                    "Model returned tool-call arguments that are not a JSON object.",
+                                    finish_reason=result.get("finish_reason"),
+                                )
                     except InvalidToolCallError as exc:
                         last_finish_reason = exc.finish_reason
                         update_execution_metadata()
@@ -334,6 +355,28 @@ class CodingAgent:
 
                 calls = result.get("tool_calls") or []
 
+                for call in calls:
+                    if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                        raise InvalidToolCallError(
+                            "Model returned a malformed tool call.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    if not isinstance(call.get("id"), str) or not call.get("id"):
+                        raise InvalidToolCallError(
+                            "Model returned a tool call without a valid id.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    if not isinstance(call["function"].get("name"), str) or not call["function"].get("name"):
+                        raise InvalidToolCallError(
+                            "Model returned a tool call without a valid function name.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    if not isinstance(call["function"].get("arguments"), dict):
+                        raise InvalidToolCallError(
+                            "Model returned tool-call arguments that are not a JSON object.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+
                 if not calls:
                     verification = self._verification_state(
                         successful_writes,
@@ -402,8 +445,29 @@ class CodingAgent:
                         )
 
                     total_tool_calls += 1
-                    name = call["function"]["name"]
-                    args = call["function"]["arguments"]
+                    if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                        raise InvalidToolCallError(
+                            "Model returned a malformed tool call.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    call_id = call.get("id")
+                    if not isinstance(call_id, str) or not call_id:
+                        raise InvalidToolCallError(
+                            "Model returned a tool call without a valid id.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    name = call["function"].get("name")
+                    if not isinstance(name, str) or not name:
+                        raise InvalidToolCallError(
+                            "Model returned a tool call without a valid function name.",
+                            finish_reason=result.get("finish_reason"),
+                        )
+                    args = call["function"].get("arguments")
+                    if not isinstance(args, dict):
+                        raise InvalidToolCallError(
+                            "Model returned tool-call arguments that are not a JSON object.",
+                            finish_reason=result.get("finish_reason"),
+                        )
 
                     if on_progress:
                         on_progress(
