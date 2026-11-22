@@ -581,35 +581,57 @@ class ReadLockConcurrencyTests(unittest.TestCase):
     def test_read_waits_for_write_transaction(self):
         import threading
 
-        barrier = threading.Barrier(2)
-        holding = threading.Event()
-        read_attempted = threading.Event()
+        real_lock = self.store.lock
+        acquire_started = threading.Event()
         read_completed = threading.Event()
         read_result = {}
+        errors = []
+
+        class TrackingLock:
+            def __init__(self, wrapped):
+                self._wrapped = wrapped
+
+            def acquire(self, blocking=True, timeout=-1):
+                acquire_started.set()
+                return self._wrapped.acquire(blocking, timeout)
+
+            def release(self):
+                return self._wrapped.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                self.release()
+                return False
+
+        tracking_lock = TrackingLock(real_lock)
+        self.store.lock = tracking_lock
 
         def writer():
-            barrier.wait()
-            with self.store.lock:
-                self.store.db.execute("BEGIN IMMEDIATE")
-                try:
-                    self.store.db.execute(
-                        "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
-                        ("changed", self.cfg_id),
-                    )
-                    holding.set()
-                    read_attempted.wait(timeout=2.0)
-                    self.assertFalse(read_completed.is_set())
-                    self.store.db.commit()
-                except Exception:
-                    self.store.db.rollback()
-                    raise
+            try:
+                with real_lock:
+                    self.store.db.execute("BEGIN IMMEDIATE")
+                    try:
+                        self.store.db.execute(
+                            "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
+                            ("changed", self.cfg_id),
+                        )
+                        acquire_started.wait(timeout=2.0)
+                        self.assertFalse(read_completed.is_set())
+                        self.store.db.commit()
+                    except Exception:
+                        self.store.db.rollback()
+                        raise
+            except Exception as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
 
         def reader():
-            barrier.wait()
-            holding.wait(timeout=2.0)
-            read_attempted.set()
             try:
                 read_result["value"] = list_configurations(self.store)
+            except Exception as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
             finally:
                 read_completed.set()
 
@@ -619,8 +641,10 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         t_reader.start()
         t_writer.join(timeout=5.0)
         self.assertTrue(read_completed.wait(timeout=2.0))
+        self.assertFalse(errors)
         self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
         t_reader.join(timeout=5.0)
+        self.store.lock = real_lock
 
 
 if __name__ == "__main__":
