@@ -583,6 +583,7 @@ class ReadLockConcurrencyTests(unittest.TestCase):
 
         real_lock = self.store.lock
         blocked_on_lock = threading.Event()
+        writer_holds_lock = threading.Event()
         read_completed = threading.Event()
         read_result = {}
         errors = []
@@ -617,6 +618,7 @@ class ReadLockConcurrencyTests(unittest.TestCase):
             try:
                 with real_lock:
                     self.store.db.execute("BEGIN IMMEDIATE")
+                    writer_holds_lock.set()
                     try:
                         self.store.db.execute(
                             "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
@@ -641,8 +643,17 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                 read_completed.set()
 
         t_writer = threading.Thread(target=writer)
-        t_reader = threading.Thread(target=reader)
+        t_reader = None
         t_writer.start()
+        if not writer_holds_lock.wait(timeout=2.0):
+            t_writer.join(timeout=5.0)
+            if errors:
+                raise errors[0]
+            raise AssertionError("writer did not acquire the lock")
+        if errors:
+            t_writer.join(timeout=5.0)
+            raise errors[0]
+        t_reader = threading.Thread(target=reader)
         t_reader.start()
         try:
             t_writer.join(timeout=5.0)
@@ -656,8 +667,9 @@ class ReadLockConcurrencyTests(unittest.TestCase):
             self.assertFalse(t_reader.is_alive())
         finally:
             t_writer.join(timeout=5.0)
-            t_reader.join(timeout=5.0)
-            if t_writer.is_alive() or t_reader.is_alive():
+            if t_reader is not None:
+                t_reader.join(timeout=5.0)
+            if t_writer.is_alive() or (t_reader is not None and t_reader.is_alive()):
                 raise AssertionError("worker thread did not terminate")
             self.store.lock = real_lock
 
