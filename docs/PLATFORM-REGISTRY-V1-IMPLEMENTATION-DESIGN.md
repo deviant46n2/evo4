@@ -433,6 +433,16 @@ For v1:
 - Filesystem operations are limited to path validation during registration and explicit availability checks. Registry lifecycle operations do not otherwise access the filesystem.
 - Unregistering a checkout never deletes filesystem contents.
 
+Canonical path policy (v1):
+
+- Registration paths are resolved strictly to their canonical filesystem target using filesystem resolution.
+- A symlink pointing to an existing directory may be registered, but the stored `canonical_path` must be the resolved target, not the symlink alias.
+- Different input paths that resolve to the same canonical target identify the same checkout. The existing `UNIQUE (canonical_path)` constraint rejects duplicate registration.
+- Broken symlinks, nonexistent paths, non-directories, and paths that cannot be validated as accessible directories are rejected.
+- Explicit availability refresh uses the stored canonical path and updates `availability_status` to `available`, `missing`, or `unavailable` as appropriate.
+- Canonicalization does not eliminate TOCTOU risks; residual filesystem race considerations remain and must be documented and tested.
+- `Workspace` path-containment checks, sensitive-file protections, command allowlist, and approval protections are preserved. Registration does not weaken them or grant execution permission.
+
 Canonicalization reduces but does not eliminate symlink or TOCTOU risks. Residual filesystem race considerations must be documented and tested.
 
 ## 10. API routes and Pydantic contracts
@@ -574,7 +584,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-Implementation may proceed once the blocking decision in section 16 is resolved: checkout canonicalization, symlink handling, and unavailable-path behavior. The remaining items are contract refinements to finalize during implementation.
+No blocking design decisions remain. Implementation may proceed; the remaining items in section 16 are non-blocking refinements to finalize during implementation.
 
 ## 14. Acceptance criteria
 
@@ -621,9 +631,12 @@ Residual risks:
 
 ## 16. Unresolved decisions requiring source-level resolution
 
+No blocking design decisions remain. The following are non-blocking implementation refinements that can be finalized during implementation:
+
 1. Exact JSON schema validation strictness and forward-compatibility behavior. The common structure is specified, but strictness, unknown-field handling, and evolution policy remain open.
-2. Exact conflict response payload and retry/error semantics for stale optimistic-concurrency versions. Integer versions are chosen, but the response body and client retry guidance remain open.
-3. Checkout canonicalization, symlink handling, and unavailable-path behavior. This is security-sensitive and requires source-level inspection of `Workspace`; registration rules themselves are specified in section 9.
+2. Exact conflict response payload and retry/error guidance for stale optimistic-concurrency versions. Integer versions are chosen, but the response body and client retry guidance remain open.
+
+Resolved: checkout canonicalization, symlink handling, and unavailable-path behavior are resolved by the canonical path policy in section 9. Other previously listed items were resolved or removed as documented below.
 
 Resolved and removed from this section: `workspace_events` inclusion (optional, not required for v1); secret-free export/import (deferred unless separately approved); integer optimistic concurrency model; `Workspace` security boundary and checkout registration rules; `EvoStore`/`ResultsDB` connection and migration architecture; cross-database transaction semantics (the registry uses `EvoStore` only); and API contracts specified in sections 7-10.
 
@@ -645,4 +658,4 @@ Verified facts come from inspected source. Design decisions are proposed by this
 
 ## 19. Final scope statement
 
-This document is an implementation design. It is not authorization to begin implementation. Implementation approval follows source inspection and resolution of the open decisions in section 16.
+This document is an implementation design. It is not authorization to begin implementation. Implementation approval follows source inspection. Remaining items in section 16 are non-blocking refinements that may be finalized during implementation.
