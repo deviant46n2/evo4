@@ -63,7 +63,7 @@ Every experiment should reference exact relevant source commits, configuration r
 
 Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
-This architecture is not fully implemented. In particular, AI configurations, software-project management, workspaces/sessions, experiment registry, resource management, agent lifecycle, and development control plane are designed or proposed capabilities, not validated runtime features.
+Platform Registry v1 is implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are present and validated. The development control plane, experiment registry, resource management, and lifecycle supervisor remain designed or proposed capabilities, not validated runtime features.
 
 ## Long-term self-development
 
@@ -113,7 +113,7 @@ Eventually support export/import, reconstruction on another machine, and multi-u
 
 ## Platform Registry
 
-The proposed persistent platform entity model is specified in `docs/PLATFORM-REGISTRY-V1-SPEC.md`. It is proposed architecture, not an implemented feature.
+The persistent platform entity model is specified in `docs/PLATFORM-REGISTRY-V1-SPEC.md`. Registry v1 has been implemented through M5; later registry capabilities remain planned.
 
 ## Platform-wide design principles and engineering contracts
 

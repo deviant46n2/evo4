@@ -41,3 +41,59 @@ The proposed v1 platform registry specification is in `docs/PLATFORM-REGISTRY-V1
 ## Current implementation status
 
 Implemented capabilities remain described in `README.md` and existing docs. Proposed architecture is described in `docs/ARCHITECTURE.md` and `docs/DEVELOPMENT-CONTROL-PLANE.md`. Nothing in this roadmap should be read as claiming that proposed capabilities are already implemented.
+
+## Stabilization and Gemini Audit Remediation
+
+Feature development is frozen until all confirmed serious audit findings have been fixed, tested, reviewed, and accepted.
+
+Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
+
+### Priority 1: Provider streaming reliability
+- Problem: SSE error frames without choices are silently ignored.
+- Affected subsystem: Provider streaming.
+- Required remediation: Detect and raise provider errors from error frames; do not accept empty successful responses silently.
+- Required tests: Provider streaming tests for error frames and empty choices.
+- Acceptance criteria: Provider errors surface to callers; no silent empty success.
+
+### Priority 2: Tool-call argument validation
+- Problem: Non-dict tool arguments can crash downstream dispatch.
+- Affected subsystem: Coding agent.
+- Required remediation: Validate parsed arguments are dictionaries before dispatch.
+- Required tests: Malformed/non-dict argument recovery.
+- Acceptance criteria: Malformed tool calls are recorded and recovered without crashing.
+
+### Priority 3: Workspace filesystem boundary hardening
+- Problem: Traversal, sensitive-file exposure, silent search truncation, command-argument/env boundaries.
+- Affected subsystem: Workspace and coding agent.
+- Required remediation: Restrict traversal, exclude sensitive/internal files, communicate truncation, document command/env behavior.
+- Required tests: Sensitive file exclusion, traversal, truncation, command boundary tests.
+- Acceptance criteria: Sensitive files are not exposed; truncation is communicated.
+
+### Priority 4: Untrusted retrieved context isolation
+- Problem: Retrieved memory/lesson content is not clearly isolated as untrusted.
+- Affected subsystem: Assistant context.
+- Required remediation: Delimit retrieved context as untrusted while preserving `_fit_context`.
+- Required tests: Context-budget and injection-resistance tests.
+- Acceptance criteria: Retrieved content cannot masquerade as system instructions.
+
+### Priority 5: Experiment lifecycle interruption
+- Problem: KeyboardInterrupt can leave experiment rows running.
+- Affected subsystem: Evo Lab runner.
+- Required remediation: Finalize interrupted runs consistently.
+- Required tests: Interruption finalization test.
+- Acceptance criteria: No running rows remain after interruption.
+
+### Priority 6: ResourceMonitor shutdown race
+- Problem: Monitor join timeout can race with database closure.
+- Affected subsystem: Evo Lab monitoring.
+- Required remediation: Ensure shutdown completes before database closure or document the limitation.
+- Required tests: Monitor shutdown lifecycle test.
+- Acceptance criteria: No database access after shutdown.
+
+### Partially confirmed / needs investigation
+- Untrusted retrieved context isolation details.
+- Workspace traversal and sensitive-file exposure scope.
+
+### False positives
+- Evaluation false positive: disproved by `evaluate_task`.
+- Unbudgeted context: disproved by `_fit_context`.

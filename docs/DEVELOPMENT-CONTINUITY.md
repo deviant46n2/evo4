@@ -96,3 +96,14 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Next recommended engineering decision
 
 GPT-6 should review the committed architecture deliverables, including `docs/ARCHITECTURE.md`, `docs/ARCHITECTURE-READINESS-REVIEW.md`, and the Registry baseline, and determine whether any blocking issue remains. Milestone 1 is not authorized until that review is complete. No Registry implementation has started.
+
+## Outstanding stabilization tasks
+
+- Provider streaming reliability.
+- Tool-call argument validation.
+- Workspace filesystem boundary hardening.
+- Untrusted retrieved context isolation.
+- Experiment lifecycle interruption.
+- ResourceMonitor shutdown race.
+
+See `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`.
