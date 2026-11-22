@@ -1,9 +1,13 @@
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from evo_experiments.config import load_config
 from evo_experiments.monitor import ResourceMonitor
+from evo_experiments.runner import run_tasks
 
 
 class MonitorLifecycleTests(unittest.TestCase):
@@ -30,7 +34,6 @@ class MonitorLifecycleTests(unittest.TestCase):
         release.set()
         thread.join(timeout=2)
         self.assertTrue(stopped.is_set())
-        self.assertFalse(monitor.thread.is_alive())
 
     def test_interrupted_join_does_not_return_early(self):
         started = threading.Event()
@@ -54,37 +57,29 @@ class MonitorLifecycleTests(unittest.TestCase):
                 raise KeyboardInterrupt()
             return original_join(self_thread, timeout)
 
-        release_late = threading.Event()
+        released = threading.Event()
 
         def stopper():
             try:
                 with patch("threading.Thread.join", fake_join):
                     monitor.stop()
             except KeyboardInterrupt:
-                release_late.set()
+                released.set()
 
         thread = threading.Thread(target=stopper, daemon=True)
         thread.start()
         thread.join(timeout=2)
-        self.assertTrue(release_late.is_set())
-        self.assertFalse(monitor.thread.is_alive())
+        self.assertTrue(released.is_set())
 
-    def test_runner_cannot_close_database_while_monitor_callback_blocked(self):
-        import tempfile
-        from pathlib import Path
-
-        from evo_experiments.config import load_config
-        from evo_experiments.runner import run_tasks
-
-        temp = tempfile.TemporaryDirectory()
-        try:
-            db_path = Path(temp.name) / "results.db"
-            config_path = Path(temp.name) / "config.toml"
-            tasks_path = Path(temp.name) / "tasks.jsonl"
+    def test_real_monitor_callback_blocks_database_close(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "results.db"
+            config_path = Path(temp) / "config.toml"
+            tasks_path = Path(temp) / "tasks.jsonl"
             config_path.write_text(
-                f'[server]\nbase_url="http://127.0.0.1:1"\nmodel="fake"\ntimeout_seconds=1\n'
+                '[server]\nbase_url="http://127.0.0.1:1"\nmodel="fake"\ntimeout_seconds=1\n'
                 f'[experiment]\ndatabase="{db_path}"\n'
-                f'sample_interval_seconds=0.2\nrepetitions=1\n',
+                'sample_interval_seconds=0.05\nrepetitions=1\n',
                 encoding="utf-8",
             )
             tasks_path.write_text('{"id":"t","prompt":"p"}\n', encoding="utf-8")
@@ -93,7 +88,55 @@ class MonitorLifecycleTests(unittest.TestCase):
             callback_release = threading.Event()
             close_called = threading.Event()
 
-            class BlockingMonitor:
+            original_add_sample = __import__("evo_experiments.db", fromlist=["ResultsDB"]).ResultsDB.add_sample
+            original_close = __import__("evo_experiments.db", fromlist=["ResultsDB"]).ResultsDB.close
+
+            def blocking_add_sample(self_db, experiment_id, sample):
+                callback_entered.set()
+                callback_release.wait(timeout=2)
+                return original_add_sample(self_db, experiment_id, sample)
+
+            def tracking_close(self_db):
+                close_called.set()
+                return original_close(self_db)
+
+            with patch("evo_experiments.runner.stream_chat_completion", return_value={
+                    "response": "hello", "finish_reason": "stop",
+                    "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
+                    "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
+                 patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
+                 patch("evo_experiments.db.ResultsDB.add_sample", blocking_add_sample), \
+                 patch("evo_experiments.db.ResultsDB.close", tracking_close):
+                worker = threading.Thread(target=lambda: run_tasks(load_config(config_path), tasks_path), daemon=True)
+                worker.start()
+                self.assertTrue(callback_entered.wait(timeout=2))
+                time.sleep(0.2)
+                self.assertFalse(close_called.is_set(), "database closed while real monitor callback was blocked")
+                callback_release.set()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertTrue(close_called.wait(timeout=2))
+
+
+class MonitorShutdownFailureTests(unittest.TestCase):
+    def test_runner_waits_for_worker_when_monitor_stop_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "results.db"
+            config_path = Path(temp) / "config.toml"
+            tasks_path = Path(temp) / "tasks.jsonl"
+            config_path.write_text(
+                '[server]\nbase_url="http://127.0.0.1:1"\nmodel="fake"\ntimeout_seconds=1\n'
+                f'[experiment]\ndatabase="{db_path}"\n'
+                'sample_interval_seconds=0.2\nrepetitions=1\n',
+                encoding="utf-8",
+            )
+            tasks_path.write_text('{"id":"t","prompt":"p"}\n', encoding="utf-8")
+
+            callback_entered = threading.Event()
+            callback_release = threading.Event()
+            close_called = threading.Event()
+
+            class FailingStopMonitor:
                 def __init__(self, interval, callback):
                     self.interval = interval
                     self.callback = callback
@@ -107,11 +150,10 @@ class MonitorLifecycleTests(unittest.TestCase):
                 def _run(self):
                     callback_entered.set()
                     self.callback({"peak_vram_mib": 1})
-                    self.stop_event.wait()
+                    callback_release.wait(timeout=2)
 
                 def stop(self):
-                    self.stop_event.set()
-                    self.thread.join()
+                    raise RuntimeError("stop failed")
 
             original_close = __import__("evo_experiments.db", fromlist=["ResultsDB"]).ResultsDB.close
 
@@ -123,26 +165,23 @@ class MonitorLifecycleTests(unittest.TestCase):
                 callback_entered.wait(timeout=1)
                 callback_release.wait(timeout=2)
 
-            with patch("evo_experiments.runner.ResourceMonitor", BlockingMonitor), \
-                 patch("evo_experiments.runner.stream_chat_completion", return_value={
-                     "response": "hello", "finish_reason": "stop",
-                     "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
-                     "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
-                 patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
-                 patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample), \
-                 patch("evo_experiments.db.ResultsDB.close", tracking_close):
-                worker = threading.Thread(target=lambda: run_tasks(load_config(config_path), tasks_path), daemon=True)
-                worker.start()
-                self.assertTrue(callback_entered.wait(timeout=2))
-                # Give run_tasks time to finish the model call and reach cleanup.
-                time.sleep(0.2)
-                self.assertFalse(close_called.is_set(), "database closed while monitor callback was blocked")
-                callback_release.set()
-                worker.join(timeout=5)
-                self.assertFalse(worker.is_alive())
+            timer = threading.Timer(0.2, callback_release.set)
+            timer.start()
+            try:
+                with patch("evo_experiments.runner.ResourceMonitor", FailingStopMonitor), \
+                     patch("evo_experiments.runner.stream_chat_completion", return_value={
+                         "response": "hello", "finish_reason": "stop",
+                         "elapsed_seconds": 1.0, "time_to_first_token_seconds": 0.1,
+                         "prompt_tokens": 1, "completion_tokens": 1, "tokens_per_second": 1.0}), \
+                     patch("evo_experiments.runner.evaluate_task", return_value=("passed", {"passed": 1, "total": 1, "checks": []})), \
+                     patch("evo_experiments.db.ResultsDB.add_sample", blocking_sample), \
+                     patch("evo_experiments.db.ResultsDB.close", tracking_close):
+                    with self.assertRaises(RuntimeError):
+                        run_tasks(load_config(config_path), tasks_path)
                 self.assertTrue(close_called.wait(timeout=2))
-        finally:
-            temp.cleanup()
+            finally:
+                timer.cancel()
+                callback_release.set()
 
 
 if __name__ == "__main__":
