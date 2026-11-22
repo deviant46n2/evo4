@@ -79,8 +79,14 @@ This document is a plan only. Implementation requires explicit approval and must
 - Revision immutability through UPDATE and DELETE triggers.
 - Checkout/workspace relationship constraints.
 - Multiple workspaces sharing one checkout.
+- Verify `PRAGMA foreign_keys=ON` on the existing EvoStore connection before beginning the migration transaction. Do not attempt to enable it inside an active transaction.
+- Test migration against a realistic copy of an existing application database containing existing EvoStore and Evo Lab data, verifying pre-existing records and schemas remain intact.
+- Test concurrent or repeated initialization attempts to demonstrate migration serialization and prevent partially applied or duplicated migration state.
+- Verify the Registry service uses the existing EvoStore connection and lock without replacing, independently opening, or closing the shared connection.
+- Inject a migration failure, verify complete rollback and clear fail-closed application startup behavior, then remove the injected failure and verify initialization can be retried successfully without manual database repair.
+- Verify startup does not leave a partially initialized application or silently disable the Registry when migration fails.
 
-**Completion gate:** All persistence-level invariant tests pass, migration is idempotent, and existing `EvoStore`/`ResultsDB` behavior remains intact.
+**Completion gate:** All persistence-level invariant tests pass, migration is idempotent, and existing `EvoStore`/`ResultsDB` behavior remains intact. M1 cannot be declared complete without evidence for every item above, including the additional safeguards.
 
 **Must remain unchanged:** Existing `EvoStore` base schema, `ResultsDB`, assistant, coding agent, memory, runtime, workspace security, and Evo Lab behavior.
 
