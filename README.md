@@ -7,6 +7,58 @@ The repository contains two independently usable applications:
 - **Evo assistant** (`evo`): local conversations, persistent memory, and task tracking.
 - **Evo Lab** (`evo-exp`): reproducible inference experiments, deterministic evaluation, and hardware telemetry. The lab is a permanent subsystem, not disposable scaffolding.
 
+
+## Central identity
+
+Evo4 is a model-agnostic AI development and experimentation platform designed to assemble, evaluate, coordinate, and continuously improve AI systems using existing models, agents, tools, and infrastructure.
+
+The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software development: memory, context management, orchestration, tools, agent collaboration, evaluation, and controlled self-improvement.
+
+We are not pursuing foundation-model training, custom neural-network engineering, or a general-purpose AI research laboratory.
+
+Evo4 should provide the environment in which we can:
+
+- Connect and manage different models, providers, and agent frameworks.
+- Experiment with memory, context, retrieval, and orchestration.
+- Evaluate and compare different approaches.
+- Develop multi-agent collaboration.
+- Optimize use of available hardware and external resources.
+- Preserve successful experiments and reusable capabilities.
+- Take advantage of new models and technologies without redesigning Evo4 around each release.
+
+The personal assistant and coding-agent experience are configurations built on this platform, not the fundamental reason the platform exists.
+
+## Development philosophy
+
+- Models and external frameworks are replaceable components, not architectural foundations.
+- Evo4 owns its interfaces, integration contracts, experiment records, evaluation criteria, and orchestration.
+- Substantial portions of Evo4 can be developed using deterministic mocks, fixtures, simulations, and conventional software testing without connecting real models.
+- Real models are integration targets and experimental subjects, not prerequisites for development.
+- Every major milestone should deliver reusable capability, experimentally validated improvement, or measurable expansion of what Evo4 can support.
+- Prefer existing research and software rather than reinventing infrastructure without a demonstrated reason.
+- Keep scope focused on improving AI systems through software architecture and engineering.
+
+## Self-development ambition
+
+The long-term design should support Evo4:
+
+- Understanding its own architecture and development history.
+- Identifying weaknesses and opportunities.
+- Researching potential improvements.
+- Designing and running isolated experiments.
+- Implementing changes in controlled environments.
+- Validating changes with independent evidence.
+- Proposing or integrating approved improvements.
+- Improving its own research, development, experimentation, and validation processes.
+
+Autonomy should increase as reliability is demonstrated. Routine, reversible, authorized work should eventually be autonomous. Consequential actions require appropriate safeguards and authorization.
+
+Safety, authorization, demonstrated reliability, and available resources are the constraints, not an arbitrary prohibition on self-development. Evo4 must not be allowed to declare its own improvements successful without independent validation and measurable evidence.
+
+## Development continuity
+
+See [`docs/DEVELOPMENT-CONTINUITY.md`](docs/DEVELOPMENT-CONTINUITY.md) for the current development state, accepted decisions, proposed decisions, and next recommended work.
+
 ## Current assistant capabilities
 
 - Streams conversations through an OpenAI-compatible endpoint (initial target: llama.cpp); optional named endpoint/model profiles can be selected with `--provider NAME`, with API keys loaded from environment variables.
