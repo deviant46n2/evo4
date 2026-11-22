@@ -6,9 +6,11 @@ import { AgentsWorkspace, MemoryWorkspace, HardwareWorkspace, ExperimentsWorkspa
 
 type Conversation = { id: string; title: string; updated_at?: string; message_count?: number };
 type Message = { role: "user" | "assistant"; content: string; created_at?: string };
-type Health = { status: string; provider: string; model: string; endpoint: string };
+type Health = { status: string; provider: string; model: string; endpoint: string; backend_started_at?: string; backend_revision?: string; backend_build_id?: string | null; backend_dirty?: boolean | null; build?: { backend_started_at?: string; backend_revision?: string; backend_build_id?: string | null; backend_dirty?: boolean | null } };
 type StreamEvent = { event: string; data: unknown };
 const API = "http://127.0.0.1:8765/api/v1";
+const FRONTEND_BUILD_TIME = __BUILD_TIME__;
+const FRONTEND_BUILD_COMMIT = __BUILD_COMMIT__;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(API + path, init);
@@ -33,6 +35,14 @@ function parseSseFrame(frame: string): StreamEvent | null {
   const raw = data.join("\n");
   try { return { event, data: JSON.parse(raw) }; }
   catch { return { event, data: raw }; }
+}
+
+
+function formatBuildTime(value: string): string {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return date.toLocaleString();
 }
 
 function Markdown({ content }: { content: string }) {
@@ -268,7 +278,7 @@ export default function App() {
     <main className="main">
       <header className="topbar">
         <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : view === "memory" ? "Memory" : view === "hardware" ? "Hardware" : "Experiments"}</strong></div>
-        <div className="topbar-right"><span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div></div>
+        <div className="topbar-right"><span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div><div className="build-pill" title={`Frontend build: ${FRONTEND_BUILD_TIME || "unknown"} (${FRONTEND_BUILD_COMMIT || "unknown"})\nBackend started: ${health?.backend_started_at || health?.build?.backend_started_at || "unknown"}\nBackend revision: ${health?.backend_revision || health?.build?.backend_revision || "unknown"}${(health?.backend_dirty ?? health?.build?.backend_dirty) ? " (dirty)" : ""}`}>{import.meta.env.DEV ? "FE DEV SERVER" : `FE ${formatBuildTime(FRONTEND_BUILD_TIME)}`} <span className="build-separator">/</span> {health ? (health.backend_revision || health.build?.backend_revision || "BE unknown") : "BE unavailable"}</div></div>
       </header>
       {view === "chat" ? <section className="chat-area">
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}

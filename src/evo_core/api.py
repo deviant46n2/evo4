@@ -3,6 +3,8 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import threading
+import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
@@ -25,6 +27,43 @@ from evo_experiments.db import ResultsDB
 from evo_experiments.intelligence import assess_workload, discover_runtimes, estimate_runtime, initialize_profiles, list_profiles, save_profile
 from evo_experiments.scheduler import initialize_scheduler, create_job, list_jobs, dispatch_jobs, start_job, finish_job, cancel_job
 from evo_experiments.execution import initialize_execution, register_execution, list_executions, run_execution, recover_interrupted_executions
+
+
+_BACKEND_STARTED_AT = datetime.now(timezone.utc).isoformat()
+
+
+def _git_value(args, timeout=2.0):
+    try:
+        result = subprocess.run(
+            ["git", *args], text=True, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def _backend_identity():
+    build_id = (os.environ.get("EVO_BUILD_ID") or os.environ.get("EVO_REVISION") or "").strip() or None
+    revision = None
+    dirty = None
+    if build_id is not None:
+        revision = "env:" + build_id
+    else:
+        sha = _git_value(["rev-parse", "HEAD"])
+        if sha is not None:
+            revision = "git:" + sha
+            porcelain = _git_value(["status", "--porcelain"])
+            dirty = bool(porcelain)
+        else:
+            revision = "unknown"
+    return {
+        "backend_started_at": _BACKEND_STARTED_AT,
+        "backend_revision": revision,
+        "backend_build_id": build_id,
+        "backend_dirty": dirty,
+    }
 
 
 class ChatRequest(BaseModel):
@@ -117,6 +156,8 @@ def create_app(config_path="config.toml", provider_name=None):
     app.state.store = store
     app.state.lab_db = lab_db
     app.state.assistant = assistant
+    backend_identity = _backend_identity()
+    app.state.backend_identity = backend_identity
     initialize_profiles(lab_db.connection)
     initialize_scheduler(lab_db.connection)
     initialize_execution(lab_db.connection)
@@ -475,11 +516,17 @@ def create_app(config_path="config.toml", provider_name=None):
         if parsed_endpoint.port:
             hostname += ":" + str(parsed_endpoint.port)
         safe_endpoint = urlunsplit((parsed_endpoint.scheme, hostname, parsed_endpoint.path, "", ""))
+        identity = backend_identity
         return {
             "status": "ok",
             "provider": config.provider_name,
             "model": config.model,
             "endpoint": safe_endpoint,
+            "backend_started_at": identity["backend_started_at"],
+            "backend_revision": identity["backend_revision"],
+            "backend_build_id": identity["backend_build_id"],
+            "backend_dirty": identity["backend_dirty"],
+            "build": identity,
         }
 
     @app.get("/api/v1/capabilities")
