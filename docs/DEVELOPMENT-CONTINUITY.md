@@ -59,11 +59,13 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Current development state
 
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD before this documentation commit: `be32d766b5fde3c0e8bc7662a43856859b378d9b`
+- HEAD before this documentation commit: `7b5d78dd5d5be2ed8dc7153681c3c50deefec127`.
+- Latest documentation commit: `d4f5fb497b38fa02b6cd54678f2cabe7dee37205` (architecture-readiness documentation).
+- Original approved Registry design baseline remains `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
 - Tracked working tree was clean before this documentation task. Pre-existing untracked files remain untouched: `desktop/dist/`, `desktop/tsconfig.tsbuildinfo`, `diagnostics/coding-acceptance-direct-1ab0d44c.md`, and `diagnostics/coding-acceptance-plan-33ebabb2.md`.
 - Platform Registry v1 design baseline is approved at commit `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
 - `docs/ARCHITECTURE.md` is the authoritative cross-cutting architecture, including platform-wide design principles and engineering contracts.
-- `docs/ARCHITECTURE-READINESS-REVIEW.md` is the Registry readiness decision record. It finds no blocking incompatibility but does not authorize Milestone 1.
+- `docs/ARCHITECTURE-READINESS-REVIEW.md` is the Registry readiness decision record. It finds no blocking incompatibility, but Milestone 1 remains unauthorized and no Registry implementation has started.
 - `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md` defines the approved implementation sequence.
 - Platform Registry v1 implementation plan is now recorded in `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md`.
 - Verified baseline in this worktree:

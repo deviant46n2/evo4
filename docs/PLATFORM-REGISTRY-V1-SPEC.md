@@ -1,6 +1,6 @@
 # Evo — Platform Registry v1 Technical Specification
 
-**Status:** Proposed engineering baseline — not yet implementation-approved  
+**Status:** Approved engineering baseline for implementation planning — not authorization to implement
 **Version:** 0.1  
 **Scope:** Persistent management of AI configurations, software projects, local checkouts, and workspaces.
 
@@ -460,7 +460,7 @@ Recommended dependency-aware sequence:
 9. Run regression and acceptance tests.
 10. Update architecture and continuity documentation with the implemented state.
 
-Do not start implementation until the unresolved schema and scope decisions below have been explicitly resolved.
+This sequence defines the implementation milestone order. It is not authorization to implement; Milestone 1 requires explicit user authorization. Remaining refinements in section 20 are non-blocking and may be finalized during implementation.
 
 ## 18. Acceptance criteria
 
@@ -499,15 +499,15 @@ The data model and interfaces should not prevent these future capabilities.
 
 ## 20. Decisions requiring resolution before implementation
 
-Record these as open design decisions rather than silently treating proposals as final:
+Status is reconciled with `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-DESIGN.md` section 16. Settled items are marked resolved; deferred items are not blockers.
 
-1. **Composite foreign keys:** Exact SQLite implementation for same-configuration revision ownership and same-project checkout ownership.
-2. **Workspace events:** Whether the minimal append-only event table belongs in v1.
-3. **Export/import:** Whether secret-free configuration export and import are included in v1 or deferred.
-4. **Definition schema:** Exact JSON schema, versioning, validation, and forward-compatibility behavior.
-5. **Concurrency:** Exact optimistic concurrency token and conflict response semantics.
-6. **Checkout safety:** Canonicalization, symlink handling, unavailable paths, and registration rules.
-7. **API details:** Exact request/response contracts and route conventions after inspection of the current API.
-8. **Persistence integration:** Exact relationship between existing `EvoStore` and `ResultsDB`, including transaction and migration behavior.
+1. **Composite foreign keys:** Resolved. Exact SQLite implementation and ordering are specified in implementation design section 4 and validated in its SQLite validation evidence.
+2. **Workspace events:** Deferred, not required for v1. Optional auditability feature; not a blocker.
+3. **Export/import:** Deferred, not required for v1 unless separately approved. Not a blocker.
+4. **Definition schema:** Non-blocking refinement. Common structure is specified; strictness, unknown-field handling, and forward-compatibility remain open.
+5. **Concurrency:** Non-blocking refinement. Integer optimistic concurrency is chosen; exact conflict response payload and retry guidance remain open.
+6. **Checkout safety:** Resolved. Canonicalization, symlink handling, unavailable paths, and registration rules are specified by the canonical path policy in implementation design section 9.
+7. **API details:** Resolved at the design level. Request/response contracts and route conventions are specified in implementation design sections 7-10.
+8. **Persistence integration:** Resolved. The registry uses `EvoStore` only; it does not operate across `EvoStore` and `ResultsDB`. Migration uses the existing `EvoStore` connection and lock.
 
-These decisions must be resolved using the actual source code, not assumptions.
+No blocking decisions remain. The two non-blocking refinements may be finalized during implementation.
