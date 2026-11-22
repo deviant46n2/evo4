@@ -618,7 +618,8 @@ class ReadLockConcurrencyTests(unittest.TestCase):
                             "UPDATE ai_configurations SET name=? WHERE configuration_id=?",
                             ("changed", self.cfg_id),
                         )
-                        acquire_started.wait(timeout=2.0)
+                        if not acquire_started.wait(timeout=2.0):
+                            raise AssertionError("reader did not attempt lock acquisition")
                         self.assertFalse(read_completed.is_set())
                         self.store.db.commit()
                     except Exception:
@@ -639,12 +640,16 @@ class ReadLockConcurrencyTests(unittest.TestCase):
         t_reader = threading.Thread(target=reader)
         t_writer.start()
         t_reader.start()
-        t_writer.join(timeout=5.0)
-        self.assertTrue(read_completed.wait(timeout=2.0))
-        self.assertFalse(errors)
-        self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
-        t_reader.join(timeout=5.0)
-        self.store.lock = real_lock
+        try:
+            t_writer.join(timeout=5.0)
+            if errors:
+                raise errors[0]
+            self.assertTrue(read_completed.wait(timeout=2.0))
+            self.assertFalse(errors)
+            self.assertTrue(any(c["name"] == "changed" for c in read_result["value"]))
+            t_reader.join(timeout=5.0)
+        finally:
+            self.store.lock = real_lock
 
 
 if __name__ == "__main__":
