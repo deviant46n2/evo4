@@ -59,8 +59,14 @@ The personal assistant and coding-agent experience are configurations built on t
 ## Current development state
 
 - Branch: `agent-lifecycle-reconciliation-v1`
-- HEAD: `c1fd790674ffc7d9c47f8558dec9620bb5f0977a`
-- Working tree contains uncommitted generated artifacts and diagnostic files.
+- HEAD before this documentation commit: `be32d766b5fde3c0e8bc7662a43856859b378d9b`
+- Tracked working tree was clean before this documentation task. Pre-existing untracked files remain untouched: `desktop/dist/`, `desktop/tsconfig.tsbuildinfo`, `diagnostics/coding-acceptance-direct-1ab0d44c.md`, and `diagnostics/coding-acceptance-plan-33ebabb2.md`.
+- Platform Registry v1 design baseline is approved at commit `be32d766b5fde3c0e8bc7662a43856859b378d9b`.
+- Platform Registry v1 implementation plan is now recorded in `docs/PLATFORM-REGISTRY-V1-IMPLEMENTATION-PLAN.md`.
+- Verified baseline in this worktree:
+  - Python tests: 263 passed using the main repository virtual environment because this worktree has no `.venv`.
+  - Python compile check: passed.
+  - Desktop production build: not run successfully; `desktop/node_modules` and `package-lock.json` are absent and `tsc` is unavailable. No environment changes were made.
 - Implemented and validated in this branch: agent lifecycle reconciliation, verified background coding, build identity, truncated-response safety, malformed-tool-call recovery, verification completion guards, and documentation reconciliation.
 - Identity, architecture, roadmap, and development-continuity documentation has been reconciled with the revised Evo platform vision.
 - Historical coding-agent acceptance evidence:
@@ -68,15 +74,16 @@ The personal assistant and coding-agent experience are configurations built on t
   - A later attempt failed because the model hit its completion-token limit twice, including one bounded continuation. Truncated tool-call content was not executed and no successful file writes occurred.
 - A separate plan-first acceptance run created files but could not run verification because the configured allowlist did not include `python test_calculator.py`. The plan was marked completed despite failed verification commands. This is historical evidence for the verification-authority concern, not the current top-level project priority.
 - The development control plane and lifecycle supervisor are documented as proposed architecture only.
+- No Platform Registry implementation code has been written.
 
 ## Outstanding tasks and blockers
 
-- Define the first narrow, coherent platform-foundation implementation milestone.
-- Resolve the verification-authority question for plan completion in a user-configurable allowlist environment.
+- Milestone 1 (persistence foundation and migration) is the recommended first code milestone but is not yet authorized or started.
+- Verification-authority question for plan completion in a user-configurable allowlist environment remains open.
 - Repeat live coding-agent acceptance after provider/model reliability and allowlist configuration are addressed.
 - Define and implement the development control plane only after design review.
 - Define lifecycle supervisor architecture only after the current coding-agent milestone closes.
 
 ## Next recommended engineering decision
 
-GPT-6 should define the smallest useful platform foundation around independent AI configurations, software projects, and their workspace/session relationships, while preserving the existing Evo assistant and Evo Lab capabilities. Experiments remain a first-class architectural entity; determine deliberately whether their initial implementation belongs in this first milestone or a subsequent one. Do not prematurely implement the full development control plane.
+GPT-6 should review the Platform Registry implementation plan and decide whether to authorize Milestone 1. The smallest useful first code step is the registry persistence foundation and migration in `EvoStore`, with persistence-level invariant tests. Do not prematurely implement the full development control plane or begin registry code before that authorization.
