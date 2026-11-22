@@ -140,12 +140,14 @@ This inventory is based on inspection of the current implementation, routes, com
 
 ### Phase 3 — Agent interaction, background execution, and interruption
 
-- Existing implementation: `AgentsWorkspace` in `desktop/src/Workspaces.tsx` supports run history, detail, approval, cancellation, and plan management. Backend supports agent runs, plans, approval, execution, cancellation, background tasks, and worker revalidation. Interruption and finalization behavior is covered by `tests/test_experiment_interruption.py` and agent tests.
-- Status: Implemented.
+- Existing implementation: `AgentsWorkspace` in `desktop/src/Workspaces.tsx` supports run history, detail, approval, cancellation, and plan management. Backend supports agent runs, plans, approval, execution, cancellation, background tasks, events, and worker revalidation in `src/evo_core/api.py` and `src/evo_core/background_agent.py`. Interruption and finalization behavior is covered by `tests/test_experiment_interruption.py` and agent tests.
+- Status: Partially implemented.
+- Existing execution infrastructure: run creation, claiming, cancellation, approval, background event history, and terminal finalization are implemented.
+- Target orchestration not yet demonstrated: continuing ordinary chat while agent work runs, submitting new instructions against active work, safe interruption/redirect, queued decisions, configurable concurrency, autonomy, and interruption policy. These are backend orchestration requirements, not only UI integration.
 - Redesign gap: Agent activity needs inline chat presentation with reliable expandable details. The current Agents workspace is a separate view rather than inline chat activity.
-- Backend gap: Primarily UI/UX integration; backend execution and approval already exist.
-- Preservation and reuse: Reuse agent run, plan, approval, cancellation, and background-task infrastructure.
-- Validation: `tests/test_verification_approval.py`, `tests/test_coding_agent.py`, `tests/test_workspace_execution_boundary.py`.
+- Backend gap: New or extended backend functionality is required for conversation continuation during active work, instruction queuing/redirect, and configurable concurrency/autonomy. Existing execution and approval infrastructure should be reused.
+- Preservation and reuse: Reuse agent run, plan, approval, cancellation, background-task, and event-history infrastructure.
+- Validation: `tests/test_verification_approval.py`, `tests/test_coding_agent.py`, `tests/test_workspace_execution_boundary.py`. These tests establish execution and approval behavior, not the complete target orchestration experience.
 
 ### Phase 4 — Persistent memory and context experience
 
@@ -158,12 +160,12 @@ This inventory is based on inspection of the current implementation, routes, com
 
 ### Phase 5 — AI configuration and Cyberdeck
 
-- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, revisions, activation, and selection. Workspace Registry links configurations to projects and checkouts.
+- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, revisions, activation, and selection. Workspace Registry links configurations to projects and checkouts. Configuration definitions use top-level `components` objects, but no explicit connection or dependency graph is defined in the inspected implementation.
 - Status: Partially implemented.
-- Redesign gap: Node-based visual canvas and component inspection are not implemented.
-- Backend gap: Backend configuration entities and relationships exist; visualization is frontend work.
-- Preservation and reuse: Reuse configuration and revision entities.
-- Validation: Configuration API tests and workspace tests.
+- Redesign gap: Node-based visual canvas, component inspection, and status indicators are not implemented.
+- Backend gap: Missing backend requirements include an explicit component graph or relationship model, runtime-state queryability for components, and status reporting. Existing configuration entities and revisions should be reused, but a generic component configuration is not already a complete executable or observable graph.
+- Preservation and reuse: Reuse configuration and revision entities; extend rather than replace them.
+- Validation: Configuration API tests and workspace tests; no test currently demonstrates a live component graph or runtime status.
 
 ### Phase 6 — Integration, visual polish, accessibility, usability, and reliability validation
 
