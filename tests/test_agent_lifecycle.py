@@ -127,15 +127,6 @@ class AgentLifecycleTests(unittest.TestCase):
         self.assertEqual(self.store.get_agent_run(run_id)["status"], "completed")
         self.assertTrue(any(item.get("reason") == "terminal_conflict" for item in report["unresolved"]))
 
-    def test_no_process_side_effects(self):
-        run_id = "run-side"
-        self._insert_run(run_id, "running")
-        with self.lab.lock:
-            background_agent.create(self.lab.connection, run_id)
-            lifecycle.decide(self.lab.connection, run_id, "interrupted", source="worker", reason="stopped")
-        lifecycle.reconcile(self.store, self.lab)
-        self.assertTrue(True)
-
     def test_reconstruct_missing_task_from_decision(self):
         run_id = "run-reconstruct"
         self._insert_run(run_id, "running")
@@ -194,15 +185,6 @@ class AgentLifecycleTests(unittest.TestCase):
         report = lifecycle.reconcile(self.store, self.lab)
         self.assertIsNone(background_agent.get(self.lab.connection, run_id))
         self.assertTrue(any(item.get("reason") == "decision_without_agent_run" for item in report["unresolved"]))
-
-    def test_reconciliation_no_process_side_effects(self):
-        run_id = "run-recon-side"
-        self._insert_run(run_id, "running")
-        with self.lab.lock:
-            background_agent.create(self.lab.connection, run_id)
-            lifecycle.decide(self.lab.connection, run_id, "interrupted", source="worker", reason="stopped")
-        lifecycle.reconcile(self.store, self.lab)
-        self.assertTrue(True)
 
 
 if __name__ == "__main__":
