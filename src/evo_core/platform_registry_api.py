@@ -29,20 +29,12 @@ class RevisionCreateRequest(BaseModel):
     change_summary: str = Field(default="", max_length=2000)
     name: Optional[str] = Field(default=None, max_length=200)
     description: Optional[str] = Field(default=None, max_length=4000)
-    description: Optional[str] = None
-
-    @classmethod
-    def _validate_expected(cls, value):
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError("expected_version must be a positive integer")
-        return value
-
 
 class RestoreRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_version: Annotated[int, Strict(), Field(gt=0)]
-    change_summary: str = ""
+    change_summary: str = Field(default="", max_length=2000)
 
 
 class ConfigurationUpdateRequest(BaseModel):
@@ -166,14 +158,14 @@ def build_configuration_router(store):
                 description=payload.description,
                 change_summary=payload.change_summary,
             )
+            config = ai_configurations.get_configuration(store, result["configuration"]["configuration_id"])
+            revision = result["revision"]
         except ai_configurations.ConfigurationValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ai_configurations.ConfigurationConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail="internal error") from exc
-        config = ai_configurations.get_configuration(store, result["configuration"]["configuration_id"])
-        revision = result["revision"]
         return ConfigurationRevisionResult(
             configuration=_to_configuration_record(config),
             revision=_to_revision_record(revision),

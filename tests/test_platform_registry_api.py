@@ -244,6 +244,27 @@ class PlatformRegistryApiTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ConfigurationCreateRequest(definition=VALID_DEFINITION, name="cfg", foo=1)
 
+    def test_revision_description_length_rejected(self):
+        from pydantic import ValidationError
+
+        from evo_core.platform_registry_api import RevisionCreateRequest
+
+        with self.assertRaises(ValidationError):
+            RevisionCreateRequest(
+                definition=VALID_DEFINITION,
+                expected_version=1,
+                description="x" * 4001,
+            )
+
+    def test_restore_change_summary_length_rejected(self):
+        from pydantic import ValidationError
+
+        from evo_core.platform_registry_api import RestoreRevisionRequest
+
+        with self.assertRaises(ValidationError):
+            RestoreRevisionRequest(expected_version=1, change_summary="x" * 2001)
+
+
     def test_whitespace_name_rejected(self):
         from pydantic import ValidationError
 
