@@ -31,8 +31,15 @@ def _looks_sensitive_name(name):
         return True
     return joined in {"token","tokens","authkey","auth_key","client_secret"}
 
+def _is_sqlite_sidecar(name):
+    lowered = str(name).casefold()
+    return bool(re.search(r"\.(sqlite3?|db)(-wal|-shm|-journal)$", lowered))
+
+
 def _is_excluded(path):
     if path.suffix.lower() in SENSITIVE_SUFFIXES:
+        return True
+    if _is_sqlite_sidecar(path.name):
         return True
     return any(part in IGNORED_DIRS or _looks_sensitive_name(part)
                for part in path.parts)
@@ -55,7 +62,8 @@ class WorkspaceError(RuntimeError):
 
 def _safe_environment():
     """Return a copy of the process environment without obvious secret-bearing variables."""
-    blocked_fragments=("SECRET","TOKEN","PASSWORD","PASSWD","API_KEY","CREDENTIAL","PRIVATE_KEY","ACCESS_KEY")
+    blocked_fragments=("SECRET","TOKEN","PASSWORD","PASSWD","API_KEY","CREDENTIAL","PRIVATE_KEY","ACCESS_KEY",
+                      "AUTH","COOKIE","SESSION","CERTIFICATE","PASSPHRASE")
     env={}
     for key,value in os.environ.items():
         upper=key.upper()
@@ -99,6 +107,9 @@ class Workspace:
         base=self.resolve(relative_path)
         if not base.is_dir():
             raise WorkspaceError(f"Not a directory: {relative_path}")
+        rel_base = base.relative_to(self.root)
+        if base != self.root and (any(part in IGNORED_DIRS for part in rel_base.parts) or _is_excluded(rel_base)):
+            return [], False
         results=[]
         truncated=False
         for dirpath,dirnames,filenames in os.walk(base,followlinks=False):
@@ -118,9 +129,9 @@ class Workspace:
                 if not fnmatch.fnmatch(filename,pattern):
                     continue
                 results.append(rel.as_posix())
-                if len(results)>=max(1,limit):
-                    truncated=True
-                    return results,truncated
+                if len(results) > max(1, limit):
+                    truncated = True
+                    return results[:max(1, limit)], truncated
         return results,truncated
 
     def project_overview(self):
@@ -147,10 +158,12 @@ class Workspace:
                 project_files[name]=content[:5000]
                 if len(project_files)>=5:
                     break
+        listed=self.list_files(limit=120,include_status=True)
         return {
             "workspace":self.root.name,
             "top_level":entries,
-            "files":self.list_files(limit=120),
+            "files":listed["files"],
+            "files_truncated":listed["truncated"],
             "project_instructions_and_manifests":project_files,
             "limits":{"top_level_entries":80,"listed_files":120,"manifest_chars_each":5000},
         }
@@ -201,9 +214,9 @@ class Workspace:
             for number,line in enumerate(lines,1):
                 if query.casefold() in line.casefold():
                     matches.append({"path":name,"line":number,"text":line[:500]})
-                    if len(matches)>=max(1,limit):
-                        match_limit_reached=True
-                        return matches,file_scope_truncated,match_limit_reached
+                    if len(matches) > max(1, limit):
+                        match_limit_reached = True
+                        return matches[:max(1, limit)], file_scope_truncated, match_limit_reached
         return matches,file_scope_truncated,match_limit_reached
 
     def approve_test_write(self,relative_path):

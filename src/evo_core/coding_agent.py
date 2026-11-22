@@ -21,9 +21,9 @@ Coding-agent operating rules:
 
 TOOL_SPECS = [
  {"type":"function","function":{"name":"inspect_project","description":"Inspect the configured workspace: safe top-level entries, a bounded file list, and common project instruction/build manifests. Use this before changing code.","parameters":{"type":"object","properties":{},"additionalProperties":False}}},
- {"type":"function","function":{"name":"list_files","description":"List files beneath the configured project workspace.","parameters":{"type":"object","properties":{"path":{"type":"string","default":"."},"pattern":{"type":"string","default":"*"}},"additionalProperties":False}}},
+ {"type":"function","function":{"name":"list_files","description":"List files beneath the configured project workspace. Result includes whether the listing was truncated.","parameters":{"type":"object","properties":{"path":{"type":"string","default":"."},"pattern":{"type":"string","default":"*"}},"additionalProperties":False}}},
  {"type":"function","function":{"name":"read_file","description":"Read a UTF-8 text file beneath the configured project workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
- {"type":"function","function":{"name":"search_text","description":"Search file contents for a literal text string beneath the workspace.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"],"additionalProperties":False}}},
+ {"type":"function","function":{"name":"search_text","description":"Search file contents for a literal text string beneath the workspace. Result includes whether matches or file scope were truncated.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"write_file","description":"Create or replace a text file. Requires explicit user approval.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"overwrite":{"type":"boolean","default":False}},"required":["path","content"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120}},"required":["argv"],"additionalProperties":False}}}
 ]
@@ -67,11 +67,11 @@ class CodingAgent:
         if name=="inspect_project":
             return self.workspace.project_overview()
         if name=="list_files":
-            return self.workspace.list_files(args.get("path","."),args.get("pattern","*"))
+            return self.workspace.list_files(args.get("path","."),args.get("pattern","*"),include_status=True)
         if name=="read_file":
             return self.workspace.read_file(args["path"])
         if name=="search_text":
-            return self.workspace.search_text(args["query"],args.get("path","."))
+            return self.workspace.search_text(args["query"],args.get("path","."),include_status=True)
         if name=="write_file":
             return {"written":self.workspace.write_file(args["path"],args["content"],bool(args.get("overwrite",False)),test_approval=test_approval)}
         if name=="run_command":

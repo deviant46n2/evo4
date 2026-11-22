@@ -86,6 +86,74 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(result["returncode"],0)
             self.assertIn("unittest",result["stdout"])
 
+
+
+class WorkspaceFollowupTests(unittest.TestCase):
+    def test_sqlite_sidecars_are_excluded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace(tmp)
+            for name in ("state.db-wal", "state.db-shm", "database.sqlite-wal", "database.sqlite3-shm", "app.db-journal"):
+                (Path(tmp) / name).write_text("secret", encoding="utf-8")
+                self.assertNotIn(name, ws.list_files())
+                with self.assertRaises(WorkspaceError):
+                    ws.read_file(name)
+                self.assertFalse(ws.search_text("secret", include_status=True)["matches"] or
+                                any(m["path"] == name for m in ws.search_text("secret", include_status=True)["matches"]))
+
+    def test_listing_exact_limit_is_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(2):
+                (root / f"file{i}.txt").write_text("x", encoding="utf-8")
+            ws = Workspace(root)
+            result = ws.list_files(include_status=True, limit=2)
+            self.assertEqual(len(result["files"]), 2)
+            self.assertTrue(result["complete"])
+            self.assertFalse(result["truncated"])
+
+    def test_listing_over_limit_is_truncated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(3):
+                (root / f"file{i}.txt").write_text("x", encoding="utf-8")
+            ws = Workspace(root)
+            result = ws.list_files(include_status=True, limit=2)
+            self.assertEqual(len(result["files"]), 2)
+            self.assertFalse(result["complete"])
+            self.assertTrue(result["truncated"])
+
+    def test_search_exact_limit_is_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(2):
+                (root / f"file{i}.txt").write_text("needle\n", encoding="utf-8")
+            ws = Workspace(root)
+            result = ws.search_text("needle", limit=2, include_status=True)
+            self.assertEqual(len(result["matches"]), 2)
+            self.assertTrue(result["complete"])
+            self.assertFalse(result["truncated"])
+
+    def test_search_over_limit_is_truncated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(3):
+                (root / f"file{i}.txt").write_text("needle\n", encoding="utf-8")
+            ws = Workspace(root)
+            result = ws.search_text("needle", limit=2, include_status=True)
+            self.assertEqual(len(result["matches"]), 2)
+            self.assertFalse(result["complete"])
+            self.assertTrue(result["truncated"])
+
+    def test_ignored_starting_directory_is_not_traversed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            (root / ".git" / "secret.txt").write_text("secret", encoding="utf-8")
+            ws = Workspace(root)
+            self.assertEqual(ws.list_files(".git"), [])
+            self.assertFalse(ws.list_files(".git", include_status=True)["truncated"])
+            self.assertEqual(ws.search_text("secret", ".git"), [])
+
 if __name__=="__main__":
     unittest.main()
 

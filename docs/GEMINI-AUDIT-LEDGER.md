@@ -87,10 +87,10 @@ Evidence types:
 - Unverified assumptions: Whether symlink traversal can escape in practice on the target Python version.
 - Required remediation: Restrict traversal, add exclusions for sensitive/internal artifacts, report truncation, and document command/environment boundaries.
 - Acceptance criteria: Sensitive files are not exposed; truncation is communicated; command and environment behavior is documented and tested.
-- Status: Remediation implemented in commit `17a53a8`; pending GPT-6 review.
-- Fix: ignored directories are pruned before traversal; sensitive/internal file exclusions expanded; listing and search report truncation; command execution uses a filtered environment.
-- New tests: `tests/test_workspace.py` (`WorkspaceBoundaryTests`).
-- Remaining limitations: symlink and filesystem races are reduced but not eliminated; command allowlist remains prefix-based by design.
+- Status: Remediation implemented in commits `17a53a8` and follow-up; pending GPT-6 review.
+- Fix: ignored directories are pruned before traversal, including when supplied as the starting directory; sensitive/internal file exclusions expanded to SQLite sidecars and generated artifacts; listing and search report exact-limit truncation; command execution uses an expanded filtered environment; coding-agent tools receive status metadata.
+- New tests: `tests/test_workspace.py` (`WorkspaceBoundaryTests`, `WorkspaceFollowupTests`).
+- Remaining limitations: symlink and filesystem races are reduced but not eliminated; command allowlist remains prefix-based by design; environment filtering is a denylist, not a sandbox.
 
 - Subsystem: Registered workspace execution boundary
 - Source: `src/evo_core/workspaces.py` (`resolve_executable_workspace`); `src/evo_core/api.py` (`start_agent`, `run_agent`, `propose_agent_plan`, `execute_agent_plan`); `src/evo_core/orchestration.py` (`create_plan`, `attach_run`); `desktop/src/Workspaces.tsx` (`AgentsWorkspace`)
