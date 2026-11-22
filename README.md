@@ -242,3 +242,9 @@ The desktop Agents workspace runs the approval-gated coding agent as a persisten
 Evo can ask the configured model to produce a bounded JSON task plan, save it for review, and execute it only after explicit user approval. Plans contain ordered steps with descriptions, expected outcomes, and verification instructions. The user can inspect the complete proposal before approving it. Each step is delegated sequentially to the existing coding agent; file writes and allowlisted commands still require their own per-action approval. Step results, plan lifecycle events, and terminal outcomes are persisted. A failed step stops later steps. Restart recovery marks approved or executing plans interrupted and never replays them.
 
 This is supervised orchestration, not autonomous execution. Step completion currently means the coding-agent loop completed its step request; the recorded verification instruction is not yet an independent test oracle. There are no automatic retries, pause/resume checkpoints, durable approval restoration, or reliable per-plan resource estimates. Hardware admission is therefore explicitly not claimed by this milestone. See [Agent Orchestration v1](docs/AGENT-ORCHESTRATION.md) for API, lifecycle, and limitations.
+
+## Roadmap and proposed development control plane
+
+Evo4's agreed roadmap is recorded in [`ROADMAP.md`](ROADMAP.md). The proposed development control plane architecture is recorded in [`docs/DEVELOPMENT-CONTROL-PLANE.md`](docs/DEVELOPMENT-CONTROL-PLANE.md).
+
+These documents record planning decisions and proposed architecture. They do not imply that the development control plane, lifecycle supervisor, or other proposed capabilities are implemented. Current implementation status remains described in `README.md` and `docs/AGENT-ORCHESTRATION.md`.
