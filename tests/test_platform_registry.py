@@ -575,16 +575,31 @@ class PlatformRegistryFailClosedStartupTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_create_app_raises_on_registry_failure(self):
+        import sqlite3
         import unittest.mock as mock
         from evo_core import platform_registry
+        from evo_core import api as api_module
+        from evo_core.store import EvoStore as real_evo_store
 
-        with mock.patch.object(
-            platform_registry, "initialize_platform_registry", side_effect=RuntimeError("boom")
-        ):
-            from evo_core.api import create_app
+        captured = {}
 
-            with self.assertRaises(RuntimeError):
-                create_app(self.config)
+        def capturing_store(path):
+            store = real_evo_store(path)
+            captured["store"] = store
+            return store
+
+        with mock.patch.object(api_module, "EvoStore", side_effect=capturing_store):
+            with mock.patch.object(
+                platform_registry, "initialize_platform_registry", side_effect=RuntimeError("boom")
+            ):
+                from evo_core.api import create_app
+
+                with self.assertRaises(RuntimeError):
+                    create_app(self.config)
+
+        self.assertIn("store", captured)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            captured["store"].db.execute("SELECT 1")
 
 
 if __name__ == "__main__":
