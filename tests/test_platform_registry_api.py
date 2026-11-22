@@ -116,10 +116,10 @@ class PlatformRegistryApiTests(unittest.TestCase):
         new_def = {"schema_version": 1, "components": {"model": {"provider": "p2", "model": "m2"}}}
         ep_rev = endpoint(self.app, "POST", "/api/v1/configurations/{configuration_id}/revisions")
         result = ep_rev(configuration_id=cid, payload=RevisionCreateRequest(definition=new_def, expected_version=1, change_summary="update"))
-        self.assertEqual(result.revision_number, 2)
+        self.assertEqual(result.revision.revision_number, 2)
         ep_get = endpoint(self.app, "GET", "/api/v1/configurations/{configuration_id}")
         cfg = ep_get(configuration_id=cid)
-        self.assertEqual(cfg.current_revision_id, result.revision_id)
+        self.assertEqual(cfg.current_revision_id, result.revision.revision_id)
         self.assertEqual(cfg.version, 2)
 
     def test_restore_revision(self):
@@ -134,7 +134,8 @@ class PlatformRegistryApiTests(unittest.TestCase):
         ep_rev(configuration_id=cid, payload=RevisionCreateRequest(definition=new_def, expected_version=1))
         ep_restore = endpoint(self.app, "POST", "/api/v1/configurations/{configuration_id}/restore/{revision_id}")
         restored = ep_restore(configuration_id=cid, revision_id=rid, payload=RestoreRevisionRequest(expected_version=2, change_summary="restore"))
-        self.assertEqual(restored.revision_number, 3)
+        self.assertEqual(restored.revision.revision_number, 3)
+        self.assertEqual(restored.configuration.current_revision_id, restored.revision.revision_id)
         ep_list = endpoint(self.app, "GET", "/api/v1/configurations/{configuration_id}/revisions")
         history = ep_list(configuration_id=cid)
         self.assertEqual(history.total, 3)
@@ -159,8 +160,10 @@ class PlatformRegistryApiTests(unittest.TestCase):
         created = ep_create(payload=ConfigurationCreateRequest(definition=VALID_DEFINITION, name="cfg"))
         cid = created.configuration.configuration_id
         version = created.configuration.version
+        from evo_core.platform_registry_api import ArchiveRequest
+
         ep_archive = endpoint(self.app, "POST", "/api/v1/configurations/{configuration_id}/archive")
-        response = ep_archive(configuration_id=cid, payload=ConfigurationUpdateRequest(status="archived", expected_version=version))
+        response = ep_archive(configuration_id=cid, payload=ArchiveRequest(expected_version=version))
         self.assertEqual(response.status, "archived")
 
     def test_invalid_expected_version(self):
@@ -248,6 +251,140 @@ class PlatformRegistryApiTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             ConfigurationCreateRequest(definition=VALID_DEFINITION, name="   ")
+
+
+
+import asyncio
+import json as _json
+
+
+def asgi_request(app, method, path, body=None):
+    if "?" in path:
+        path_part, query_part = path.split("?", 1)
+    else:
+        path_part, query_part = path, ""
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path_part,
+        "raw_path": path_part.encode(),
+        "query_string": query_part.encode(),
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("127.0.0.1", 8000),
+        "state": {},
+    }
+    payload = b"" if body is None else _json.dumps(body).encode()
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    status = messages[0]["status"]
+    raw = b"".join(m.get("body", b"") for m in messages if m.get("type") == "http.response.body")
+    try:
+        data = _json.loads(raw)
+    except Exception:
+        data = raw
+    return status, data
+
+
+class PlatformRegistryHttpTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_create_http(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})
+        self.assertEqual(status, 201)
+        self.assertIn("configuration", body)
+        self.assertIn("revision", body)
+        self.assertEqual(body["configuration"]["status"], "active")
+
+    def test_list_and_status_filter_http(self):
+        asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "a"})
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "b"})[1]
+        cid = created["configuration"]["configuration_id"]
+        version = created["configuration"]["version"]
+        asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/archive", {"expected_version": version})
+        status, body = asgi_request(self.app, "GET", "/api/v1/configurations")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 2)
+        status, body = asgi_request(self.app, "GET", "/api/v1/configurations?status=archived")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 1)
+
+    def test_revision_create_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        new_def = {"schema_version": 1, "components": {"model": {"provider": "p2", "model": "m2"}}}
+        status, body = asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/revisions", {"definition": new_def, "expected_version": 1})
+        self.assertEqual(status, 201)
+        self.assertEqual(body["revision"]["revision_number"], 2)
+        self.assertEqual(body["configuration"]["version"], 2)
+
+    def test_restore_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        rid = created["revision"]["revision_id"]
+        new_def = {"schema_version": 1, "components": {"model": {"provider": "p2", "model": "m2"}}}
+        asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/revisions", {"definition": new_def, "expected_version": 1})
+        status, body = asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/restore/{rid}", {"expected_version": 2})
+        self.assertEqual(status, 201)
+        self.assertEqual(body["revision"]["revision_number"], 3)
+        self.assertEqual(body["configuration"]["current_revision_id"], body["revision"]["revision_id"])
+
+    def test_archive_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        version = created["configuration"]["version"]
+        status, body = asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/archive", {"expected_version": version})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "archived")
+
+    def test_patch_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        version = created["configuration"]["version"]
+        status, body = asgi_request(self.app, "PATCH", f"/api/v1/configurations/{cid}", {"status": "archived", "expected_version": version})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "archived")
+
+    def test_invalid_body_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        status, body = asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/revisions", {"definition": VALID_DEFINITION, "expected_version": "bad"})
+        self.assertEqual(status, 422)
+        status, body = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg", "foo": 1})
+        self.assertEqual(status, 422)
+
+    def test_unknown_http(self):
+        status, body = asgi_request(self.app, "GET", "/api/v1/configurations/does-not-exist")
+        self.assertEqual(status, 404)
+        status, body = asgi_request(self.app, "GET", "/api/v1/configurations/does-not-exist/revisions/does-not-exist")
+        self.assertEqual(status, 404)
+
+    def test_stale_version_http(self):
+        created = asgi_request(self.app, "POST", "/api/v1/configurations", {"definition": VALID_DEFINITION, "name": "cfg"})[1]
+        cid = created["configuration"]["configuration_id"]
+        status, body = asgi_request(self.app, "POST", f"/api/v1/configurations/{cid}/revisions", {"definition": VALID_DEFINITION, "expected_version": 999})
+        self.assertEqual(status, 409)
 
 
 if __name__ == "__main__":

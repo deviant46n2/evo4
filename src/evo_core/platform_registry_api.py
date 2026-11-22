@@ -9,9 +9,9 @@ class ConfigurationCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     definition: dict[str, Any]
-    name: str = ""
-    description: str = ""
-    change_summary: str = ""
+    name: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=4000)
+    change_summary: str = Field(default="", max_length=2000)
 
     @field_validator("name")
     @classmethod
@@ -20,28 +20,15 @@ class ConfigurationCreateRequest(BaseModel):
             raise ValueError("name must not be whitespace-only")
         return value
 
-    def validate_strings(self):
-        if not isinstance(self.name, str):
-            raise ValueError("name must be a string")
-        if not isinstance(self.description, str):
-            raise ValueError("description must be a string")
-        if not isinstance(self.change_summary, str):
-            raise ValueError("change_summary must be a string")
-        if self.name.strip() == "" and self.name != "":
-            pass
-        if self.name.strip() == "" and len(self.name) > 0:
-            raise ValueError("name must not be whitespace-only when provided")
-        # Required name is not enforced at creation; service defaults empty.
-
-
 class RevisionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     definition: dict[str, Any]
     expected_version: Annotated[int, Strict(), Field(gt=0)]
-    parent_revision_id: Optional[str] = None
-    change_summary: str = ""
-    name: Optional[str] = None
+    parent_revision_id: Optional[str] = Field(default=None, max_length=128)
+    change_summary: str = Field(default="", max_length=2000)
+    name: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=4000)
     description: Optional[str] = None
 
     @classmethod
@@ -111,6 +98,12 @@ class ConfigurationRevisionResult(BaseModel):
     revision: RevisionRecord
 
 
+class ArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: Annotated[int, Strict(), Field(gt=0)]
+
+
 def _strict_expected_version(value):
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError("expected_version must be a positive integer")
@@ -166,7 +159,6 @@ def build_configuration_router(store):
     @router.post("/configurations", response_model=ConfigurationRevisionResult, status_code=201)
     def create_configuration(payload: ConfigurationCreateRequest):
         try:
-            payload.validate_strings()
             result = ai_configurations.create_configuration(
                 store,
                 payload.definition,
@@ -218,7 +210,7 @@ def build_configuration_router(store):
             raise HTTPException(status_code=500, detail="internal error") from exc
         return _to_revision_record(record)
 
-    @router.post("/configurations/{configuration_id}/revisions", response_model=RevisionRecord, status_code=201)
+    @router.post("/configurations/{configuration_id}/revisions", response_model=ConfigurationRevisionResult, status_code=201)
     def create_revision(configuration_id: str, payload: RevisionCreateRequest):
         try:
             expected = _strict_expected_version(payload.expected_version)
@@ -232,6 +224,7 @@ def build_configuration_router(store):
                 name=payload.name,
                 description=payload.description,
             )
+            config = ai_configurations.get_configuration(store, configuration_id)
         except ai_configurations.ConfigurationNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ai_configurations.ConfigurationConflictError as exc:
@@ -240,9 +233,12 @@ def build_configuration_router(store):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail="internal error") from exc
-        return _to_revision_record(revision)
+        return ConfigurationRevisionResult(
+            configuration=_to_configuration_record(config),
+            revision=_to_revision_record(revision),
+        )
 
-    @router.post("/configurations/{configuration_id}/restore/{revision_id}", response_model=RevisionRecord, status_code=201)
+    @router.post("/configurations/{configuration_id}/restore/{revision_id}", response_model=ConfigurationRevisionResult, status_code=201)
     def restore_revision(configuration_id: str, revision_id: str, payload: RestoreRevisionRequest):
         try:
             expected = _strict_expected_version(payload.expected_version)
@@ -253,6 +249,7 @@ def build_configuration_router(store):
                 expected_version=expected,
                 change_summary=payload.change_summary,
             )
+            config = ai_configurations.get_configuration(store, configuration_id)
         except ai_configurations.ConfigurationNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ai_configurations.ConfigurationConflictError as exc:
@@ -261,7 +258,10 @@ def build_configuration_router(store):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail="internal error") from exc
-        return _to_revision_record(revision)
+        return ConfigurationRevisionResult(
+            configuration=_to_configuration_record(config),
+            revision=_to_revision_record(revision),
+        )
 
     @router.patch("/configurations/{configuration_id}", response_model=ConfigurationRecord)
     def update_configuration(configuration_id: str, payload: ConfigurationUpdateRequest):
@@ -290,7 +290,7 @@ def build_configuration_router(store):
         return _to_configuration_record(record)
 
     @router.post("/configurations/{configuration_id}/archive", response_model=ConfigurationRecord)
-    def archive_configuration(configuration_id: str, payload: ConfigurationUpdateRequest):
+    def archive_configuration(configuration_id: str, payload: ArchiveRequest):
         # Reuse expected version validation; status is ignored for archive endpoint.
         try:
             expected = _strict_expected_version(payload.expected_version)
