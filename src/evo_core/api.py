@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from .assistant import EvoAssistant
 from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
+from . import workspaces as workspace_registry
 from .config import load_config
 from .store import EvoStore
 from . import platform_registry
@@ -90,7 +91,7 @@ class MemorySupersede(BaseModel):
 
 class AgentCreate(BaseModel):
     request: str = Field(min_length=1, max_length=20000)
-    workspace: str | None = Field(default=None, max_length=2000)
+    workspace_id: str = Field(min_length=1, max_length=128)
 
 
 class AgentApproval(BaseModel):
@@ -99,7 +100,7 @@ class AgentApproval(BaseModel):
 
 class AgentPlanCreate(BaseModel):
     request: str = Field(min_length=1, max_length=12000)
-    workspace: str | None = Field(default=None, max_length=2000)
+    workspace_id: str = Field(min_length=1, max_length=128)
 
 class RuntimeProfileInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -203,6 +204,19 @@ def create_app(config_path="config.toml", provider_name=None):
     agent_stop_events = {}
     agent_futures = {}
     agent_registry_guard = threading.RLock()
+
+    def _resolve_workspace_for_execution(workspace_id):
+        try:
+            return workspace_registry.resolve_executable_workspace(store, workspace_id)
+        except workspace_registry.WorkspaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except workspace_registry.WorkspaceConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except workspace_registry.WorkspaceRelationshipError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except workspace_registry.WorkspaceValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 
@@ -744,14 +758,17 @@ def create_app(config_path="config.toml", provider_name=None):
     def propose_agent_plan(payload: AgentPlanCreate):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
-        workspace = Path(payload.workspace).expanduser().resolve() if payload.workspace else config.workspace_root.resolve()
+        binding = _resolve_workspace_for_execution(payload.workspace_id)
+        workspace_id = payload.workspace_id.strip()
+        workspace = binding["path"] if isinstance(binding, dict) else binding.path
         try:
             proposal = orchestration.propose_with_model(
                 assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
                 allowed_commands=config.allowed_commands)
             with lab_db.lock:
-                plan = orchestration.create_plan(lab_db.connection, payload.request, str(workspace), proposal,
-                                                allowed_commands=config.allowed_commands)
+                plan = orchestration.create_plan(
+                    lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
+                    allowed_commands=config.allowed_commands)
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -803,19 +820,39 @@ def create_app(config_path="config.toml", provider_name=None):
                 raise HTTPException(status_code=404, detail="Agent plan not found")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
+        workspace_id = plan.get("workspace_id")
+        if not workspace_id:
+            raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
+        binding = _resolve_workspace_for_execution(workspace_id)
+        workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
+        with lab_db.lock:
+            plan = orchestration.get_plan(lab_db.connection, plan_id)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="Agent plan not found")
+            if plan["status"] != "approved":
+                raise HTTPException(status_code=409, detail="Approve the plan before execution")
             request_text = plan["request"]
-            workspace = Path(plan["workspace"]).expanduser().resolve()
             run_id = store.start_agent_run("orchestrated", {
-                "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+                "workspace_id": workspace_id, "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
-            orchestration.attach_run(lab_db.connection, plan_id, run_id)
+            try:
+                orchestration.attach_run(lab_db.connection, plan_id, run_id)
+            except ValueError as exc:
+                attached = False
+                attach_error = exc
+            else:
+                attached = True
+                attach_error = None
+        if not attached:
+            _finalize_agent_run(run_id, "failed", "Plan is not approved or has already been started", plan_id)
+            raise HTTPException(status_code=409, detail="Plan is not approved or has already been started") from attach_error
         stop_event = threading.Event()
         with agent_registry_guard:
             agent_stop_events[run_id] = stop_event
         try:
-            future = executor.submit(run_agent, run_id, request_text, workspace, stop_event, plan_id)
+            future = executor.submit(run_agent, run_id, request_text, workspace_id, stop_event, plan_id)
             with agent_registry_guard:
                 agent_futures[run_id] = future
             future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
@@ -830,9 +867,11 @@ def create_app(config_path="config.toml", provider_name=None):
     def start_agent(payload: AgentCreate):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
-        workspace = Path(payload.workspace).expanduser().resolve() if payload.workspace else config.workspace_root.resolve()
+        binding = _resolve_workspace_for_execution(payload.workspace_id)
+        workspace_id = payload.workspace_id.strip()
+        workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
-            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "workspace_id": workspace_id, "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
@@ -841,7 +880,7 @@ def create_app(config_path="config.toml", provider_name=None):
         with lab_db.lock:
             background_agent.create(lab_db.connection, run_id)
         try:
-            future = executor.submit(run_agent, run_id, payload.request, workspace, stop_event)
+            future = executor.submit(run_agent, run_id, payload.request, workspace_id, stop_event)
             with agent_registry_guard:
                 agent_futures[run_id] = future
             future.add_done_callback(lambda _future: _forget_agent_future(run_id, future))
@@ -852,9 +891,26 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
         return {"run_id": run_id, "status": "running"}
 
-    def run_agent(run_id, request_text, workspace, stop_event, plan_id=None):
+    def run_agent(run_id, request_text, workspace_id, stop_event, plan_id=None):
         import uuid
         worker_token = uuid.uuid4().hex
+        workspace = None
+        if isinstance(workspace_id, str) and workspace_id.strip():
+            try:
+                binding = workspace_registry.resolve_executable_workspace(store, workspace_id)
+                workspace = binding["path"] if isinstance(binding, dict) else binding.path
+            except Exception as exc:
+                _finalize_agent_run(run_id, "failed", f"Workspace validation failed: {exc}", plan_id)
+                with agent_registry_guard:
+                    agent_stop_events.pop(run_id, None)
+                    agent_futures.pop(run_id, None)
+                return
+        else:
+            _finalize_agent_run(run_id, "failed", "Agent run has no registered workspace binding", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
         with lab_db.lock:
             claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
         if not claimed:

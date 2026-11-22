@@ -58,6 +58,9 @@ def initialize(connection):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plan_steps)")}
         if column not in columns:
             connection.execute(f"ALTER TABLE agent_plan_steps ADD COLUMN {column} {definition}")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plans)")}
+    if "workspace_id" not in columns:
+        connection.execute("ALTER TABLE agent_plans ADD COLUMN workspace_id TEXT")
     connection.commit()
 
 def _event(connection, plan_id, event_type, payload=None, step_id=None):
@@ -65,7 +68,28 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         "INSERT INTO agent_plan_events(plan_id,step_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
-def create_plan(connection, request, workspace, proposal, allowed_commands=None):
+def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, workspace=None, proposal=None):
+    # Support both the legacy (workspace, proposal) signature and the new
+    # (workspace_id, workspace, proposal) signature without breaking callers.
+    positional = list(args)
+    if proposal is None and positional and isinstance(positional[-1], dict):
+        proposal = positional.pop()
+    if workspace is None and len(positional) >= 2 and isinstance(positional[1], str) and (positional[0] is None or isinstance(positional[0], str)):
+        workspace_id = positional.pop(0)
+        workspace = positional.pop(0)
+    elif workspace is None and len(positional) == 1 and isinstance(positional[0], str):
+        workspace = positional.pop(0)
+    if allowed_commands is None and positional:
+        allowed_commands = positional.pop()
+    if not isinstance(proposal, dict):
+        raise ValueError("Plan proposal must be an object")
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise ValueError("A resolved workspace path is required")
+    workspace = workspace.strip()
+    if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+        raise ValueError("workspace_id must be a non-empty string when provided")
+    if isinstance(workspace_id, str):
+        workspace_id = workspace_id.strip()
     if not isinstance(proposal, dict):
         raise ValueError("Plan proposal must be an object")
     raw_title, raw_summary = proposal.get("title"), proposal.get("summary")
@@ -110,9 +134,9 @@ def create_plan(connection, request, workspace, proposal, allowed_commands=None)
     plan_id, stamp = uuid.uuid4().hex, _now()
     with connection:
         connection.execute(
-            """INSERT INTO agent_plans(id,request,workspace,title,summary,status,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (plan_id, request[:20000], workspace, title, summary, "proposed", stamp, stamp))
+            """INSERT INTO agent_plans(id,request,workspace,workspace_id,title,summary,status,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (plan_id, request[:20000], workspace, workspace_id, title, summary, "proposed", stamp, stamp))
         for index, step in enumerate(steps):
             connection.execute(
                 """INSERT INTO agent_plan_steps(id,plan_id,position,title,description,expected_outcome,verification,verification_commands_json)
@@ -173,7 +197,7 @@ def get_plan(connection, plan_id):
 
 def list_plans(connection, limit=50):
     rows = connection.execute(
-        "SELECT id,title,summary,status,created_at,updated_at,run_id,error FROM agent_plans ORDER BY created_at DESC LIMIT ?",
+        "SELECT id,title,summary,status,workspace,workspace_id,created_at,updated_at,run_id,error FROM agent_plans ORDER BY created_at DESC LIMIT ?",
         (min(max(int(limit), 1), 100),)).fetchall()
     return [dict(row) for row in rows]
 

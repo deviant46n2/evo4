@@ -8,6 +8,9 @@ try:
     from fastapi import HTTPException
     from evo_core.api import create_app, AgentApproval
     from evo_core import orchestration
+    from evo_core.project_checkouts import register_project, register_checkout
+    from evo_core.ai_configurations import create_configuration
+    from evo_core.workspaces import create_workspace
     AVAILABLE = True
 except ImportError:
     AVAILABLE = False
@@ -32,10 +35,26 @@ class VerificationApprovalApiTests(unittest.TestCase):
         self.routes = {(route.path, method): route.endpoint
                        for route in self.app.routes if hasattr(route, "endpoint")
                        for method in (route.methods or [])}
+        store = self.app.state.store
+        project = register_project(store, "Project")
+        checkout_dir = root / "checkout"
+        checkout_dir.mkdir()
+        checkout = register_checkout(store, project["project_id"], checkout_dir)
+        config_result = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg")
+        configuration = config_result["configuration"]
+        revision = config_result["revision"]
+        workspace = create_workspace(
+            store,
+            "Workspace",
+            project["project_id"],
+            configuration["configuration_id"],
+            revision["revision_id"],
+            checkout_id=checkout["checkout_id"],
+        )
         with self.app.state.lab_db.lock:
             self.plan = orchestration.create_plan(
                 self.app.state.lab_db.connection,
-                "Verify command", str(root),
+                "Verify command", workspace["workspace_id"], str(checkout_dir),
                 {
                     "title": "Verify command",
                     "summary": "Run a verification command.",

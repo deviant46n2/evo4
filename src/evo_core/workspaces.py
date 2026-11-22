@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 from .store import utc_now
+from . import project_checkouts
 
 
 class WorkspaceNotFoundError(Exception):
@@ -267,3 +268,85 @@ def reactivate_workspace(store, workspace_id, *, expected_version):
         return _workspace_row(db, workspace_id)
 
     return _write(store, operation)
+
+
+class WorkspaceNotExecutableError(WorkspaceRelationshipError):
+    pass
+
+
+def resolve_executable_workspace(store, workspace_id):
+    if not isinstance(workspace_id, str) or not workspace_id.strip():
+        raise WorkspaceValidationError("workspace_id must be a non-empty string")
+    workspace_id = workspace_id.strip()
+
+    def operation(db):
+        workspace = _workspace_row(db, workspace_id)
+        if workspace["status"] != "active":
+            raise WorkspaceRelationshipError("workspace must be active")
+        project = _project_row(db, workspace["project_id"])
+        if project["status"] != "active":
+            raise WorkspaceRelationshipError("project must be active")
+        configuration = _configuration_row(db, workspace["configuration_id"])
+        if configuration["status"] != "active":
+            raise WorkspaceRelationshipError("configuration must be active")
+        revision = _revision_row(db, workspace["configuration_id"], workspace["configuration_revision_id"])
+        checkout_id = workspace["checkout_id"]
+        if not checkout_id:
+            raise WorkspaceNotExecutableError("workspace has no registered checkout and cannot be used as an execution target")
+        checkout = _checkout_row(db, checkout_id)
+        if checkout["project_id"] != workspace["project_id"]:
+            raise WorkspaceRelationshipError("checkout does not belong to the workspace project")
+        if checkout["availability_status"] != "available":
+            raise WorkspaceRelationshipError("checkout is not available")
+        current_availability = project_checkouts._availability(checkout["canonical_path"])
+        if current_availability != "available":
+            raise WorkspaceRelationshipError("checkout is not currently available")
+        try:
+            canonical = project_checkouts._canonical_directory(checkout["canonical_path"])
+        except project_checkouts.CheckoutPathError as exc:
+            raise WorkspaceRelationshipError(str(exc)) from exc
+        if canonical != checkout["canonical_path"]:
+            raise WorkspaceRelationshipError("registered checkout path resolves to a different directory")
+        path = Path(canonical)
+        if not path.is_dir():
+            raise WorkspaceRelationshipError("registered checkout is not a directory")
+        binding = _ExecutableWorkspaceBinding(
+            workspace=workspace,
+            project=project,
+            configuration=configuration,
+            revision=revision,
+            checkout=checkout,
+            path=path,
+        )
+        return binding
+
+    return _read(store, operation)
+
+
+class _ExecutableWorkspaceBinding(dict):
+    def __init__(self, *, workspace, project, configuration, revision, checkout, path):
+        super().__init__(
+            workspace_id=workspace["workspace_id"],
+            project_id=workspace["project_id"],
+            configuration_id=workspace["configuration_id"],
+            configuration_revision_id=workspace["configuration_revision_id"],
+            checkout_id=workspace["checkout_id"],
+            status=workspace["status"],
+            workspace=workspace,
+            project=project,
+            configuration=configuration,
+            revision=revision,
+            checkout=checkout,
+            path=path,
+            canonical_path=path,
+            workspace_path=path,
+        )
+        self.workspace = workspace
+        self.project = project
+        self.configuration = configuration
+        self.revision = revision
+        self.checkout = checkout
+        self.path = path
+        self.canonical_path = path
+        self.workspace_path = path
+        self.workspace_id = workspace["workspace_id"]

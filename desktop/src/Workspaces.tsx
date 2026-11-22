@@ -49,7 +49,11 @@ type MemoryReview = {count:number;analyzed_records:number;method:string;mutates_
 type Run = { id: string; kind: string; status: string; started_at: string; finished_at?: string; summary?: string; metadata: Record<string, any> };
 type RunDetail = Run & { events: Array<{ id: number; tool_name: string; input: Record<string, any>; output: string; status: string; created_at: string }>; pending_approval: null | { id: string; tool_name: string; arguments: Record<string, any> }; background_task?: {status:string;cancel_requested:boolean}; background_events?: Array<{id:number;type:string;payload:Record<string,any>;created_at:string}> };
 type AgentPlanSummary = {id:string;title:string;summary:string;status:string;created_at:string;updated_at:string;run_id:string|null;error:string};
-type AgentPlan = AgentPlanSummary & {request:string;workspace:string;steps:Array<{id:string;position:number;title:string;description:string;expected_outcome:string;verification:string;verification_commands?:string[][];verification_status?:string;verification_checks?:Array<{id:number;command:string[];status:string;exit_code:number|null;stdout:string;stderr:string;created_at:string}>;status:string;result:string}>;verification_summary?:{passed:number;failed:number;not_run:number;not_configured:number};events:Array<{id:number;step_id:string|null;type:string;payload:Record<string,any>;created_at:string}>};
+type AgentPlan = AgentPlanSummary & {request:string;workspace:string;workspace_id?:string|null;steps:Array<{id:string;position:number;title:string;description:string;expected_outcome:string;verification:string;verification_commands?:string[][];verification_status?:string;verification_checks?:Array<{id:number;command:string[];status:string;exit_code:number|null;stdout:string;stderr:string;created_at:string}>;status:string;result:string}>;verification_summary?:{passed:number;failed:number;not_run:number;not_configured:number};events:Array<{id:number;step_id:string|null;type:string;payload:Record<string,any>;created_at:string}>};
+type RegistryWorkspace = {workspace_id:string;name:string;status:string;project_id:string;checkout_id:string|null;configuration_id:string;configuration_revision_id:string};
+type ProjectSummary = {project_id:string;name:string;status:string};
+type ConfigurationSummary = {configuration_id:string;name:string;status:string};
+type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_status:string};
 
 export function MemoryWorkspace() {
   const [items, setItems] = useState<Memory[]>([]);
@@ -181,7 +185,11 @@ export function AgentsWorkspace() {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [request, setRequest] = useState("");
-  const [workspace, setWorkspace] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [registryWorkspaces, setRegistryWorkspaces] = useState<RegistryWorkspace[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [configurations, setConfigurations] = useState<ConfigurationSummary[]>([]);
+  const [checkouts, setCheckouts] = useState<Record<string, CheckoutSummary>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
@@ -204,6 +212,32 @@ export function AgentsWorkspace() {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, []);
   useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [workspaceResult, projectResult, configurationResult] = await Promise.all([
+          api<{items: RegistryWorkspace[]}>("/workspaces?status=active"),
+          api<{items: ProjectSummary[]}>("/projects?status=active"),
+          api<{items: ConfigurationSummary[]}>("/configurations?status=active"),
+        ]);
+        if (!alive) return;
+        setRegistryWorkspaces(workspaceResult.items);
+        setProjects(projectResult.items);
+        setConfigurations(configurationResult.items);
+        const checkoutIds = [...new Set(workspaceResult.items.map(item => item.checkout_id).filter(Boolean))] as string[];
+        const checkoutEntries = await Promise.all(checkoutIds.map(async id => {
+          try { return [id, await api<CheckoutSummary>("/checkouts/" + encodeURIComponent(id))] as const; }
+          catch { return [id, null] as const; }
+        }));
+        if (!alive) return;
+        const next: Record<string, CheckoutSummary> = {};
+        for (const [id, checkout] of checkoutEntries) if (checkout) next[id] = checkout;
+        setCheckouts(next);
+      } catch (e) { if (alive) setError(e instanceof Error ? e.message : String(e)); }
+    })();
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
     void refresh(); void refreshPlans();
     const changed=()=>{void refresh();void refreshPlans();if(selected)void refreshDetail(selected);};
     window.addEventListener("evo-demo-data-changed",changed);
@@ -212,19 +246,19 @@ export function AgentsWorkspace() {
   }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan?.id]);
   async function start(event: React.FormEvent) {
     event.preventDefault();
-    if (!request.trim() || busy) return;
+    if (!request.trim() || busy || !workspaceId) return;
     setBusy(true); setError("");
     try {
-      const result = await api<{run_id: string}>("/agents", json({ request: request.trim(), workspace: workspace.trim() || null }));
+      const result = await api<{run_id: string}>("/agents", json({ request: request.trim(), workspace_id: workspaceId }));
       setRequest(""); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
   async function proposePlan() {
-    if (!request.trim() || planning || busy) return;
+    if (!request.trim() || planning || busy || !workspaceId) return;
     setPlanning(true); setError(""); setPlan(null);
     try {
-      const result = await api<AgentPlan>("/agents/plans", json({request:request.trim(),workspace:workspace.trim()||null}));
+      const result = await api<AgentPlan>("/agents/plans", json({request:request.trim(),workspace_id:workspaceId}));
       setPlan(result); await refreshPlans();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setPlanning(false); }
@@ -252,6 +286,19 @@ export function AgentsWorkspace() {
       await refreshDetail(detail.id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
+  const executableWorkspaces = registryWorkspaces.filter(workspace => {
+    if (workspace.status !== "active" || !workspace.checkout_id) return false;
+    const project = projects.find(item => item.project_id === workspace.project_id);
+    if (!project || project.status !== "active") return false;
+    const configuration = configurations.find(item => item.configuration_id === workspace.configuration_id);
+    if (!configuration || configuration.status !== "active") return false;
+    const checkout = checkouts[workspace.checkout_id];
+    if (!checkout || checkout.availability_status !== "available") return false;
+    return true;
+  });
+  useEffect(() => {
+    if (workspaceId && !executableWorkspaces.some(item => item.workspace_id === workspaceId)) setWorkspaceId("");
+  }, [workspaceId, executableWorkspaces]);
   return <div className="workspace-page">
     <DemoDataBanner/>
     <div className="workspace-heading"><div><div className="eyebrow">APPROVAL-GATED EXECUTION</div><h1>Agents</h1><p>Run Evo's existing coding agent, inspect its tool history, and approve every file write or command.</p></div><span className="workspace-count">{runs.length} runs</span></div>
@@ -260,7 +307,18 @@ export function AgentsWorkspace() {
       <h2>Start a coding task</h2>
       <form className="agent-launch" onSubmit={start}>
         <textarea value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the task. Evo will inspect the workspace first, then request approval before writes or commands…"/>
-        <div className="agent-launch-footer"><input value={workspace} onChange={e => setWorkspace(e.target.value)} placeholder="Workspace path (blank uses configured workspace)"/><button disabled={busy || !request.trim()}>{busy ? "Starting…" : "Start agent"}</button></div>
+        <div className="agent-launch-footer">
+          <select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} disabled={executableWorkspaces.length === 0}>
+            <option value="">Select an executable workspace…</option>
+            {executableWorkspaces.map(item => (
+              <option key={item.workspace_id} value={item.workspace_id}>
+                {item.name} — {projects.find(project => project.project_id === item.project_id)?.name || item.project_id} — {checkouts[item.checkout_id || ""]?.canonical_path || item.checkout_id}
+              </option>
+            ))}
+          </select>
+          <button disabled={busy || !request.trim() || !workspaceId}>{busy ? "Starting…" : "Start agent"}</button>
+        </div>
+        {executableWorkspaces.length === 0 && <p className="policy-note">No executable registered workspaces are available. Register a project, checkout, configuration, and workspace first.</p>}
       </form>
       <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request or tool action may finish or time out before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
     </section>
