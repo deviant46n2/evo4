@@ -102,9 +102,8 @@ export function ProjectsWorkspace() {
   const [notice, setNotice] = useState("");
   const generation = useRef(0);
 
-  const loadProjects = useCallback(async (status: "active" | "archived") => {
+  const fetchProjects = useCallback(async (status: "active" | "archived") => {
     const result = await api<ProjectList>(`/projects?status=${status}`);
-    setProjects(result.items);
     return result.items;
   }, []);
 
@@ -125,8 +124,9 @@ export function ProjectsWorkspace() {
     setLoading(true);
     setError("");
     try {
-      const items = await loadProjects(filter);
+      const items = await fetchProjects(filter);
       if (token !== generation.current) return;
+      setProjects(items);
       if (selectedId && items.some(item => item.project_id === selectedId)) {
         await loadDetail(selectedId, token);
       } else {
@@ -142,16 +142,17 @@ export function ProjectsWorkspace() {
     } finally {
       if (token === generation.current) setLoading(false);
     }
-  }, [filter, selectedId, loading, loadProjects, loadDetail]);
+  }, [filter, selectedId, loading, fetchProjects, loadDetail]);
 
   useEffect(() => {
     const token = ++generation.current;
     let alive = true;
     setLoading(true);
     setError("");
-    loadProjects(filter)
+    fetchProjects(filter)
       .then(items => {
         if (!alive || token !== generation.current) return;
+        setProjects(items);
         if (selectedId && items.some(item => item.project_id === selectedId)) {
           return loadDetail(selectedId, token);
         }
@@ -240,6 +241,7 @@ export function ProjectsWorkspace() {
     setSaving(true);
     setError("");
     setNotice("");
+    const mutationGeneration = ++generation.current;
     try {
       let result: Project;
       if (projectMode === "create") {
@@ -250,7 +252,7 @@ export function ProjectsWorkspace() {
           default_ref: nullable(defaultRef),
           project_type: nullable(projectType),
         }));
-        setNotice("Project created.");
+        if (mutationGeneration === generation.current) setNotice("Project created.");
       } else if (projectMode === "edit" && selected) {
         result = await api<Project>(
           `/projects/${encodeURIComponent(selected.project_id)}`,
@@ -263,18 +265,22 @@ export function ProjectsWorkspace() {
             expected_version: selected.version,
           }),
         );
-        setNotice("Project updated.");
+        if (mutationGeneration === generation.current) setNotice("Project updated.");
       } else {
         return;
       }
-      const token = ++generation.current;
-      setSelectedId(result.project_id);
-      setSelected(result);
-      setProjectMode("view");
-      await loadProjects(filter);
-      await loadDetail(result.project_id, token);
+      if (mutationGeneration === generation.current) {
+        setSelectedId(result.project_id);
+        setSelected(result);
+        setProjectMode("view");
+        const items = await fetchProjects(filter);
+        if (mutationGeneration === generation.current) {
+          setProjects(items);
+        }
+        await loadDetail(result.project_id, mutationGeneration);
+      }
     } catch (e) {
-      setError(errorText(e));
+      if (mutationGeneration === generation.current) setError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -295,19 +301,21 @@ export function ProjectsWorkspace() {
         `/projects/${encodeURIComponent(selected.project_id)}/${next === "archived" ? "archive" : "reactivate"}`,
         json("POST", { expected_version: selected.version }),
       );
-      setNotice(`Project ${next}.`);
-      setSelected(updated);
-      setProjects(previous => previous.filter(item => item.project_id !== updated.project_id));
-      setSelectedId(null);
-      setSelected(null);
-      setCheckouts([]);
-      setSelectedCheckout(null);
-      setProjectMode("view");
-      setCheckoutMode("view");
+      if (token === generation.current) {
+        setNotice(`Project ${next}.`);
+        setSelected(updated);
+        setProjects(previous => previous.filter(item => item.project_id !== updated.project_id));
+        setSelectedId(null);
+        setSelected(null);
+        setCheckouts([]);
+        setSelectedCheckout(null);
+        setProjectMode("view");
+        setCheckoutMode("view");
+      }
     } catch (e) {
       if (token === generation.current) setError(errorText(e));
     } finally {
-      if (token === generation.current) setSaving(false);
+      setSaving(false);
     }
   }
 
@@ -337,6 +345,7 @@ export function ProjectsWorkspace() {
     setSaving(true);
     setError("");
     setNotice("");
+    const mutationGeneration = ++generation.current;
     try {
       if (checkoutMode === "register") {
         if (!checkoutPath.trim()) {
@@ -351,10 +360,12 @@ export function ProjectsWorkspace() {
             last_known_commit: nullable(checkoutCommit),
           }),
         );
-        setCheckouts(previous => [...previous, created]);
-        setSelectedCheckout(created);
-        setCheckoutMode("view");
-        setNotice("Checkout registered. The directory was validated by the backend; no files were changed.");
+        if (mutationGeneration === generation.current) {
+          setCheckouts(previous => [...previous, created]);
+          setSelectedCheckout(created);
+          setCheckoutMode("view");
+          setNotice("Checkout registered. The directory was validated by the backend; no files were changed.");
+        }
       } else if (checkoutMode === "edit" && selectedCheckout) {
         const updated = await api<Checkout>(
           `/checkouts/${encodeURIComponent(selectedCheckout.checkout_id)}`,
@@ -364,15 +375,17 @@ export function ProjectsWorkspace() {
             expected_version: selectedCheckout.version,
           }),
         );
-        setCheckouts(previous => previous.map(item =>
-          item.checkout_id === updated.checkout_id ? updated : item,
-        ));
-        setSelectedCheckout(updated);
-        setCheckoutMode("view");
-        setNotice("Checkout metadata updated.");
+        if (mutationGeneration === generation.current) {
+          setCheckouts(previous => previous.map(item =>
+            item.checkout_id === updated.checkout_id ? updated : item,
+          ));
+          setSelectedCheckout(updated);
+          setCheckoutMode("view");
+          setNotice("Checkout metadata updated.");
+        }
       }
     } catch (e) {
-      setError(errorText(e));
+      if (mutationGeneration === generation.current) setError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -383,20 +396,23 @@ export function ProjectsWorkspace() {
     setSaving(true);
     setError("");
     setNotice("");
+    const mutationGeneration = ++generation.current;
     try {
       const updated = await api<Checkout>(
         `/checkouts/${encodeURIComponent(checkout.checkout_id)}/refresh-availability`,
         { method: "POST" },
       );
-      setCheckouts(previous => previous.map(item =>
-        item.checkout_id === updated.checkout_id ? updated : item,
-      ));
-      setSelectedCheckout(current =>
-        current?.checkout_id === updated.checkout_id ? updated : current,
-      );
-      setNotice(`Availability refreshed: ${updated.availability_status}.`);
+      if (mutationGeneration === generation.current) {
+        setCheckouts(previous => previous.map(item =>
+          item.checkout_id === updated.checkout_id ? updated : item,
+        ));
+        setSelectedCheckout(current =>
+          current?.checkout_id === updated.checkout_id ? updated : current,
+        );
+        setNotice(`Availability refreshed: ${updated.availability_status}.`);
+      }
     } catch (e) {
-      setError(errorText(e));
+      if (mutationGeneration === generation.current) setError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -411,19 +427,22 @@ export function ProjectsWorkspace() {
     setSaving(true);
     setError("");
     setNotice("");
+    const mutationGeneration = ++generation.current;
     try {
       await api<{ checkout_id: string; unregistered: boolean }>(
         `/checkouts/${encodeURIComponent(checkout.checkout_id)}/unregister`,
         json("POST", { expected_version: checkout.version }),
       );
-      setCheckouts(previous => previous.filter(item => item.checkout_id !== checkout.checkout_id));
-      setSelectedCheckout(current =>
-        current?.checkout_id === checkout.checkout_id ? null : current,
-      );
-      setCheckoutMode("view");
-      setNotice("Checkout unregistered. The directory was not changed.");
+      if (mutationGeneration === generation.current) {
+        setCheckouts(previous => previous.filter(item => item.checkout_id !== checkout.checkout_id));
+        setSelectedCheckout(current =>
+          current?.checkout_id === checkout.checkout_id ? null : current,
+        );
+        setCheckoutMode("view");
+        setNotice("Checkout unregistered. The directory was not changed.");
+      }
     } catch (e) {
-      setError(errorText(e));
+      if (mutationGeneration === generation.current) setError(errorText(e));
     } finally {
       setSaving(false);
     }
