@@ -133,9 +133,9 @@ Evidence types:
 - Remaining limitations: monitor shutdown waits for the worker, but process termination or power loss can still leave work incomplete.
 - Evidence: `stop()` previously joined with a timeout. If the thread was still alive after the timeout, the runner's outer `finally` closed the database while the monitor callback may still access it.
 - Severity: Medium
-- Existing tests: No dedicated lifecycle test.
-- New tests: None
-- Unverified assumptions: Whether the timeout has been observed in practice.
+- Existing tests: `tests/test_telemetry.py`, `tests/test_telemetry_db.py`.
+- New tests: `tests/test_monitor_lifecycle.py` (`MonitorLifecycleTests`, `MonitorShutdownFailureTests`, `MonitorUnexpectedJoinTests`).
+- Unverified assumptions: None beyond process termination and power loss.
 - Required remediation: Ensure monitor shutdown completes or database closure waits for monitor termination; document any remaining limitation.
 - Acceptance criteria: No database access after shutdown.
 - Status: Unresolved; scheduled in stabilization roadmap.
