@@ -127,8 +127,11 @@ Evidence types:
 
 - Subsystem: Evo Lab monitoring
 - Source: `src/evo_experiments/monitor.py:152-155` (`stop`, `thread.join`)
-- Classification: Confirmed potential race
-- Evidence: `stop()` joins with a timeout. If the thread is still alive after the timeout, the runner's outer `finally` closes the database while the monitor callback may still access it.
+- Classification: Remediation implemented; pending GPT-6 review
+- Fix: `ResourceMonitor.stop()` waits until the worker thread terminates, defers `KeyboardInterrupt` until termination, and reports it afterward; runner database closure cannot occur while the worker remains alive.
+- New tests: `tests/test_monitor_lifecycle.py` (`MonitorLifecycleTests`).
+- Remaining limitations: monitor shutdown waits for the worker, but process termination or power loss can still leave work incomplete.
+- Evidence: `stop()` previously joined with a timeout. If the thread was still alive after the timeout, the runner's outer `finally` closed the database while the monitor callback may still access it.
 - Severity: Medium
 - Existing tests: No dedicated lifecycle test.
 - New tests: None
