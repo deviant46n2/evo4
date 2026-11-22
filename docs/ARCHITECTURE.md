@@ -111,6 +111,10 @@ Initial release: single user, local-first, no mandatory accounts or cloud servic
 
 Eventually support export/import, reconstruction on another machine, and multi-user authentication. Do not make future multi-user support a prerequisite for initial development. Design for portability without sacrificing immediate optimization for the user's existing hardware.
 
+## Platform Registry
+
+The proposed persistent platform entity model is specified in `docs/PLATFORM-REGISTRY-V1-SPEC.md`. It is proposed architecture, not an implemented feature.
+
 ## Current vs designed vs long-term
 
 1. Current implemented capabilities: described in `README.md` and existing docs.
