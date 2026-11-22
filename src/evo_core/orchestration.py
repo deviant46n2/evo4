@@ -53,6 +53,7 @@ def initialize(connection):
     """)
     for column, definition in (
         ("verification_commands_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("verification_status", "TEXT NOT NULL DEFAULT 'not_configured'"),
     ):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plan_steps)")}
         if column not in columns:
@@ -64,7 +65,7 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         "INSERT INTO agent_plan_events(plan_id,step_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
-def create_plan(connection, request, workspace, proposal):
+def create_plan(connection, request, workspace, proposal, allowed_commands=None):
     if not isinstance(proposal, dict):
         raise ValueError("Plan proposal must be an object")
     raw_title, raw_summary = proposal.get("title"), proposal.get("summary")
@@ -100,6 +101,11 @@ def create_plan(connection, request, workspace, proposal):
                 raise ValueError("A verification command exceeds its size limit")
             normalized_commands.append([part.strip() for part in command])
         values["verification_commands"] = normalized_commands
+        if allowed_commands is not None and normalized_commands:
+            allowed = [list(prefix) for prefix in allowed_commands if isinstance(prefix, (list, tuple)) and prefix]
+            for command in normalized_commands:
+                if not any(command[:len(prefix)] == prefix for prefix in allowed):
+                    raise ValueError("A verification command must match one of the configured command prefixes")
         steps.append(values)
     plan_id, stamp = uuid.uuid4().hex, _now()
     with connection:
@@ -130,6 +136,7 @@ def _step(row):
         item["verification_commands"] = json.loads(item.get("verification_commands_json") or "[]")
     except (TypeError, json.JSONDecodeError):
         item["verification_commands"] = []
+    item["verification_status"] = item.get("verification_status") or "not_configured"
     return item
 
 def get_plan(connection, plan_id):
@@ -212,17 +219,22 @@ def start_step(connection, plan_id, step_id):
         _event(connection, plan_id, "step_started", {"position": row["position"]}, step_id)
     return True
 
-def finish_step(connection, plan_id, step_id, outcome, result=""):
+def finish_step(connection, plan_id, step_id, outcome, result="", verification_status=None):
     if outcome not in {"completed", "failed", "interrupted"}:
         raise ValueError("Invalid step outcome")
+    allowed_verification = {"passed", "failed", "not_run", "not_required", "not_configured"}
+    if verification_status is None:
+        verification_status = "not_configured"
+    if verification_status not in allowed_verification:
+        raise ValueError("Invalid verification status")
     stamp = _now()
     with connection:
         cur = connection.execute(
-            "UPDATE agent_plan_steps SET status=?,result=?,finished_at=? WHERE id=? AND plan_id=? AND status='running'",
-            (outcome, str(result)[:4000], stamp, step_id, plan_id))
+            "UPDATE agent_plan_steps SET status=?,result=?,finished_at=?,verification_status=? WHERE id=? AND plan_id=? AND status='running'",
+            (outcome, str(result)[:4000], stamp, verification_status, step_id, plan_id))
         if cur.rowcount != 1:
             raise ValueError("Step is not running")
-        _event(connection, plan_id, "step_" + outcome, {"result": str(result)[:1000]}, step_id)
+        _event(connection, plan_id, "step_" + outcome, {"result": str(result)[:1000], "verification_status": verification_status}, step_id)
     return True
 
 def record_verification(connection, plan_id, step_id, command, status, exit_code=None, stdout="", stderr=""):
@@ -240,6 +252,9 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
     return True
 
 def step_verification_status(step):
+    persisted = step.get("verification_status")
+    if persisted in {"passed", "failed", "not_run", "not_required"}:
+        return persisted
     commands = [list(command) for command in (step.get("verification_commands") or [])]
     checks = step.get("verification_checks") or []
     if not commands:
@@ -280,6 +295,11 @@ def finish_plan(connection, plan_id, outcome, error=""):
                 (plan_id,)).fetchone()[0]
             if remaining:
                 raise ValueError("A plan cannot complete until every step is completed")
+            unverified = connection.execute(
+                "SELECT COUNT(*) FROM agent_plan_steps WHERE plan_id=? AND verification_status NOT IN ('passed','not_required')",
+                (plan_id,)).fetchone()[0]
+            if unverified:
+                raise ValueError("A plan cannot complete until every step has passed or not-required verification")
         connection.execute(
             "UPDATE agent_plans SET status=?,error=?,updated_at=? WHERE id=?",
             (outcome, str(error)[:2000], stamp, plan_id))
@@ -306,15 +326,20 @@ def recover_plans(connection):
             recovered.append(row["id"])
     return recovered
 
-def propose_with_model(provider, request, workspace, max_tokens=1800):
+def propose_with_model(provider, request, workspace, max_tokens=1800, allowed_commands=None):
     """Ask the configured provider for a bounded JSON plan; never execute model output here."""
+    allowed_text = "none configured"
+    if allowed_commands:
+        allowed_text = ", ".join(" ".join(str(part) for part in prefix) for prefix in allowed_commands if prefix)
     system = (
         "You are Evo's task planner. Return ONLY one JSON object with keys title, summary, steps. "
         "Create 2-8 sequential, concrete steps. Each step must have title, description, expected_outcome, "
         "and verification. Keep each step independently understandable and bounded. Include inspection "
         "before edits, and tests/verification after edits when relevant. Do not propose deployment, privilege "
         "escalation, credential access, destructive actions, or arbitrary shell commands. Do not invent "
-        "workspace facts. Plans are proposals for user review, not authorization."
+        "workspace facts. Plans are proposals for user review, not authorization. "
+        "Configured command prefixes: " + allowed_text + ". Propose verification_commands only as argv "
+        "arrays whose first elements match one of those prefixes. Never invent an unsupported command."
     )
     user = ("Workspace: " + workspace + "\nUser request: " + request[:12000] +
             "\\nReturn valid JSON only. No markdown fences.")

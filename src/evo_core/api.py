@@ -735,9 +735,11 @@ def create_app(config_path="config.toml", provider_name=None):
         workspace = Path(payload.workspace).expanduser().resolve() if payload.workspace else config.workspace_root.resolve()
         try:
             proposal = orchestration.propose_with_model(
-                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000))
+                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
+                allowed_commands=config.allowed_commands)
             with lab_db.lock:
-                plan = orchestration.create_plan(lab_db.connection, payload.request, str(workspace), proposal)
+                plan = orchestration.create_plan(lab_db.connection, payload.request, str(workspace), proposal,
+                                                allowed_commands=config.allowed_commands)
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -911,36 +913,45 @@ def create_app(config_path="config.toml", provider_name=None):
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
                         stop_event=stop_event, on_progress=progress, finalize_run=False)
                     step_status = step_result.get("status")
-                    verification_status = "not_configured"
-                    for command in (step.get("verification_commands") or []):
-                        if stop_event.is_set() or shutting_down.is_set():
-                            break
-                        approved = approval("run_command", {"argv": command, "timeout_seconds": 120})
-                        if not approved:
-                            with lab_db.lock:
-                                orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "denied", None, "", "Verification command was denied.")
+                    agent_verification = step_result.get("verification", "not_configured")
+                    if agent_verification not in {"passed", "failed", "not_run", "not_required", "not_configured"}:
+                        agent_verification = "not_configured"
+                    commands = step.get("verification_commands") or []
+                    if commands:
+                        verification_status = "passed"
+                        if agent_verification == "failed":
                             verification_status = "failed"
-                            continue
-                        try:
-                            result = agent.workspace.run(command, 120)
-                            status = "passed" if result.get("returncode") == 0 else "failed"
-                            with lab_db.lock:
-                                orchestration.record_verification(
-                                    lab_db.connection, plan_id, step["id"], command, status,
-                                    result.get("returncode"), result.get("stdout", ""), result.get("stderr", ""))
-                            if status != "passed":
+                        for command in commands:
+                            if stop_event.is_set() or shutting_down.is_set():
+                                break
+                            approved = approval("run_command", {"argv": command, "timeout_seconds": 120})
+                            if not approved:
+                                with lab_db.lock:
+                                    orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "denied", None, "", "Verification command was denied.")
                                 verification_status = "failed"
-                        except Exception as exc:
-                            with lab_db.lock:
-                                orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "error", None, "", str(exc))
-                            verification_status = "failed"
-                    if verification_status == "failed":
+                                continue
+                            try:
+                                result = agent.workspace.run(command, 120)
+                                status = "passed" if result.get("returncode") == 0 else "failed"
+                                with lab_db.lock:
+                                    orchestration.record_verification(
+                                        lab_db.connection, plan_id, step["id"], command, status,
+                                        result.get("returncode"), result.get("stdout", ""), result.get("stderr", ""))
+                                if status != "passed":
+                                    verification_status = "failed"
+                            except Exception as exc:
+                                with lab_db.lock:
+                                    orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "error", None, "", str(exc))
+                                verification_status = "failed"
+                    else:
+                        verification_status = agent_verification
+                    if verification_status in {"failed", "not_run", "not_configured"}:
                         step_outcome = "failed"
                     else:
                         step_outcome = "completed" if step_status == "completed" else "interrupted" if step_status == "cancelled" else "failed"
                     with lab_db.lock:
                         orchestration.finish_step(lab_db.connection, plan_id, step["id"], step_outcome,
-                            step_result.get("content", step_status or "No result"))
+                            step_result.get("content", step_status or "No result"), verification_status=verification_status)
                     if step_outcome != "completed":
                         raise RuntimeError("Plan stopped because step '" + step["title"] + "' did not complete")
             if plan_id is None:

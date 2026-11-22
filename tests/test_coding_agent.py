@@ -5,6 +5,7 @@ from unittest.mock import patch
 from pathlib import Path
 from evo_core.assistant import EvoAssistant
 from evo_core.coding_agent import CodingAgent, is_test_command
+from evo_core.provider import InvalidToolCallError, ProviderError
 from evo_core.config import EvoConfig
 from evo_core.store import EvoStore
 
@@ -139,6 +140,83 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(metadata.get("truncated_responses"),2)
             self.assertEqual(metadata.get("continuation_attempts"),1)
             self.assertEqual(metadata.get("tool_calls_processed"),0)
+            assistant.close()
+
+    def test_malformed_tool_call_recovers_with_fresh_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            class MalformedProvider:
+                def __init__(self):
+                    self.calls=0
+                def chat(self,messages,max_tokens,temperature,on_token=None,tools=None):
+                    self.calls+=1
+                    if self.calls==1:
+                        raise InvalidToolCallError("bad json", finish_reason="tool_calls")
+                    if self.calls==2:
+                        return {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print('safe')"})],"finish_reason":"stop"}
+                    return {"content":"Done.","tool_calls":[]}
+            provider=MalformedProvider()
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            approvals=[]
+            def approval(name,args):
+                approvals.append((name,args))
+                return True
+            result=agent.run(cid,"Create main.py",approval)
+            self.assertEqual(result["status"],"completed")
+            self.assertEqual(len(approvals),1)
+            self.assertEqual(approvals[0][1]["content"],"print('safe')")
+            self.assertEqual((root/"main.py").read_text(encoding="utf-8"),"print('safe')")
+            run=assistant.store.get_agent_run(result["run_id"])
+            metadata=json.loads(run["metadata_json"] or "{}")
+            self.assertEqual(metadata.get("provider_response_attempts"),3)
+            self.assertEqual(metadata.get("malformed_tool_call_retries"),1)
+            self.assertEqual(metadata.get("tool_calls_processed"),1)
+            assistant.close()
+
+    def test_repeated_malformed_tool_calls_fail_without_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            class MalformedProvider:
+                def __init__(self):
+                    self.calls=0
+                def chat(self,messages,max_tokens,temperature,on_token=None,tools=None):
+                    self.calls+=1
+                    raise InvalidToolCallError("bad json", finish_reason="tool_calls")
+            provider=MalformedProvider()
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            approvals=[]
+            result=agent.run(cid,"Create main.py",lambda *args:approvals.append(args) or True)
+            self.assertEqual(result["status"],"failed")
+            self.assertEqual(approvals,[])
+            self.assertFalse((root/"main.py").exists())
+            run=assistant.store.get_agent_run(result["run_id"])
+            self.assertEqual(run["status"],"failed")
+            metadata=json.loads(run["metadata_json"] or "{}")
+            self.assertEqual(metadata.get("provider_response_attempts"),2)
+            self.assertEqual(metadata.get("malformed_tool_call_retries"),1)
+            self.assertEqual(metadata.get("tool_calls_processed"),0)
+            assistant.close()
+
+    def test_generic_provider_error_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            class FailingProvider:
+                def __init__(self):
+                    self.calls=0
+                def chat(self,messages,max_tokens,temperature,on_token=None,tools=None):
+                    self.calls+=1
+                    raise ProviderError("network down")
+            provider=FailingProvider()
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root)
+            with self.assertRaises(ProviderError):
+                agent.run(cid,"Create main.py",lambda *_:True)
+            self.assertEqual(provider.calls,1)
             assistant.close()
 
     def test_project_inspection_is_available_and_policy_is_injected(self):

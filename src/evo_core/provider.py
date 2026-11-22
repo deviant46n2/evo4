@@ -6,6 +6,12 @@ import urllib.request
 class ProviderError(RuntimeError):
     pass
 
+
+class InvalidToolCallError(ProviderError):
+    def __init__(self, message, finish_reason=None):
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
 class OpenAICompatibleProvider:
     """Streaming chat provider for llama.cpp and other OpenAI-compatible servers."""
     def __init__(self, base_url, api_key, model, timeout=600):
@@ -107,8 +113,9 @@ class OpenAICompatibleProvider:
                 try:
                     arguments = json.loads(call["function"]["arguments"] or "{}")
                 except json.JSONDecodeError as exc:
-                    raise ProviderError(
-                        f"Model returned invalid tool-call JSON: {exc}"
+                    raise InvalidToolCallError(
+                        f"Model returned invalid tool-call JSON: {exc}",
+                        finish_reason=finish_reason,
                     ) from exc
                 parsed_calls.append({
                     "id": call["id"],

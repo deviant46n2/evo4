@@ -1,6 +1,7 @@
 import json
 import threading
 from .workspace import Workspace, WorkspaceError, is_test_path
+from .provider import InvalidToolCallError
 
 CODING_POLICY = """
 
@@ -107,6 +108,21 @@ class CodingAgent:
         store = self.assistant.store
         messages = self.assistant._build_messages(conversation_id, request)
         messages[0]["content"] += CODING_POLICY
+        allowed = getattr(self.workspace, "allowed_commands", ()) or ()
+        if allowed:
+            messages[0]["content"] += (
+                "\n\nConfigured command prefixes: "
+                + ", ".join(" ".join(str(part) for part in prefix) for prefix in allowed)
+                + ". Choose verification commands beginning with one of these prefixes. "
+                "Prefer the project's existing test runner. Never invent a command outside "
+                "this allowlist. If no suitable command is available, report that verification "
+                "is blocked and do not claim tests passed."
+            )
+        else:
+            messages[0]["content"] += (
+                "\n\nNo command prefixes are configured. Do not claim a command ran or "
+                "tests passed."
+            )
         store.add_message(conversation_id, "user", request)
 
         run_metadata = {
@@ -123,6 +139,7 @@ class CodingAgent:
             "provider_response_attempts": 0,
             "truncated_responses": 0,
             "continuation_attempts": 0,
+            "malformed_tool_call_retries": 0,
             "last_finish_reason": None,
             "tool_calls_processed": 0,
             "request": request[:2000],
@@ -136,6 +153,7 @@ class CodingAgent:
         provider_attempts = 0
         truncated_responses = 0
         continuation_attempts = 0
+        malformed_tool_call_retries = 0
         last_finish_reason = None
 
         def update_execution_metadata(**extra):
@@ -143,6 +161,7 @@ class CodingAgent:
                 "provider_response_attempts": provider_attempts,
                 "truncated_responses": truncated_responses,
                 "continuation_attempts": continuation_attempts,
+                "malformed_tool_call_retries": malformed_tool_call_retries,
                 "last_finish_reason": last_finish_reason,
                 "tool_calls_processed": total_tool_calls,
                 **extra,
@@ -161,15 +180,76 @@ class CodingAgent:
                     )
 
                 while True:
-                    result = self.assistant.provider.chat(
-                        messages,
-                        max_tokens=self.assistant.config.max_tokens,
-                        temperature=self.assistant.config.temperature,
-                        on_token=on_token,
-                        tools=TOOL_SPECS,
-                    )
-
                     provider_attempts += 1
+                    try:
+                        result = self.assistant.provider.chat(
+                            messages,
+                            max_tokens=self.assistant.config.max_tokens,
+                            temperature=self.assistant.config.temperature,
+                            on_token=on_token,
+                            tools=TOOL_SPECS,
+                        )
+                    except InvalidToolCallError as exc:
+                        last_finish_reason = exc.finish_reason
+                        update_execution_metadata()
+
+                        if stop_event is not None and stop_event.is_set():
+                            raise AgentCancelled(
+                                "Cancellation requested; provider response "
+                                "returned and the task stopped safely."
+                            )
+
+                        if malformed_tool_call_retries >= 1:
+                            final_text = (
+                                (getattr(exc, "args", [""])[0] or "")
+                                + "\n\nThe coding task failed because the model "
+                                "returned malformed tool-call JSON twice. No "
+                                "tool calls from either response were executed."
+                            )
+                            update_execution_metadata(
+                                completion_state="failed",
+                                successful_file_writes=successful_writes,
+                            )
+                            store.add_message(
+                                conversation_id,
+                                "assistant",
+                                final_text,
+                                metadata={
+                                    "agent_run_id": run_id,
+                                    "provider_error": "invalid_tool_call_json",
+                                    "finish_reason": exc.finish_reason,
+                                    "provider_response_attempts": provider_attempts,
+                                    "malformed_tool_call_retries": malformed_tool_call_retries,
+                                },
+                            )
+                            if finalize_run:
+                                store.finish_agent_run(
+                                    run_id, "failed", final_text[:1000]
+                                )
+                            return {
+                                "content": final_text,
+                                "run_id": run_id,
+                                "tool_rounds": round_index + 1,
+                                "tool_calls": total_tool_calls,
+                                "status": "failed",
+                                "verification": "not_run",
+                            }
+
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Your previous response contained invalid "
+                                "tool-call JSON. No tool calls from that "
+                                "response were executed. Issue a fresh, complete "
+                                "tool call with valid JSON arguments, or explain "
+                                "honestly why you cannot proceed. Do not repeat "
+                                "the malformed call."
+                            ),
+                        })
+                        malformed_tool_call_retries += 1
+                        update_execution_metadata()
+                        continue
+
                     last_finish_reason = result.get("finish_reason")
 
                     if stop_event is not None and stop_event.is_set():
