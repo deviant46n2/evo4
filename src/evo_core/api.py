@@ -20,6 +20,7 @@ from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
 from .config import load_config
 from .store import EvoStore
+from . import platform_registry
 from .memory_review import find_duplicate_candidates
 from .demo_data import seed_demo_data, demo_data_status, clear_demo_data
 from evo_experiments.monitor import sample_nvidia_smi
@@ -149,6 +150,11 @@ class WorkloadExecuteInput(BaseModel):
 def create_app(config_path="config.toml", provider_name=None):
     config = load_config(Path(config_path).resolve(), provider_name)
     store = EvoStore(config.database)
+    try:
+        platform_registry.initialize_platform_registry(store)
+    except Exception:
+        store.db.close()
+        raise
     lab_db = ResultsDB(config.database)
     assistant = EvoAssistant(config, store=store)
     app = FastAPI(title="Evo 4 Local API", version="0.1.0")
