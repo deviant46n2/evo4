@@ -654,7 +654,7 @@ Resolved and removed from this section: `workspace_events` inclusion (optional, 
 
 ## 18. Verified facts, design decisions, and assumptions
 
-Verified facts come from inspected source. Design decisions are proposed by this document. Items in section 16 are assumptions or unresolved questions requiring source-level resolution before implementation.
+Verified facts come from inspected source. Approved design decisions are proposed by this document. Section 16 lists non-blocking implementation refinements that may be finalized during implementation; no blocking design decisions remain.
 
 ## 19. Final scope statement
 
