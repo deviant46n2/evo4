@@ -27,6 +27,9 @@ The personal assistant and coding-agent experience are configurations built on t
 - Existing models and frameworks are replaceable components, not architectural foundations.
 - Evo owns its interfaces, integration contracts, experiment records, evaluation criteria, and orchestration.
 - Real models are integration targets and experimental subjects, not prerequisites for development.
+- Portability is a design requirement: single-user and local-first initially, with future export/import and multi-user support.
+- Subsystems should be independently replaceable where practical, but exact boundaries remain an implementation question.
+- Evo may eventually participate extensively in its own development, constrained by safety, authorization, demonstrated reliability, and available resources; it must not declare its own improvements successful without independent evidence.
 - GitHub remains the immediate shared engineering workspace and permanent source of truth.
 - Hybrid collaboration: cooperative agent networks plus hierarchical governance.
 - Every task has one accountable owner.
