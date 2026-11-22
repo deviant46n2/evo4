@@ -65,18 +65,20 @@ The personal assistant and coding-agent experience are configurations built on t
 - The codebase is in a stabilization phase. Feature development is frozen until confirmed serious audit findings are fixed, tested, reviewed, and accepted.
 - Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Canonical roadmap stabilization section: `ROADMAP.md`.
-- Latest validation before this documentation pass: 475 Python tests passed; compileall passed; desktop production build passed.
+- Latest validation reported on this branch: 520 Python tests passed; compileall passed; desktop production build passed; `git diff --check` passed.
 
 ## Outstanding stabilization tasks
 
-- Workspace filesystem boundary hardening.
-- Untrusted retrieved context isolation — remediation implemented; pending GPT-6 review.
-- Experiment lifecycle interruption — remediation implemented; pending GPT-6 review.
-- ResourceMonitor shutdown race.
+- ResourceMonitor shutdown race (Priority 6).
 
-Accepted in commit `af10694ab35481929e565523c1306cf378b2ddad`:
-- Provider streaming reliability.
-- Tool-call argument validation.
+Accepted:
+- Provider streaming reliability (Priority 1).
+- Tool-call argument validation (Priority 2).
+- Workspace filesystem boundary hardening (Priority 3).
+- Untrusted retrieved context isolation (Priority 4).
+- Experiment lifecycle interruption (Priority 5).
+
+Latest reported validation for this branch: 520 Python tests passed; compileall passed; desktop production build passed; `git diff --check` passed. Validation was reported by Kilo implementation runs, not independently rerun by GPT-6.
 
 Reported validation for that commit: 503 Python tests passed, compileall passed, desktop production build passed, `git diff --check` passed. Validation was reported by the implementation run, not independently rerun by GPT-6.
 

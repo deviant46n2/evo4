@@ -68,7 +68,7 @@ Evidence types:
 - Unverified assumptions: Whether current model behavior is affected has not been tested.
 - Required remediation: Wrap retrieved context in explicit untrusted-data delimiters while preserving `_fit_context`.
 - Acceptance criteria: Retrieved content cannot be mistaken for system instructions; context budget behavior remains intact.
-- Status: Remediation implemented; pending GPT-6 review.
+- Status: Implemented and accepted.
 - Fix: retrieved memories, relations, lessons, and research are placed in a separate user-role untrusted context message; trusted system prompt explicitly states retrieved context is untrusted; candidate memories remain excluded until accepted.
 - New tests: `tests/test_hardening_features.py` (`RetrievedContextTrustBoundaryTests`).
 - Remaining limitations: prompt injection cannot be eliminated solely by prompt formatting; model behavior still requires evaluation.
@@ -90,7 +90,7 @@ Evidence types:
 - Unverified assumptions: Whether symlink traversal can escape in practice on the target Python version.
 - Required remediation: Restrict traversal, add exclusions for sensitive/internal artifacts, report truncation, and document command/environment boundaries.
 - Acceptance criteria: Sensitive files are not exposed; truncation is communicated; command and environment behavior is documented and tested.
-- Status: Remediation implemented in commits `17a53a8` and follow-up; pending GPT-6 review.
+- Status: Implemented and accepted.
 - Fix: ignored directories are pruned before traversal, including when supplied as the starting directory; sensitive/internal file exclusions expanded to SQLite sidecars and generated artifacts; listing and search report exact-limit truncation; command execution uses an expanded filtered environment; coding-agent tools receive status metadata.
 - New tests: `tests/test_workspace.py` (`WorkspaceBoundaryTests`, `WorkspaceFollowupTests`).
 - Remaining limitations: symlink and filesystem races are reduced but not eliminated; command allowlist remains prefix-based by design; environment filtering is a denylist, not a sandbox.
@@ -118,7 +118,7 @@ Evidence types:
 - Unverified assumptions: None
 - Required remediation: Finalize interrupted runs as failed/interrupted in a `BaseException`-aware or explicit `KeyboardInterrupt` path.
 - Acceptance criteria: Interrupted experiments are finalized consistently.
-- Status: Remediation implemented; pending GPT-6 review.
+- Status: Implemented and accepted.
 - Fix: `KeyboardInterrupt` is caught around the per-experiment lifecycle, including monitor startup, model execution, evaluation, and result persistence; interrupted rows are finalized as `interrupted` only from `running`; the original exception is re-raised; secondary cleanup and database-close failures are reported without replacing it.
 - New tests: `tests/test_experiment_interruption.py` (`ExperimentInterruptionTests`).
 - Remaining limitations: bounded monitor join cannot guarantee thread termination; process termination or power loss can still leave running rows.

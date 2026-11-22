@@ -62,21 +62,21 @@ Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 - Required tests: Malformed/non-dict argument recovery.
 - Acceptance criteria: Malformed tool calls are recorded and recovered without crashing.
 
-### Priority 3: Workspace filesystem boundary hardening
+### Priority 3: Workspace filesystem boundary hardening — completed and accepted
 - Problem: Traversal, sensitive-file exposure, silent search truncation, command-argument/env boundaries.
 - Affected subsystem: Workspace and coding agent.
 - Required remediation: Restrict traversal, exclude sensitive/internal files, communicate truncation, document command/env behavior.
 - Required tests: Sensitive file exclusion, traversal, truncation, command boundary tests.
 - Acceptance criteria: Sensitive files are not exposed; truncation is communicated.
 
-### Priority 4: Untrusted retrieved context isolation — remediation implemented; pending GPT-6 review
+### Priority 4: Untrusted retrieved context isolation — completed and accepted
 - Problem: Retrieved memory/lesson content is not clearly isolated as untrusted.
 - Affected subsystem: Assistant context.
 - Required remediation: Delimit retrieved context as untrusted while preserving `_fit_context`.
 - Required tests: Context-budget and injection-resistance tests.
 - Acceptance criteria: Retrieved content cannot masquerade as system instructions.
 
-### Priority 5: Experiment lifecycle interruption — remediation implemented; pending GPT-6 review
+### Priority 5: Experiment lifecycle interruption — completed and accepted
 - Problem: KeyboardInterrupt can leave experiment rows running.
 - Affected subsystem: Evo Lab runner.
 - Required remediation: Finalize interrupted runs consistently.
