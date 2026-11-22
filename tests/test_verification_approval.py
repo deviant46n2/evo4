@@ -80,28 +80,37 @@ class VerificationApprovalApiTests(unittest.TestCase):
         raise TimeoutError("Timed out waiting for terminal run status")
 
     def test_approved_verification_executes_and_persists_evidence(self):
-        result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](self.plan["id"])
-        self.assertEqual(result["status"], "running")
-        run_id = result["run_id"]
+        fake_result = {
+            "argv": ["python", "-c", "print('ok')"],
+            "returncode": 0,
+            "stdout": "ok\n",
+            "stderr": "",
+            "elapsed_seconds": 0.01,
+        }
+        with patch("evo_core.workspace.Workspace.run", return_value=fake_result) as run_mock:
+            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](self.plan["id"])
+            self.assertEqual(result["status"], "running")
+            run_id = result["run_id"]
 
-        pending = self._wait_pending(run_id)
-        self.assertIsNotNone(pending)
-        self.assertEqual(pending["tool_name"], "run_command")
-        self.assertEqual(pending["arguments"]["argv"], ["python", "-c", "print('ok')"])
+            pending = self._wait_pending(run_id)
+            self.assertIsNotNone(pending)
+            self.assertEqual(pending["tool_name"], "run_command")
+            self.assertEqual(pending["arguments"]["argv"], ["python", "-c", "print('ok')"])
 
-        approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](run_id, AgentApproval(approved=True))
-        self.assertTrue(approval["approved"])
+            approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](run_id, AgentApproval(approved=True))
+            self.assertTrue(approval["approved"])
 
-        run = self._wait_terminal(run_id)
-        self.assertIn(run["status"], {"completed", "failed"})
+            run = self._wait_terminal(run_id)
+            self.assertIn(run["status"], {"completed", "failed"})
 
-        plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](self.plan["id"])
-        checks = plan["steps"][0]["verification_checks"]
-        self.assertEqual(len(checks), 1)
-        self.assertEqual(checks[0]["status"], "passed")
-        self.assertEqual(checks[0]["exit_code"], 0)
-        self.assertIn("ok", checks[0]["stdout"])
-        self.assertEqual(plan["steps"][0]["verification_status"], "passed")
+            plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](self.plan["id"])
+            checks = plan["steps"][0]["verification_checks"]
+            self.assertEqual(len(checks), 1)
+            self.assertEqual(checks[0]["status"], "passed")
+            self.assertEqual(checks[0]["exit_code"], 0)
+            self.assertEqual(checks[0]["stdout"], "ok\n")
+            self.assertEqual(plan["steps"][0]["verification_status"], "passed")
+            run_mock.assert_called_once_with(["python", "-c", "print('ok')"], 120)
 
     def test_rejected_verification_does_not_execute_and_is_denied(self):
         with patch("evo_core.workspace.Workspace.run", side_effect=AssertionError("workspace command must not run")):
