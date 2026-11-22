@@ -1,13 +1,15 @@
+import os
 from pathlib import Path
 import fnmatch
 import re
 import subprocess
 import time
 
-IGNORED_DIRS={".git",".venv","venv","__pycache__","node_modules",".mypy_cache",".pytest_cache","dist","build"}
+IGNORED_DIRS={".git",".venv","venv","__pycache__","node_modules",".mypy_cache",".pytest_cache",".ruff_cache",".cache","dist","build","results","artifacts","logs","tmp"}
 SENSITIVE_NAMES={".env",".env.local",".env.production",".npmrc",".pypirc","config.toml","config.local.toml",
                  "id_rsa","id_dsa","id_ecdsa","id_ed25519","credentials","credentials.json","credentials.yaml",
                  "secrets.json","secrets.yaml","secrets.yml"}
+SENSITIVE_SUFFIXES={".sqlite",".sqlite3",".db",".db-journal",".wal",".shm",".log"}
 
 def _looks_sensitive_name(name):
     lowered=name.casefold()
@@ -30,6 +32,8 @@ def _looks_sensitive_name(name):
     return joined in {"token","tokens","authkey","auth_key","client_secret"}
 
 def _is_excluded(path):
+    if path.suffix.lower() in SENSITIVE_SUFFIXES:
+        return True
     return any(part in IGNORED_DIRS or _looks_sensitive_name(part)
                for part in path.parts)
 
@@ -48,6 +52,17 @@ def is_test_path(relative_path):
 
 class WorkspaceError(RuntimeError):
     pass
+
+def _safe_environment():
+    """Return a copy of the process environment without obvious secret-bearing variables."""
+    blocked_fragments=("SECRET","TOKEN","PASSWORD","PASSWD","API_KEY","CREDENTIAL","PRIVATE_KEY","ACCESS_KEY")
+    env={}
+    for key,value in os.environ.items():
+        upper=key.upper()
+        if any(fragment in upper for fragment in blocked_fragments):
+            continue
+        env[key]=value
+    return env
 
 class Workspace:
     """Constrained project workspace API intended for future agent tools.
@@ -71,19 +86,42 @@ class Workspace:
             raise WorkspaceError("Path escapes the configured workspace") from exc
         return candidate
 
-    def list_files(self,relative_path=".",pattern="*",limit=500):
+    def list_files(self,relative_path=".",pattern="*",limit=500,include_status=False):
+        files, truncated = self._list_files(relative_path,pattern,limit)
+        if include_status:
+            return {"files":files,"complete":not truncated,"truncated":truncated,"limit_reached":truncated}
+        return files
+
+    def list_files_with_status(self,relative_path=".",pattern="*",limit=500):
+        return self.list_files(relative_path,pattern,limit,include_status=True)
+
+    def _list_files(self,relative_path,pattern,limit):
         base=self.resolve(relative_path)
         if not base.is_dir():
             raise WorkspaceError(f"Not a directory: {relative_path}")
         results=[]
-        for path in base.rglob("*"):
-            if any(part in IGNORED_DIRS for part in path.relative_to(self.root).parts):
-                continue
-            if not path.is_symlink() and path.is_file() and not _is_excluded(path.relative_to(self.root)) and fnmatch.fnmatch(path.name,pattern):
-                results.append(path.relative_to(self.root).as_posix())
+        truncated=False
+        for dirpath,dirnames,filenames in os.walk(base,followlinks=False):
+            # Prune ignored and symlink directories before descending into them.
+            dirnames[:] = [name for name in dirnames
+                           if name not in IGNORED_DIRS and not _looks_sensitive_name(name)
+                           and not os.path.islink(os.path.join(dirpath,name))]
+            for filename in filenames:
+                path=Path(dirpath)/filename
+                if path.is_symlink():
+                    continue
+                if not path.is_file():
+                    continue
+                rel=path.relative_to(self.root)
+                if _is_excluded(rel):
+                    continue
+                if not fnmatch.fnmatch(filename,pattern):
+                    continue
+                results.append(rel.as_posix())
                 if len(results)>=max(1,limit):
-                    break
-        return results
+                    truncated=True
+                    return results,truncated
+        return results,truncated
 
     def project_overview(self):
         """Return a bounded, secret-filtered snapshot to help the agent orient itself."""
@@ -131,11 +169,28 @@ class Workspace:
         except UnicodeDecodeError as exc:
             raise WorkspaceError("File is not UTF-8 text") from exc
 
-    def search_text(self,query,relative_path=".",limit=100):
+    def search_text(self,query,relative_path=".",limit=100,include_status=False):
         if not query:
             raise ValueError("Search query cannot be empty")
+        matches,file_scope_truncated,match_limit_reached=self._search_text(query,relative_path,limit)
+        if include_status:
+            return {"matches":matches,"complete":not (file_scope_truncated or match_limit_reached),
+                    "truncated":file_scope_truncated or match_limit_reached,
+                    "file_scope_truncated":file_scope_truncated,
+                    "match_limit_reached":match_limit_reached}
+        return matches
+
+    def search_text_with_status(self,query,relative_path=".",limit=100):
+        return self.search_text(query,relative_path,limit,include_status=True)
+
+    def _search_text(self,query,relative_path,limit):
         matches=[]
-        for name in self.list_files(relative_path,limit=10000):
+        file_scope_truncated=False
+        match_limit_reached=False
+        listed=self.list_files(relative_path,limit=10000,include_status=True)
+        names=listed["files"]
+        file_scope_truncated=listed["truncated"]
+        for name in names:
             path=self.resolve(name)
             try:
                 if path.stat().st_size>self.max_read_bytes:
@@ -147,8 +202,9 @@ class Workspace:
                 if query.casefold() in line.casefold():
                     matches.append({"path":name,"line":number,"text":line[:500]})
                     if len(matches)>=max(1,limit):
-                        return matches
-        return matches
+                        match_limit_reached=True
+                        return matches,file_scope_truncated,match_limit_reached
+        return matches,file_scope_truncated,match_limit_reached
 
     def approve_test_write(self,relative_path):
         """Mint a one-use, path-scoped approval token after user approval."""
@@ -185,7 +241,7 @@ class Workspace:
         try:
             result=subprocess.run(list(argv),cwd=self.root,text=True,encoding="utf-8",
                                   errors="replace",capture_output=True,timeout=max(1,min(int(timeout_seconds),900)),
-                                  shell=False)
+                                  shell=False,env=_safe_environment())
         except subprocess.TimeoutExpired as exc:
             raise WorkspaceError(f"Command timed out after {timeout_seconds}s") from exc
         return {"argv":list(argv),"returncode":result.returncode,"stdout":result.stdout[-20000:],
