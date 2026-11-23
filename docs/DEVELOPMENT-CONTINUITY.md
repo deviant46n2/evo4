@@ -42,7 +42,7 @@ The operating invariants for handoff are: user authority remains ultimate; tasks
 
 ## Stabilization freeze and authorization
 
-**The stabilization freeze is active.** Do not change application code, runtime behavior, schemas, APIs, tests, dependencies, or deployment state unless the user explicitly lifts the freeze.
+**The stabilization freeze was lifted for the authorized Project Provisioning v1 milestone.** Broader redesign implementation still requires user authorization.
 
 The six Gemini audit priorities are recorded as completed and accepted in `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`:
 1. Provider streaming reliability.
@@ -54,13 +54,13 @@ The six Gemini audit priorities are recorded as completed and accepted in `docs/
 
 Reported validation: 525 Python tests passed, compileall passed, and `git diff --check` passed. These results were reported by implementation runs; GPT-6 did not independently rerun the complete suite. No desktop production build was run for the Priority 6 follow-up. Do not overstate the validation evidence.
 
-There are no outstanding stabilization tasks in the accepted audit ledger. The freeze nevertheless remains active until the user explicitly lifts it. Documentation work does not lift the freeze and does not authorize implementation, restart, or deployment.
+There are no outstanding stabilization tasks in the accepted audit ledger. The freeze was lifted for the authorized Project Provisioning v1 milestone; broader implementation still requires user authorization.
 
 ## Current documentation state
 
 The unified roadmap/architecture reconciliation remains in progress. Gemini's independent critique identified material architectural, sequencing, and factual gaps; the current revision is being updated to address or explicitly disposition those findings. Do not mark Phase 1 complete until that review is reconciled and the canonical documents are mutually consistent.
 
-The first planned implementation milestone after explicit freeze-lift authorization is **Project Provisioning v1**, defined in `ROADMAP.md`. It is planned only, not started or authorized. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
+**Project Provisioning v1** has been implemented on this branch and is pending GPT-6 review. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
 
 ## Working collaboration protocol
 
@@ -77,4 +77,4 @@ The first planned implementation milestone after explicit freeze-lift authorizat
 1. Obtain an independent Gemini critique of the current documentation pass.
 2. Evaluate each critique against the vision, architecture, implementation evidence, and freeze boundary.
 3. Revise the documents and reconcile contradictions.
-4. Only after documentation is accepted and the user explicitly lifts the freeze, begin Project Provisioning v1.
+4. Project Provisioning v1 has been implemented under explicit user authorization; broader redesign implementation still requires authorization.

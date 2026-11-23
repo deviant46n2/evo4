@@ -54,7 +54,7 @@ Phase status is evidence-based. "Designed" is not implemented; "implemented" is 
 
 ### First implementation milestone after stabilization
 
-**Project Provisioning v1** is the first planned implementation milestone after the user explicitly lifts the stabilization freeze. It is not authorized or started by this documentation pass.
+**Project Provisioning v1** has been implemented on this branch and is pending GPT-6 review. It was authorized by the user as the first implementation milestone after the stabilization freeze was lifted.
 
 Scope:
 - Create a new, dedicated project directory. Never silently adopt, overwrite, move, or modify unrelated existing data.

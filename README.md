@@ -293,6 +293,6 @@ This is supervised orchestration, not autonomous execution. Step completion curr
 
 Evo4's agreed roadmap is recorded in [`ROADMAP.md`](ROADMAP.md). The proposed development control plane architecture is recorded in [`docs/DEVELOPMENT-CONTROL-PLANE.md`](docs/DEVELOPMENT-CONTROL-PLANE.md).
 
-Product redesign planning is recorded in [`docs/PRODUCT-REDESIGN-PLAN.md`](docs/PRODUCT-REDESIGN-PLAN.md). It is planning only; no redesign implementation has been authorized and the stabilization freeze remains active.
+Product redesign planning is recorded in [`docs/PRODUCT-REDESIGN-PLAN.md`](docs/PRODUCT-REDESIGN-PLAN.md). It is planning only; Project Provisioning v1 has been implemented under explicit user authorization; broader redesign implementation still requires authorization.
 
 The conceptual architecture is recorded in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). These documents record planning decisions and proposed architecture. They do not imply that the development control plane, lifecycle supervisor, or other proposed capabilities are implemented. Current implementation status remains described in `README.md` and `docs/AGENT-ORCHESTRATION.md`.
