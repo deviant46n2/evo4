@@ -318,6 +318,7 @@ export default function App() {
         if (event.event === "token") {
           const token = typeof event.data === "string" ? event.data : String(event.data ?? "");
           setMessages(previous => {
+            if (activeScopeKeyRef.current !== requestedScope) return previous;
             const next = [...previous];
             const last = next[next.length - 1];
             if (last?.role === "assistant") next[next.length - 1] = { ...last, content: last.content + token };
@@ -350,6 +351,7 @@ export default function App() {
       const message = e instanceof Error ? e.message : String(e);
       if (activeScopeKeyRef.current === requestedScope) setError(message);
       setMessages(previous => {
+        if (activeScopeKeyRef.current !== requestedScope) return previous;
         const next = [...previous];
         if (next[next.length - 1]?.role === "assistant" && !next[next.length - 1].content) next.pop();
         return next;
