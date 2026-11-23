@@ -150,25 +150,49 @@ class EvoStore:
                 raise
         return cid
 
-    def list_conversations(self, limit=20, query=None):
+    def list_conversations(self, limit=20, query=None, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        scope_project = "c.project_id IS NULL" if project_id is None else "(c.project_id IS NULL OR c.project_id = ?)"
+        scope_workspace = "c.workspace_id IS NULL" if workspace_id is None else "(c.workspace_id IS NULL OR c.workspace_id = ?)"
+        scope_params = []
+        if project_id is not None:
+            scope_params.append(project_id.strip())
+        if workspace_id is not None:
+            scope_params.append(workspace_id.strip())
         with self.lock:
             if query and query.strip():
                 pattern = _like_pattern(query.strip())
-                return self.db.execute(
-                    """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
-                       FROM conversations c WHERE c.title LIKE ? ESCAPE '!'
-                       OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id
-                                  AND m.content LIKE ? ESCAPE '!')
-                       ORDER BY c.updated_at DESC LIMIT ?""",
-                    (pattern, pattern, max(1, min(int(limit), 500)))).fetchall()
-            return self.db.execute(
-                """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
-                   FROM conversations c ORDER BY c.updated_at DESC LIMIT ?""",
-                (max(1, min(int(limit), 500)),)).fetchall()
+                sql = """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
+                         FROM conversations c WHERE (c.title LIKE ? ESCAPE '!'
+                         OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id
+                                    AND m.content LIKE ? ESCAPE '!'))
+                         AND """ + scope_project + " AND " + scope_workspace + """
+                         ORDER BY c.updated_at DESC LIMIT ?"""
+                params = [pattern, pattern] + scope_params + [max(1, min(int(limit), 500))]
+                return self.db.execute(sql, params).fetchall()
+            sql = """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
+                     FROM conversations c WHERE """ + scope_project + " AND " + scope_workspace + """
+                     ORDER BY c.updated_at DESC LIMIT ?"""
+            params = scope_params + [max(1, min(int(limit), 500))]
+            return self.db.execute(sql, params).fetchall()
 
-    def get_conversation(self, conversation_id):
+    def get_conversation(self, conversation_id, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         with self.lock:
-            return self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+            row = self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+            if row is None:
+                return None
+            if project_id is not None and row["project_id"] not in (None, project_id.strip()):
+                return None
+            if workspace_id is not None and row["workspace_id"] not in (None, workspace_id.strip()):
+                return None
+            return row
 
     def rename_conversation(self, conversation_id, title):
         title = (title or "").strip()
@@ -223,8 +247,19 @@ class EvoStore:
                 self.db.rollback()
                 raise
 
-    def get_messages(self, conversation_id, limit=16):
+    def get_messages(self, conversation_id, limit=16, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         with self.lock:
+            conversation = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+            if conversation is None:
+                return []
+            if project_id is not None and conversation["project_id"] not in (None, project_id.strip()):
+                return []
+            if workspace_id is not None and conversation["workspace_id"] not in (None, workspace_id.strip()):
+                return []
             rows = self.db.execute("SELECT role,content,created_at FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?",
                                    (conversation_id, max(1, limit))).fetchall()
         return list(reversed(rows))
@@ -251,11 +286,17 @@ class EvoStore:
             self.db.commit()
         return mid
 
-    def search_memories(self, query, limit=8, category=None, record_access=True):
+    def search_memories(self, query, limit=8, category=None, record_access=True, project_id=None, workspace_id=None):
         """Hybrid lexical retrieval with inspectable evidence; embeddings are not used."""
         raw_query = (query or "").strip()
         if not raw_query:
             return []
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        project_id = project_id.strip() if isinstance(project_id, str) else project_id
+        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         stop = {"a","an","and","are","as","at","be","been","by","can","could","did","do","does",
                 "for","from","had","has","have","how","i","in","into","is","it","its","me","my",
                 "of","on","or","our","please","should","that","the","their","them","there","this",
@@ -279,6 +320,14 @@ class EvoStore:
                 params = [match]
                 if category:
                     sql += " AND m.category=?"; params.append(category)
+                if project_id is None:
+                    sql += " AND m.project_id IS NULL"
+                else:
+                    sql += " AND (m.project_id IS NULL OR m.project_id = ?)"; params.append(project_id)
+                if workspace_id is None:
+                    sql += " AND m.workspace_id IS NULL"
+                else:
+                    sql += " AND (m.workspace_id IS NULL OR m.workspace_id = ?)"; params.append(workspace_id)
                 sql += " ORDER BY bm25(memories_fts),m.confidence DESC LIMIT ?"
                 params.append(pool_size)
                 try:
@@ -295,6 +344,14 @@ class EvoStore:
             sql = "SELECT * FROM memories WHERE status='active' AND (" + " OR ".join(clauses) + ")"
             if category:
                 sql += " AND category=?"; params.append(category)
+            if project_id is None:
+                sql += " AND project_id IS NULL"
+            else:
+                sql += " AND (project_id IS NULL OR project_id = ?)"; params.append(project_id)
+            if workspace_id is None:
+                sql += " AND workspace_id IS NULL"
+            else:
+                sql += " AND (workspace_id IS NULL OR workspace_id = ?)"; params.append(workspace_id)
             sql += " ORDER BY updated_at DESC LIMIT ?"; params.append(pool_size)
             for row in self.db.execute(sql, params).fetchall():
                 candidates.setdefault(row["id"], row)
@@ -418,21 +475,40 @@ class EvoStore:
                 raise
         return relation_id
 
-    def get_memory_relations(self, memory_ids):
+    def get_memory_relations(self, memory_ids, project_id=None, workspace_id=None):
         ids=list(dict.fromkeys(memory_ids or []))
         if not ids:
             return []
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        project_id = project_id.strip() if isinstance(project_id, str) else project_id
+        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         placeholders=",".join("?" for _ in ids)
+        scope = []
+        scope_params = []
+        if project_id is None:
+            scope.append("s.project_id IS NULL AND t.project_id IS NULL")
+        else:
+            scope.append("(s.project_id IS NULL OR s.project_id = ?) AND (t.project_id IS NULL OR t.project_id = ?)")
+            scope_params.extend((project_id, project_id))
+        if workspace_id is None:
+            scope.append("s.workspace_id IS NULL AND t.workspace_id IS NULL")
+        else:
+            scope.append("(s.workspace_id IS NULL OR s.workspace_id = ?) AND (t.workspace_id IS NULL OR t.workspace_id = ?)")
+            scope_params.extend((workspace_id, workspace_id))
         sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content
                 FROM memory_relations r
                 JOIN memories s ON s.id=r.source_memory_id
                 JOIN memories t ON t.id=r.target_memory_id
-                WHERE r.source_memory_id IN ({placeholders}) OR r.target_memory_id IN ({placeholders})
+                WHERE (r.source_memory_id IN ({placeholders}) OR r.target_memory_id IN ({placeholders}))
+                  AND """ + " AND ".join(scope) + """
                 ORDER BY r.created_at DESC"""
         with self.lock:
-            return self.db.execute(sql,ids+ids).fetchall()
+            return self.db.execute(sql, ids + ids + scope_params).fetchall()
 
-    def search_memory_relations(self, query, limit=5):
+    def search_memory_relations(self, query, limit=5, project_id=None, workspace_id=None):
         terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
         terms=[term for term in terms if len(term)>1][:12]
         if not terms:
@@ -449,14 +525,33 @@ class EvoStore:
                                "CASE WHEN t.content LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
                                "CASE WHEN r.evidence LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
             score_params.extend((pattern,pattern,pattern))
-        params=score_params+where_params+[max(1,min(int(limit),50))]
-        sql=f"""SELECT r.*,s.content AS source_content,t.content AS target_content,
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        project_id = project_id.strip() if isinstance(project_id, str) else project_id
+        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        scope = []
+        scope_params = []
+        if project_id is None:
+            scope.append("s.project_id IS NULL AND t.project_id IS NULL")
+        else:
+            scope.append("(s.project_id IS NULL OR s.project_id = ?) AND (t.project_id IS NULL OR t.project_id = ?)")
+            scope_params.extend((project_id, project_id))
+        if workspace_id is None:
+            scope.append("s.workspace_id IS NULL AND t.workspace_id IS NULL")
+        else:
+            scope.append("(s.workspace_id IS NULL OR s.workspace_id = ?) AND (t.workspace_id IS NULL OR t.workspace_id = ?)")
+            scope_params.extend((workspace_id, workspace_id))
+        params=score_params+where_params+scope_params+[max(1,min(int(limit),50))]
+        sql = (f"""SELECT r.*,s.content AS source_content,t.content AS target_content,
                 ({' + '.join(score_parts)}) AS relevance
                 FROM memory_relations r
                 JOIN memories s ON s.id=r.source_memory_id
                 JOIN memories t ON t.id=r.target_memory_id
-                WHERE {' OR '.join(clauses)}
-                ORDER BY relevance DESC,r.created_at DESC LIMIT ?"""
+                WHERE ({' OR '.join(clauses)})"""
+               + " AND " + " AND ".join(scope) +
+               " ORDER BY relevance DESC,r.created_at DESC LIMIT ?")
         with self.lock:
             return self.db.execute(sql,params).fetchall()
 
@@ -577,7 +672,7 @@ class EvoStore:
             return self.db.execute("SELECT * FROM lessons WHERE status='active' ORDER BY created_at DESC LIMIT ?",
                                    (max(1,limit),)).fetchall()
 
-    def search_lessons(self, query, limit=5, category=None):
+    def search_lessons(self, query, limit=5, category=None, project_id=None, workspace_id=None):
         terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
         terms=[term for term in terms if len(term)>1][:12]
         if not terms:
@@ -593,10 +688,24 @@ class EvoStore:
             score_parts.append("(CASE WHEN trigger_text LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
                                "CASE WHEN lesson LIKE ? ESCAPE '!' THEN 2 ELSE 0 END)")
             score_params.extend((pattern,pattern))
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        project_id = project_id.strip() if isinstance(project_id, str) else project_id
+        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         sql=f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM lessons WHERE status='active' AND ({' OR '.join(clauses)})"
         params=score_params+where_params
         if category:
             sql+=" AND category=?"; params.append(category)
+        if project_id is None:
+            sql+=" AND project_id IS NULL"
+        else:
+            sql+=" AND (project_id IS NULL OR project_id = ?)"; params.append(project_id)
+        if workspace_id is None:
+            sql+=" AND workspace_id IS NULL"
+        else:
+            sql+=" AND (workspace_id IS NULL OR workspace_id = ?)"; params.append(workspace_id)
         sql+=" ORDER BY relevance DESC,confidence DESC,created_at DESC LIMIT ?"; params.append(max(1,limit))
         with self.lock:
             rows=self.db.execute(sql,params).fetchall()
@@ -621,11 +730,17 @@ class EvoStore:
             self.db.commit()
         return document_id
 
-    def search_research(self, query, limit=10):
+    def search_research(self, query, limit=10, project_id=None, workspace_id=None):
         terms = [term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
         terms = [term for term in terms if len(term)>1][:12]
         if not terms:
             return []
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        project_id = project_id.strip() if isinstance(project_id, str) else project_id
+        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         clauses=[]
         where_params=[]
         score_parts=[]
@@ -637,11 +752,22 @@ class EvoStore:
             score_parts.append("(CASE WHEN title LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
                                "CASE WHEN content LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
             score_params.extend((pattern,pattern))
-        params=score_params+where_params+[max(1,limit)]
+        params=score_params+where_params
+        if project_id is None:
+            scope = " AND project_id IS NULL"
+        else:
+            scope = " AND (project_id IS NULL OR project_id = ?)"
+            params.append(project_id)
+        if workspace_id is None:
+            scope += " AND workspace_id IS NULL"
+        else:
+            scope += " AND (workspace_id IS NULL OR workspace_id = ?)"
+            params.append(workspace_id)
+        params.append(max(1, limit))
         with self.lock:
             return self.db.execute(
                 f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM research_documents "
-                f"WHERE {' OR '.join(clauses)} ORDER BY relevance DESC,captured_at DESC LIMIT ?",
+                f"WHERE ({' OR '.join(clauses)})" + scope + " ORDER BY relevance DESC,captured_at DESC LIMIT ?",
                 params).fetchall()
 
     def start_agent_run(self, kind, metadata=None):
