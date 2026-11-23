@@ -115,8 +115,22 @@ class RetrievalIsolationTests(unittest.TestCase):
             root = Path(tmp)
             store = make_store(tmp)
             project, other, workspace, other_workspace = make_fixtures(store, root)
+            # Use a second workspace in the same project: a workspace from a
+            # different project is an invalid scope pair, not a denial case.
+            second_dir = root / "second-checkout"
+            second_dir.mkdir()
+            second_checkout = register_checkout(store, project["project_id"], second_dir)
+            second_config = create_configuration(
+                store, {"schema_version": 1, "components": {}}, name="second-cfg")
+            second_workspace = create_workspace(
+                store, "SecondWorkspace", project["project_id"],
+                second_config["configuration"]["configuration_id"],
+                second_config["revision"]["revision_id"],
+                checkout_id=second_checkout["checkout_id"])
             mid = store.add_memory("ws fact", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
-            self.assertNotIn(mid, [r["id"] for r in store.search_memories("fact", project_id=project["project_id"], workspace_id=other_workspace["workspace_id"])])
+            self.assertNotIn(mid, [r["id"] for r in store.search_memories(
+                "fact", project_id=project["project_id"],
+                workspace_id=second_workspace["workspace_id"])])
             store.close()
 
     def test_relation_endpoints_obey_scope(self):
@@ -389,9 +403,9 @@ class RemainingScopeClosureStoreTests(unittest.TestCase):
         self.assertNotIn(other_task, ids(self.store.list_tasks(project_id=self.project["project_id"])))
         self.assertFalse(self.store.update_task_status(project_task, "done"))
         self.assertTrue(self.store.update_task_status(project_task, "done", project_id=self.project["project_id"]))
+        # A valid project-wide scope cannot see a workspace-bound task.
         self.assertFalse(self.store.update_task_status(
-            workspace_task, "done", project_id=self.project["project_id"],
-            workspace_id=self.other_workspace["workspace_id"]))
+            workspace_task, "done", project_id=self.project["project_id"]))
 
     def test_run_feedback_lesson_inherits_run_scope(self):
         run_id = self.store.start_agent_run("coding", {
