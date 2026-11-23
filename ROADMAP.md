@@ -105,14 +105,25 @@ Required architectural invariants:
 - Project-specific data cannot leak into unrelated projects through retrieval, search, tool execution, or context assembly.
 - Uncertain project selection must not silently cause work in the wrong project.
 - Trusted Evo-managed project metadata/instructions are distinct from repository-provided files, which remain untrusted input.
+- Tasks and agent plans carry explicit scope. A task or plan must not inherit scope from whichever workspace is active when it executes.
+- Command permissions are resolved as the intersection of global policy and project policy. Project policy may only restrict global permissions; it cannot expand them. Missing, invalid, or ambiguous project policy must not silently grant broader access.
+
+Global versus project context defaults:
+- Project-specific memories, lessons, research, conversations, and other records remain project-scoped.
+- Project-specific information does not automatically become global.
+- Global user context may be available to project execution where appropriate.
+- Project-specific information cannot enter another project's context through retrieval, search, task handoff, or context reconstruction.
+- Cross-project consultation is out of scope unless separately authorized and auditable.
 
 Current verified implementation:
 - Project Provisioning v1 creates a dedicated folder, starter files, Git repository, project, and checkout. Source: `src/evo_core/project_provisioning.py`, `src/evo_core/project_checkouts.py`, `desktop/src/ProjectsWorkspace.tsx`.
+- Project Provisioning v1 is implemented, reviewed, accepted, and closed. Registry v1 and the registered-workspace execution boundary are existing foundations to reuse. Project deletion remains deferred. No genuinely incomplete provisioning capability is known beyond deferred deletion and later project-scoped context work.
 - Registry v1 stores configurations, projects, checkouts, and workspaces. Source: `src/evo_core/platform_registry.py`, `src/evo_core/workspaces.py`.
 - The registered-workspace execution boundary requires an active `workspace_id` and re-resolves it before `CodingAgent` construction. Source: `src/evo_core/api.py`, `src/evo_core/workspaces.py`.
 - Conversations and messages have no `project_id`. Source: `src/evo_core/store.py` conversations/messages schema.
 - Memories, lessons, research, and tasks have no project/workspace scope. Source: `src/evo_core/store.py` schema and `src/evo_core/assistant.py`.
 - Coding-agent context is assembled globally; retrieved context is isolated as untrusted data but not project-scoped. Source: `src/evo_core/assistant.py`.
+- Tasks and agent plans are global in `src/evo_core/orchestration.py` (`agent_plans` has no `project_id`, `workspace_id` is optional and nullable); task scope is not yet enforced.
 
 Proposed milestones:
 1. Scope and authority contract.
@@ -125,6 +136,23 @@ Proposed milestones:
    - Likely files: `src/evo_core/store.py`, `src/evo_core/api.py`, `desktop/src/Workspaces.tsx` or Projects UI.
    - Tests: conversation create/open/list with and without project scope.
    - Acceptance: existing conversations remain valid; project association is explicit and inspectable.
+2a. Task and agent-plan scope.
+   - Associate tasks and agent plans with project, workspace, conversation, and execution context.
+   - Mandatory when a project/workspace is supplied; optional only for explicitly global tasks.
+   - Legacy global tasks remain readable and are represented as explicitly global, not as project work.
+   - Preserve scope through approval, execution, interruption, recovery, and resumption.
+   - Reject execution when the requested project/workspace does not match the authorized execution context.
+   - Likely files: `src/evo_core/orchestration.py`, `src/evo_core/store.py`, `src/evo_core/api.py`, `src/evo_core/background_agent.py`.
+   - Tests: task/plan creation, scope persistence, approval/execution mismatch rejection, recovery.
+   - Acceptance: no task executes against an unauthorized or mismatched project/workspace.
+
+2b. Command-policy enforcement.
+   - Resolve effective command policy as the intersection of global and project policy.
+   - Backend execution boundary enforces the resolved policy; UI restrictions are advisory only.
+   - Likely files: `src/evo_core/workspace.py`, `src/evo_core/coding_agent.py`, `src/evo_core/workspaces.py`, configuration APIs.
+   - Tests: permission expansion rejection, missing/invalid/ambiguous policy, project switching, wrong project/workspace execution.
+   - Acceptance: project policy cannot broaden global permissions, and execution uses the resolved policy.
+
 3. Project-scoped memory and retrieval.
    - Add scope to memory, lessons, and research; filter retrieval by active scope.
    - Likely files: `src/evo_core/store.py`, `src/evo_core/assistant.py`, memory APIs/UI.

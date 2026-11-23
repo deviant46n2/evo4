@@ -90,5 +90,5 @@ Operational constraints:
 
 - Phase 2 planning documentation has been added to `ROADMAP.md`.
 - Current verified implementation: Project Provisioning v1, Registry v1, registered-workspace execution boundary, global conversations/messages, global memory/lessons/research, and coding-agent context isolation for untrusted retrieved text.
-- Current verified gaps: conversations, messages, memories, lessons, research, tasks, and command policy are not project-scoped; project lifecycle deletion/provisioning framework completion remains pending; automatic project selection is not authorized.
+- Current verified gaps: conversations, messages, memories, lessons, research, tasks, plans, and command policy are not project-scoped; project deletion remains deferred; automatic project selection is not authorized. Task/plan scope and command-policy enforcement are now explicit Phase 2 milestones.
 - No Phase 2 implementation has been started.
