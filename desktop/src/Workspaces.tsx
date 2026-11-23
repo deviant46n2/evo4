@@ -83,6 +83,8 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
     return params.toString() ? "?" + params.toString() : "";
   }, [scopeParams]);
   const refresh = useCallback(async () => {
+    const requestId = ++refreshGeneration.current;
+    const requestedScope = scopeKey;
     try {
       const params = new URLSearchParams({ status, limit: "200" });
       if (query.trim()) params.set("q", query.trim());
@@ -93,10 +95,17 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
         api<Memory[]>("/memories?" + params.toString()),
         api<Candidate[]>("/memory-candidates?" + candidateParams.toString()),
       ]);
+      if (requestId !== refreshGeneration.current || scopeKeyRef.current !== requestedScope) return;
       setItems(memoryRows); setCandidates(candidateRows); setError("");
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [query, status, scopeParams]);
+    } catch (e) {
+      if (requestId === refreshGeneration.current && scopeKeyRef.current === requestedScope) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, [query, status, scopeParams, scopeKey]);
   useEffect(() => {
+    setRecallPreview(null);
+    setReviewResults(null);
     void refresh();
     const changed=()=>void refresh();
     window.addEventListener("evo-demo-data-changed",changed);
@@ -109,15 +118,22 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
     try {
       const params = new URLSearchParams({ q: recallQuery.trim(), limit: "8" });
       scopeParams().forEach((value, key) => params.set(key, value));
-      setRecallPreview(await api<RecallPreview>("/memories/search?" + params.toString()));
+      const requestedScope = scopeKey;
+      const result = await api<RecallPreview>("/memories/search?" + params.toString());
+      if (scopeKeyRef.current === requestedScope) setRecallPreview(result);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setRecallBusy(false); }
   }
   async function scanForDuplicates() {
     if (reviewBusy) return;
     setReviewBusy(true); setError(""); setReviewResults(null);
-    try { setReviewResults(await api<MemoryReview>("/memories/review?limit=30" + scopeSuffix())); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    const requestedScope = scopeKey;
+    try {
+      const result = await api<MemoryReview>("/memories/review?limit=30" + scopeSuffix());
+      if (scopeKeyRef.current === requestedScope) setReviewResults(result);
+    } catch (e) {
+      if (scopeKeyRef.current === requestedScope) setError(e instanceof Error ? e.message : String(e));
+    }
     finally { setReviewBusy(false); }
   }
   async function addMemory(event: FormEvent) {
@@ -214,6 +230,10 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const planDetailGeneration = useRef(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const scopeKey = `${projectId || "global"}:${workspaceId || ""}`;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const refreshGeneration = useRef(0);
   const scopeParams = useCallback(() => {
     const params = new URLSearchParams();
     if (projectId) params.set("project_id", projectId);
