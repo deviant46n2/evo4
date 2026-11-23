@@ -64,13 +64,20 @@ The unified roadmap/architecture reconciliation remains in progress. Gemini's in
 
 ## Working collaboration protocol
 
-- The user is Vision Officer and final authority for purpose, direction, boundaries, and consequential decisions.
-- GPT-6 acts as technical/product lead: independently makes routine architecture, product, sequencing, and engineering decisions; challenges assumptions; and reports evidence and uncertainty candidly.
-- Kilo is the local implementation/integration and validation partner. When Kilo must inspect or change local repository state, provide a complete copy-paste-ready prompt.
-- GPT-6 should directly author critical implementation logic when implementation is authorized and the relevant source is available; Kilo integrates locally, handles broad/mechanical/UI work, and runs local validation.
-- Git is the current collaboration bridge. Kilo makes task-scoped changes, stages only task files, preserves unrelated modifications/untracked files, commits and pushes the existing branch. GPT-6 reviews the actual pushed diff and evidence.
-- Gemini may provide independent critique. Treat its findings as hypotheses to evaluate, not automatic instructions; accept, reject, or modify them with reasons.
-- Do not ask the user to decide routine implementation details. Ask only for vision-level input, missing authority, or genuinely consequential trade-offs.
+The user communicates the desired outcome or objective. GPT-6 investigates the repository, existing architecture, and relevant constraints. GPT-6 determines the implementation strategy and assigns ownership. The assigned participant implements: GPT-6 authors code directly when appropriate; Kilo implements when its local access or comparative advantage makes that preferable. Kilo performs local integration, testing, builds, and runtime checks when required. The non-implementing participant independently challenges and reviews the work where practical. GPT-6 retrieves and examines the exact resulting commit, diff, and evidence. GPT-6 resolves technical disagreements and makes the final engineering acceptance decision. GPT-6 identifies and advances the next useful task without requiring the user to manage routine engineering coordination.
+
+Operational constraints:
+- Git is the current collaboration bridge.
+- Kilo receives complete, copy-paste-ready prompts for local tasks.
+- Kilo stages only files belonging to the assigned task.
+- Kilo commits and pushes to the existing branch when requested by the established workflow.
+- Never discard, overwrite, reset, stash, or clean unrelated modifications or pre-existing untracked files.
+- GPT-6 must not claim to have executed local tests or runtime checks that it has not actually run.
+- The user should not have to manage routine agent assignment, technical sequencing, or repeated incomplete handoffs.
+- Escalate to the Vision Officer for genuine product-direction decisions, consequential risk or permission tradeoffs, and changes to agreed objectives—not routine engineering details.
+- This current human-mediated collaboration is not Evo4's future internal multi-agent orchestration architecture.
+- For especially consequential work—architecture, security boundaries, persistence, migrations, lifecycle, recovery, memory isolation, and orchestration—independent investigation or alternative proposals should be considered before implementation when the expected benefit justifies the cost.
+- After several substantial development milestones, GPT-6 should periodically evaluate defects surviving implementation and review, defects independently found by each participant, rework caused by mistakes, unnecessary handoffs, whether assignments are producing good results, and whether development speed is improving without sacrificing correctness. Adjust the working arrangement based on evidence.
 
 ## Next steps
 
