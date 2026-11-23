@@ -60,8 +60,9 @@ Application areas should remain windows into backend capabilities rather than se
 ## 5. Agent activity and orchestration experience
 
 - Coding and agent activity appear inline in chat.
-- Use an OpenCode-like expandable activity item showing task status and progress.
-- Expanded details show relevant agent activity, file changes, tool operations, test results, and task outcomes.
+- For a single-participant run, use a compact expandable activity item showing task status and progress.
+- For cooperative tasks, provide an inspectable collaboration view showing participant identities and task-scoped roles, specialist handoffs, isolated parallel attempts, synthesis decisions, adversarial challenges, unresolved disagreements, adjudication, deterministic verification evidence, resource use, and final outcomes.
+- Show which participant produced each artifact or claim, which evidence supports it, what was accepted/rejected/combined, and why. Do not flatten disagreement into a single untraceable assistant answer.
 - Users can continue chatting while longer-running agent work proceeds.
 - New instructions and interruptions are handled through orchestration design.
 - Interruption behavior, queued decisions, autonomy, and concurrency are configurable in AI/PAI configuration.
@@ -166,7 +167,7 @@ This inventory is based on inspection of the current implementation, routes, com
 
 ### Phase 5 — AI configuration and Cyberdeck
 
-- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, immutable revisions, archiving/reactivation of records, and Registry association. Reactivation is not runtime activation; configuration-to-provider runtime binding and provider selection are not implemented. Workspace Registry links configurations to projects and checkouts. Configuration definitions use top-level `components` objects, but no explicit connection or dependency graph is defined in the inspected implementation.
+- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, immutable revisions, archiving/rearchive/reactivation of configuration records, and Registry association. Reactivation changes archived status only; it is not runtime activation or provider selection. Reactivation is not runtime activation; configuration-to-provider runtime binding and provider selection are not implemented. Workspace Registry links configurations to projects and checkouts. Configuration definitions use top-level `components` objects, but no explicit connection or dependency graph is defined in the inspected implementation.
 - Status: Partially implemented.
 - Redesign gap: Node-based visual canvas, component inspection, and status indicators are not implemented.
 - Backend gap: Missing backend requirements include an explicit component graph or relationship model, runtime-state queryability for components, and status reporting. Existing configuration entities and revisions should be reused, but a generic component configuration is not already a complete executable or observable graph.
