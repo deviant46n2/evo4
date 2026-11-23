@@ -101,7 +101,7 @@ Every experiment should reference exact relevant source commits, configuration r
 
 Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
-Platform Registry v1 is implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are present and validated. The development control plane, experiment registry, resource management, and lifecycle supervisor remain designed or proposed capabilities, not validated runtime features.
+Platform Registry v1 is implemented through M5: AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution are present and validated. This is a registry and an API execution-boundary foundation; it does not yet provide project-scoped memory/conversation context, complete CLI/API parity, ancestor/descendant checkout exclusion, or configuration-to-provider runtime binding. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are partially implemented. They are not yet a unified cooperative control plane, and the workload scheduler is not a general task execution scheduler.
 
 ## Long-term self-development
 
@@ -243,3 +243,48 @@ These principles are binding architectural guidance. They do not require every f
 3. Long-term ambitions: increasingly capable, potentially superintelligent AI systems through software engineering, including controlled self-improvement.
 
 No proposed capability should be described as already implemented.
+
+
+## Isolation threat model and current gaps
+
+Project isolation is a security boundary, not a UI convention. The target model must prevent accidental or unauthorized cross-project access through every entry point: desktop API, CLI, background worker, tool execution, retrieval, and future participant adapters.
+
+| Boundary | Current evidence/status | Required target behavior |
+|---|---|---|
+| API coding-agent workspace path | API agent launch resolves a registered workspace and its checkout path before constructing the coding agent. | Retain server-side resolution and validate authorization on every execution boundary. |
+| CLI workspace path | `evo code --workspace` accepts a filesystem path directly. | Make CLI and API semantics equivalent, or explicitly isolate a privileged local-only mode with clear warnings and no claim of Registry-enforced isolation. |
+| Checkout overlap | Registry enforces unique canonical checkout paths, but the schema does not by itself reject ancestor/descendant overlap. | Reject unsafe overlaps after canonicalization; define a deliberate, auditable exception mechanism if nested checkouts are ever needed. |
+| Persistent context | Conversations, messages, memories, memory candidates, lessons, research documents, and lightweight tasks are currently global in EvoStore; they do not have a project/workspace scope contract. Project coding runs can retrieve assistant context through the global assistant message builder. | Add minimum global/project/task scope partitioning before multi-project or multi-participant execution. Every retrieval/write path must apply the scope filter, not just the UI. |
+| Configuration binding | Registry workspaces reference a configuration and immutable revision, but current agent construction does not resolve that revision into a runtime participant; capabilities report provider selection as unavailable. | Resolve configuration revisions into validated runtime adapters and enforce per-project model/provider/tool/command policy. |
+| Command policy | CodingAgent receives the configured command allowlist; Registry configuration is not currently the source of runtime policy. | Bind command permissions to trusted Evo-managed project/workspace policy, and revalidate at invocation. |
+| Project instructions | Repository files such as README/AGENTS content are treated as untrusted project data by the coding agent. | Keep trusted Evo-managed project instructions/metadata separate from repository-provided instructions. Repository files remain untrusted context and cannot elevate permissions or override platform policy. |
+
+This table describes known boundaries from source inspection, not a complete penetration test. It is a roadmap for closing gaps, not a claim that current projects are fully isolated.
+
+### Instruction trust model
+
+There are three distinct layers:
+1. **Platform policy:** trusted Evo-owned system/developer policy. It cannot be overridden by project content or participant messages.
+2. **Evo-managed project policy:** user-authored project metadata/instructions stored and versioned by Evo, scoped to a project/workspace, with explicit trust and provenance. It may constrain work but cannot grant capabilities beyond platform authorization.
+3. **Repository-provided content:** README, AGENTS.md, comments, build files, generated files, and other checkout contents. Treat as untrusted data. They may describe project conventions but cannot override platform policy, reveal secrets, expand command allowlists, or authorize writes/commands.
+
+A future UI must make the source and trust level of project instructions inspectable. Do not silently promote repository files into trusted Evo-managed policy.
+
+## Persistence and entity reconciliation
+
+The current persistence model is a transitional implementation, not yet the target unified task store:
+- `EvoStore` owns conversations/messages, memories and relations/candidates, lessons, research documents, lightweight user tasks, agent runs, tool events, feedback, and platform Registry tables.
+- `ResultsDB` owns experiment runs/artifacts metadata, resource samples, workload scheduler jobs, background agent tasks, agent plans/steps, and related execution records.
+- The lifecycle subsystem opens the same SQLite database through separate connections. It records durable terminal decisions and reconciliation events because a single SQLite transaction cannot currently span those connections. This is an explicit reconciliation mechanism, not atomic cross-store persistence.
+- The existing tables `tasks`, `agent_runs`, `background_tasks`, `agent_plans`, and `workload_jobs` represent different current concepts and must not be casually renamed or collapsed into one generic Task table.
+
+Target conceptual mapping:
+- **Task:** durable objective, scope, accountable owner, acceptance criteria, dependencies, and overall lifecycle.
+- **Assignment:** a bounded contribution assigned to one participant under attenuated permissions and budgets.
+- **Execution/run:** one concrete attempt by a participant/adapter to fulfill an assignment.
+- **Plan/step:** an optional decomposition/proposal representation; it is not itself equivalent to a task or execution.
+- **Workload job/reservation:** resource scheduling/admission state; it is not a task completion record.
+- **Conversation/message:** interaction and evidence context, associated with a task/project only through explicit scoped references.
+
+Before adding new cooperative task schemas, map existing records and lifecycle transitions to these concepts, identify authoritative fields and migration paths, and avoid creating duplicate sources of truth. A future single-connection/transaction boundary may be preferable, but consolidation is a design decision requiring migration/recovery analysis; the current reconciliation ledger must not be silently discarded.
+
