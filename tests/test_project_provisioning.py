@@ -253,6 +253,57 @@ class ProjectProvisioningRecoveryTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "recovery_required")
         self.assertIn("workspace binding is missing", recovered["error"])
 
+    def test_recovery_rejects_workspace_bound_to_another_project(self):
+        config_result = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        result = provision_project(
+            self.store,
+            "Demo",
+            str(self.parent),
+            configuration_id=config_result["configuration"]["configuration_id"],
+            configuration_revision_id=config_result["revision"]["revision_id"],
+        )
+        op_id = result["operation_id"]
+        other_project = register_project(self.store, "Other")
+        with self.store.lock:
+            self.store.db.execute("PRAGMA foreign_keys=OFF")
+            self.store.db.execute("UPDATE workspaces SET project_id=? WHERE workspace_id=?",
+                                  (other_project["project_id"], result["workspace"]["workspace_id"]))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+            self.store.db.execute("PRAGMA foreign_keys=ON")
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("mismatched", recovered["error"])
+        first = recover_provisioning_operation(self.store, op_id)
+        second = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(first["status"], "recovery_required")
+        self.assertEqual(second["status"], "recovery_required")
+
+    def test_recovery_rejects_workspace_bound_to_another_checkout(self):
+        config_result = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        result = provision_project(
+            self.store,
+            "Demo",
+            str(self.parent),
+            configuration_id=config_result["configuration"]["configuration_id"],
+            configuration_revision_id=config_result["revision"]["revision_id"],
+        )
+        op_id = result["operation_id"]
+        other_project = register_project(self.store, "Other")
+        other_dir = self.root / "other-checkout"
+        other_dir.mkdir()
+        other_checkout = register_checkout(self.store, other_project["project_id"], other_dir)
+        with self.store.lock:
+            self.store.db.execute("PRAGMA foreign_keys=OFF")
+            self.store.db.execute("UPDATE workspaces SET checkout_id=? WHERE workspace_id=?",
+                                  (other_checkout["checkout_id"], result["workspace"]["workspace_id"]))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+            self.store.db.execute("PRAGMA foreign_keys=ON")
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("mismatched", recovered["error"])
+
     def test_recovery_propagates_database_errors(self):
         result = self._provision()
         op_id = result["operation_id"]
@@ -277,19 +328,25 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
         self.store.db.close()
         self.temp.cleanup()
 
-    def _fail_at_registry(self, modifier):
-        from unittest.mock import patch
+    def test_rollback_preserves_replaced_project_directory(self):
+        def modifier(target):
+            replacement = target.parent / "replacement"
+            replacement.mkdir()
+            (replacement / "external.txt").write_text("keep", encoding="utf-8")
+            target.rename(target.parent / "original")
+            replacement.rename(target)
 
-        def boom(store, name, *, path, **kwargs):
-            target = Path(path)
-            modifier(target)
-            raise RuntimeError("registry boom")
-
-        with patch("evo_core.project_provisioning.register_project_and_checkout", side_effect=boom):
-            try:
-                provision_project(self.store, "Demo", str(self.parent))
-            except Exception:
-                pass
+        operation_id, caught, row = self._fail_at_registry(modifier)
+        self.assertIsNotNone(caught)
+        self.assertEqual(row["status"], "recovery_required")
+        self.assertIn("registry boom", row["error"])
+        dirs = list(self.parent.iterdir())
+        self.assertEqual(len(dirs), 2)
+        replacement_dirs = [p for p in dirs if (p / "external.txt").exists()]
+        self.assertEqual(len(replacement_dirs), 1)
+        self.assertTrue((replacement_dirs[0] / "external.txt").exists())
+        original_dirs = [p for p in dirs if p.name.startswith("original")]
+        self.assertEqual(len(original_dirs), 1)
 
     def test_recovery_rejects_directory_replacement(self):
         result = provision_project(self.store, "Demo", str(self.parent))
@@ -367,7 +424,10 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
             path.unlink()
             path.write_text("external replacement", encoding="utf-8")
 
-        self._fail_at_registry(modifier)
+        operation_id, caught, row = self._fail_at_registry(modifier)
+        self.assertIsNotNone(caught)
+        self.assertEqual(row["status"], "recovery_required")
+        self.assertIn("registry boom", row["error"])
         dirs = list(self.parent.iterdir())
         self.assertEqual(len(dirs), 1)
         self.assertEqual((dirs[0] / "README.md").read_text(), "external replacement")
@@ -376,7 +436,10 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
         def modifier(target):
             (target / "UNRELATED.txt").write_text("keep", encoding="utf-8")
 
-        self._fail_at_registry(modifier)
+        operation_id, caught, row = self._fail_at_registry(modifier)
+        self.assertIsNotNone(caught)
+        self.assertEqual(row["status"], "recovery_required")
+        self.assertIn("registry boom", row["error"])
         dirs = list(self.parent.iterdir())
         self.assertEqual(len(dirs), 1)
         self.assertTrue((dirs[0] / "UNRELATED.txt").exists())
@@ -386,7 +449,10 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
         def modifier(target):
             (target / ".git" / "UNRELATED").write_text("keep", encoding="utf-8")
 
-        self._fail_at_registry(modifier)
+        operation_id, caught, row = self._fail_at_registry(modifier)
+        self.assertIsNotNone(caught)
+        self.assertEqual(row["status"], "recovery_required")
+        self.assertIn("registry boom", row["error"])
         dirs = list(self.parent.iterdir())
         self.assertEqual(len(dirs), 1)
         self.assertTrue((dirs[0] / ".git" / "UNRELATED").exists())
@@ -400,7 +466,10 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
             git_dir.mkdir()
             (git_dir / "external").write_text("keep", encoding="utf-8")
 
-        self._fail_at_registry(modifier)
+        operation_id, caught, row = self._fail_at_registry(modifier)
+        self.assertIsNotNone(caught)
+        self.assertEqual(row["status"], "recovery_required")
+        self.assertIn("registry boom", row["error"])
         dirs = list(self.parent.iterdir())
         self.assertEqual(len(dirs), 1)
         self.assertTrue((dirs[0] / ".git" / "external").exists())
@@ -413,8 +482,13 @@ class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
             modifier(target)
             raise RuntimeError("registry boom")
 
+        caught = None
         with patch("evo_core.project_provisioning.register_project_and_checkout", side_effect=boom):
             try:
                 provision_project(self.store, "Demo", str(self.parent))
-            except Exception:
-                pass
+            except Exception as exc:
+                caught = exc
+        row = self.store.db.execute(
+            "SELECT operation_id, status, error FROM project_provisioning_operations ORDER BY created_at DESC, operation_id DESC LIMIT 1"
+        ).fetchone()
+        return (row["operation_id"] if row else None, caught, dict(row) if row else None)
