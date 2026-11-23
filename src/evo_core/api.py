@@ -815,8 +815,9 @@ def create_app(config_path="config.toml", provider_name=None):
         visible = [row for row in rows if _run_visible_in_scope(row, project_id, workspace_id)]
         return [serialize_run(row) for row in visible[:min(max(limit, 1), 100)]]
 
-    @app.get("/api/v1/agents/{run_id}")
+    @app.get("/api/v1/agents/{run_id:uuid}")
     def agent_run(run_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        run_id = str(run_id)
         project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         row = store.get_agent_run(run_id)
         if row is None or not _run_visible_in_scope(row, project_id, workspace_id):
