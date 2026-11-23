@@ -936,14 +936,36 @@ def create_app(config_path="config.toml", provider_name=None):
             return
 
         run_record = store.get_agent_run(run_id)
+        if run_record is None:
+            _finalize_agent_run(run_id, "failed", "Agent run record is missing", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
         run_metadata = {}
-        if run_record is not None:
-            try:
-                run_metadata = __import__("json").loads(run_record["metadata_json"] or "{}")
-            except Exception:
-                run_metadata = {}
+        metadata_error = None
+        try:
+            decoded = __import__("json").loads(run_record["metadata_json"] or "{}")
+        except Exception:
+            decoded = None
+            metadata_error = "Agent run metadata is not valid JSON"
+        if metadata_error is None and not isinstance(decoded, dict):
+            metadata_error = "Agent run metadata is not a JSON object"
+        if metadata_error is not None:
+            _finalize_agent_run(run_id, "failed", metadata_error, plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+        run_metadata = decoded
         metadata_workspace_id = run_metadata.get("workspace_id")
         metadata_project_id = run_metadata.get("project_id")
+        if "workspace_id" not in run_metadata or "project_id" not in run_metadata:
+            _finalize_agent_run(run_id, "failed", "Agent run metadata is missing required project/workspace scope", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
         if (metadata_workspace_id != authoritative_workspace_id
                 or metadata_project_id != authoritative_project_id):
             _finalize_agent_run(
@@ -1148,7 +1170,11 @@ def create_app(config_path="config.toml", provider_name=None):
 
     @app.get("/api/v1/conversations")
     def conversations(limit: int = 30, q: str | None = None, project_id: str | None = None, workspace_id: str | None = None):
-        rows = store.list_conversations(min(max(limit, 1), 100), query=q, project_id=project_id, workspace_id=workspace_id)
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        rows = store.list_conversations(min(max(limit, 1), 100), query=q, project_id=validated_project_id, workspace_id=validated_workspace_id)
         return [
             {
                 "id": row["id"],
@@ -1164,12 +1190,20 @@ def create_app(config_path="config.toml", provider_name=None):
         data = payload or ConversationCreate()
         selected_project = project_id if project_id is not None else data.project_id
         selected_workspace = workspace_id if workspace_id is not None else data.workspace_id
-        conversation_id = assistant.new_conversation(data.title or "New conversation", project_id=selected_project, workspace_id=selected_workspace)
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(selected_project, selected_workspace)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        conversation_id = assistant.new_conversation(data.title or "New conversation", project_id=validated_project_id, workspace_id=validated_workspace_id)
         return {"id": conversation_id, "title": (data.title or "New conversation")[:120]}
 
     @app.patch("/api/v1/conversations/{conversation_id}")
     def rename_conversation(conversation_id: str, payload: ConversationUpdate, project_id: str | None = None, workspace_id: str | None = None):
-        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         try:
             updated = store.rename_conversation(conversation_id, payload.title)
@@ -1181,7 +1215,11 @@ def create_app(config_path="config.toml", provider_name=None):
 
     @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
     def delete_conversation(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
-        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         # The reservation check and deletion must be atomic with respect to chat
         # registration. Queued turns are reserved before executor submission.
@@ -1195,7 +1233,11 @@ def create_app(config_path="config.toml", provider_name=None):
 
     @app.get("/api/v1/conversations/{conversation_id}/messages")
     def messages(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
-        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             {
@@ -1203,7 +1245,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 "content": row["content"],
                 "created_at": row["created_at"],
             }
-            for row in store.get_messages(conversation_id, 500, project_id=project_id, workspace_id=workspace_id)
+            for row in store.get_messages(conversation_id, 500, project_id=validated_project_id, workspace_id=validated_workspace_id)
             if row["role"] in {"user", "assistant"}
         ]
 

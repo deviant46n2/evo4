@@ -269,3 +269,217 @@ class RunMetadataValidationTests(unittest.TestCase):
         self.app.state.run_agent(run_id, "request", self.workspace["workspace_id"], threading.Event(), plan["id"])
         self.app.state.assistant.new_conversation = orig_new
         self.assertTrue(created["called"])
+
+
+class ConversationScopeValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.app.state.assistant.provider.chat = lambda messages, **kwargs: {
+            "content": "done", "tool_calls": [], "finish_reason": "stop",
+            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+            "prompt_tokens": 10, "completion_tokens": 2,
+        }
+        self.store = self.app.state.store
+        from evo_core.platform_registry import initialize_platform_registry
+        from evo_core.project_checkouts import register_project, register_checkout
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+        self.other = register_project(self.store, "Other")
+        other_dir = self.root / "other-checkout"
+        other_dir.mkdir()
+        other_checkout = register_checkout(self.store, self.other["project_id"], other_dir)
+        other_cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg2")
+        self.other_workspace = create_workspace(self.store, "OtherWS", self.other["project_id"],
+                                               other_cfg["configuration"]["configuration_id"], other_cfg["revision"]["revision_id"],
+                                               checkout_id=other_checkout["checkout_id"])
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_listing_invalid_project_422(self):
+        status, data = asgi_request(self.app, "GET", "/api/v1/conversations?project_id=missing-project")
+        self.assertEqual(status, 422)
+
+    def test_listing_unknown_workspace_422(self):
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations?project_id={self.project['project_id']}&workspace_id=missing-workspace")
+        self.assertEqual(status, 422)
+
+    def test_listing_workspace_project_mismatch_422(self):
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations?project_id={self.project['project_id']}&workspace_id={self.other_workspace['workspace_id']}")
+        self.assertEqual(status, 422)
+
+    def test_listing_workspace_without_project_422(self):
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations?workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 422)
+
+    def test_creation_invalid_scope_422(self):
+        status, data = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "x", "project_id": "missing-project"})
+        self.assertEqual(status, 422)
+
+    def test_history_invalid_scope_422(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations", {"title": "g"})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id=missing-project")
+        self.assertEqual(status, 422)
+
+    def test_rename_invalid_scope_422(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations", {"title": "g"})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "PATCH", f"/api/v1/conversations/{cid}?project_id=missing-project",
+                                    {"title": "new"})
+        self.assertEqual(status, 422)
+
+    def test_delete_invalid_scope_422(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations", {"title": "g"})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "DELETE", f"/api/v1/conversations/{cid}?project_id=missing-project")
+        self.assertEqual(status, 422)
+
+    def test_valid_scoped_operations(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "ws", "project_id": self.project["project_id"],
+                                     "workspace_id": self.workspace["workspace_id"]})
+        self.assertEqual(status, 201)
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+        status, data = asgi_request(self.app, "PATCH", f"/api/v1/conversations/{cid}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}",
+                                    {"title": "renamed"})
+        self.assertEqual(status, 200)
+
+    def test_global_backward_compat(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations", {"title": "global"})
+        self.assertEqual(status, 201)
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages")
+        self.assertEqual(status, 200)
+        status, data = asgi_request(self.app, "GET", "/api/v1/conversations")
+        self.assertEqual(status, 200)
+
+    def test_cross_project_workspace_access_rejected(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "proj", "project_id": self.project["project_id"]})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.other['project_id']}")
+        self.assertEqual(status, 404)
+
+
+class BackgroundRunMalformedTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.app.state.assistant.provider.chat = lambda messages, **kwargs: {
+            "content": "done", "tool_calls": [], "finish_reason": "stop",
+            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+            "prompt_tokens": 10, "completion_tokens": 2,
+        }
+        self.store = self.app.state.store
+        from evo_core.platform_registry import initialize_platform_registry
+        from evo_core.project_checkouts import register_project, register_checkout
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def _run_with_metadata(self, metadata_raw):
+        run_id = self.store.start_agent_run("coding", {"request": "r"})
+        # overwrite metadata_json
+        self.store.db.execute("UPDATE agent_runs SET metadata_json=? WHERE id=?", (metadata_raw, run_id))
+        self.store.db.commit()
+        # set proper workspace/project metadata by updating? For mismatch tests, set metadata
+        from evo_core import background_agent
+        background_agent.create(self.app.state.lab_db.connection, run_id)
+        # update metadata to desired raw
+        self.store.db.execute("UPDATE agent_runs SET metadata_json=? WHERE id=?", (metadata_raw, run_id))
+        self.store.db.commit()
+        created = {"called": False}
+        orig_new = self.app.state.assistant.new_conversation
+        def fake_new(*a, **k):
+            created["called"] = True
+            return orig_new(*a, **k)
+        self.app.state.assistant.new_conversation = fake_new
+        import threading
+        # For metadata with scope, inject workspace/project into raw? We'll handle per test.
+        self.app.state.run_agent(run_id, "request", self.workspace["workspace_id"], threading.Event())
+        self.app.state.assistant.new_conversation = orig_new
+        return run_id, created
+
+    def test_invalid_json_rejected(self):
+        run_id, created = self._run_with_metadata("{not json")
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+
+    def test_non_object_json_rejected(self):
+        import json
+        run_id, created = self._run_with_metadata(json.dumps(["a", "b"]))
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+        run_id2, created2 = self._run_with_metadata(json.dumps("scalar"))
+        run2 = self.store.get_agent_run(run_id2)
+        self.assertEqual(run2["status"], "failed")
+        self.assertFalse(created2["called"])
+
+    def test_missing_record_rejected(self):
+        import threading
+        created = {"called": False}
+        orig_new = self.app.state.assistant.new_conversation
+        def fake_new(*a, **k):
+            created["called"] = True
+            return orig_new(*a, **k)
+        self.app.state.assistant.new_conversation = fake_new
+        self.app.state.run_agent("missing-run-id", "request", self.workspace["workspace_id"], threading.Event())
+        self.app.state.assistant.new_conversation = orig_new
+        self.assertFalse(created["called"])
+
+    def test_missing_metadata_scope_rejected(self):
+        import json
+        run_id, created = self._run_with_metadata(json.dumps({"request": "r"}))
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+
+    def test_mismatched_scope_rejected(self):
+        import json
+        run_id, created = self._run_with_metadata(json.dumps({"workspace_id": self.workspace["workspace_id"], "project_id": "wrong", "request": "r"}))
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+
+    def test_valid_metadata_passes(self):
+        import json
+        run_id, created = self._run_with_metadata(json.dumps({"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}))
+        run = self.store.get_agent_run(run_id)
+        self.assertTrue(created["called"])
