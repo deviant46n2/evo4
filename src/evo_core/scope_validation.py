@@ -46,3 +46,18 @@ def validate_scope(store, project_id=None, workspace_id=None):
 
 def scope_error(exc):
     return exc
+
+
+def scope_is_visible(record_project_id, record_workspace_id, request_project_id, request_workspace_id):
+    """Return whether a record belongs to the requested global/project/workspace view."""
+    if request_project_id is None:
+        return record_project_id is None and record_workspace_id is None
+    if record_project_id is not None and record_project_id != request_project_id:
+        return False
+    if request_workspace_id is None:
+        return record_workspace_id is None
+    if record_project_id is None:
+        return record_workspace_id is None
+    return record_project_id == request_project_id and (
+        record_workspace_id is None or record_workspace_id == request_workspace_id
+    )
