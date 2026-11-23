@@ -262,3 +262,159 @@ class ProjectProvisioningRecoveryTests(unittest.TestCase):
         with patch("evo_core.project_provisioning._project_row", side_effect=RuntimeError("db boom")):
             with self.assertRaises(RuntimeError):
                 recover_provisioning_operation(self.store, op_id)
+
+
+class ProjectProvisioningRecoveryAndRollbackTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.store = EvoStore(self.root / "evo.sqlite3")
+        initialize_platform_registry(self.store)
+        self.parent = self.root / "projects"
+        self.parent.mkdir()
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def _fail_at_registry(self, modifier):
+        from unittest.mock import patch
+
+        def boom(store, name, *, path, **kwargs):
+            target = Path(path)
+            modifier(target)
+            raise RuntimeError("registry boom")
+
+        with patch("evo_core.project_provisioning.register_project_and_checkout", side_effect=boom):
+            try:
+                provision_project(self.store, "Demo", str(self.parent))
+            except Exception:
+                pass
+
+    def test_recovery_rejects_directory_replacement(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        op_id = result["operation_id"]
+        target = Path(result["canonical_path"])
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        target.rename(self.root / "original")
+        target.mkdir()
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("identity could not be verified", recovered["error"])
+        # Restore for cleanup.
+        if target.exists():
+            target.rmdir()
+        (self.root / "original").rename(target)
+
+    def test_recovery_rejects_missing_project(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("PRAGMA foreign_keys=OFF")
+            self.store.db.execute("DELETE FROM software_projects WHERE project_id=?", (result["project"]["project_id"],))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+            self.store.db.execute("PRAGMA foreign_keys=ON")
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("project record is missing", recovered["error"])
+
+    def test_recovery_rejects_missing_checkout(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("DELETE FROM project_checkouts WHERE checkout_id=?", (result["checkout"]["checkout_id"],))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("checkout record is missing", recovered["error"])
+
+    def test_recovery_rejects_mismatched_checkout_project(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        op_id = result["operation_id"]
+        other_project = register_project(self.store, "Other")
+        with self.store.lock:
+            self.store.db.execute("PRAGMA foreign_keys=OFF")
+            self.store.db.execute("UPDATE project_checkouts SET project_id=? WHERE checkout_id=?",
+                                  (other_project["project_id"], result["checkout"]["checkout_id"]))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+            self.store.db.execute("PRAGMA foreign_keys=ON")
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("does not belong", recovered["error"])
+
+    def test_recovery_repeated_does_not_complete_mismatched_state(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("DELETE FROM project_checkouts WHERE checkout_id=?", (result["checkout"]["checkout_id"],))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        first = recover_provisioning_operation(self.store, op_id)
+        second = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(first["status"], "recovery_required")
+        self.assertEqual(second["status"], "recovery_required")
+
+    def test_rollback_preserves_replaced_starter_file(self):
+        def modifier(target):
+            path = target / "README.md"
+            path.unlink()
+            path.write_text("external replacement", encoding="utf-8")
+
+        self._fail_at_registry(modifier)
+        dirs = list(self.parent.iterdir())
+        self.assertEqual(len(dirs), 1)
+        self.assertEqual((dirs[0] / "README.md").read_text(), "external replacement")
+
+    def test_rollback_preserves_unrelated_file(self):
+        def modifier(target):
+            (target / "UNRELATED.txt").write_text("keep", encoding="utf-8")
+
+        self._fail_at_registry(modifier)
+        dirs = list(self.parent.iterdir())
+        self.assertEqual(len(dirs), 1)
+        self.assertTrue((dirs[0] / "UNRELATED.txt").exists())
+        self.assertEqual((dirs[0] / "UNRELATED.txt").read_text(), "keep")
+
+    def test_rollback_preserves_unrelated_git_content(self):
+        def modifier(target):
+            (target / ".git" / "UNRELATED").write_text("keep", encoding="utf-8")
+
+        self._fail_at_registry(modifier)
+        dirs = list(self.parent.iterdir())
+        self.assertEqual(len(dirs), 1)
+        self.assertTrue((dirs[0] / ".git" / "UNRELATED").exists())
+
+    def test_rollback_preserves_replaced_git_directory(self):
+        def modifier(target):
+            git_dir = target / ".git"
+            if git_dir.exists():
+                import shutil
+                shutil.rmtree(git_dir)
+            git_dir.mkdir()
+            (git_dir / "external").write_text("keep", encoding="utf-8")
+
+        self._fail_at_registry(modifier)
+        dirs = list(self.parent.iterdir())
+        self.assertEqual(len(dirs), 1)
+        self.assertTrue((dirs[0] / ".git" / "external").exists())
+
+    def _fail_at_registry(self, modifier):
+        from unittest.mock import patch
+
+        def boom(store, name, *, path, **kwargs):
+            target = Path(path)
+            modifier(target)
+            raise RuntimeError("registry boom")
+
+        with patch("evo_core.project_provisioning.register_project_and_checkout", side_effect=boom):
+            try:
+                provision_project(self.store, "Demo", str(self.parent))
+            except Exception:
+                pass
