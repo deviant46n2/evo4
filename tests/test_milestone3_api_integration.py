@@ -592,3 +592,86 @@ class MemoryApiScopeTests(unittest.TestCase):
             f"/api/v1/memory-candidates/{candidate_id}/review?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}",
             {"approved": True})
         self.assertEqual(status, 200)
+
+
+
+class AgentScopeApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.store = self.app.state.store
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.other = register_project(self.store, "Other")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_agent_run_listing_and_detail_are_scope_filtered(self):
+        from evo_core import background_agent
+        global_run = self.store.start_agent_run("coding", {})
+        scoped_run = self.store.start_agent_run("coding", {
+            "project_id": self.project["project_id"],
+            "workspace_id": self.workspace["workspace_id"],
+            "request": "private workspace run",
+        })
+        background_agent.create(self.app.state.lab_db.connection, scoped_run)
+        status, rows = asgi_request(self.app, "GET", "/api/v1/agents?limit=100")
+        self.assertEqual(status, 200)
+        self.assertEqual({row["id"] for row in rows}, {global_run})
+        status, rows = asgi_request(
+            self.app, "GET",
+            f"/api/v1/agents?limit=100&project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+        self.assertIn(global_run, {row["id"] for row in rows})
+        self.assertIn(scoped_run, {row["id"] for row in rows})
+        status, data = asgi_request(
+            self.app, "GET",
+            f"/api/v1/agents/{scoped_run}?project_id={self.other['project_id']}")
+        self.assertEqual(status, 404)
+        status, data = asgi_request(
+            self.app, "GET",
+            f"/api/v1/agents/{scoped_run}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+
+    def test_agent_plan_listing_detail_and_approval_are_scope_filtered(self):
+        from evo_core import orchestration
+        plan = orchestration.create_plan(
+            self.app.state.lab_db.connection, "private request",
+            self.workspace["workspace_id"], str(self.directory),
+            {"title": "Private plan", "summary": "Private summary", "steps": [{
+                "title": "Step", "description": "Do work", "expected_outcome": "Done",
+                "verification": "Check result",
+            }]},
+            project_id=self.project["project_id"], store=self.store)
+        status, rows = asgi_request(self.app, "GET", "/api/v1/agents/plans?limit=30")
+        self.assertEqual(status, 200)
+        self.assertNotIn(plan["id"], {row["id"] for row in rows})
+        scoped_query = f"?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}"
+        status, rows = asgi_request(self.app, "GET", "/api/v1/agents/plans?limit=30" + scoped_query)
+        self.assertEqual(status, 200)
+        self.assertIn(plan["id"], {row["id"] for row in rows})
+        status, data = asgi_request(
+            self.app, "GET",
+            f"/api/v1/agents/plans/{plan['id']}?project_id={self.other['project_id']}")
+        self.assertEqual(status, 404)
+        status, data = asgi_request(
+            self.app, "POST",
+            f"/api/v1/agents/plans/{plan['id']}/approve?project_id={self.other['project_id']}", {})
+        self.assertEqual(status, 404)
+        status, data = asgi_request(
+            self.app, "POST",
+            f"/api/v1/agents/plans/{plan['id']}/approve" + scoped_query, {})
+        self.assertEqual(status, 200)
