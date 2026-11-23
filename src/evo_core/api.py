@@ -648,10 +648,11 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
     @app.get("/api/v1/memories/search")
-    def memory_search_preview(q: str, limit: int = 8):
+    def memory_search_preview(q: str, limit: int = 8, project_id: str | None = None, workspace_id: str | None = None):
         if not q.strip():
             raise HTTPException(status_code=422, detail="Search query cannot be empty")
-        rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False)
+        rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False,
+                                    project_id=project_id, workspace_id=workspace_id)
         return {
             "query": q, "count": len(rows),
             "retrieval": "hybrid lexical (FTS5 + LIKE candidates; no embeddings)",
@@ -674,8 +675,8 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"id": memory_id}
 
     @app.get("/api/v1/memory-candidates")
-    def memory_candidates(limit: int = 100):
-        rows = store.list_memory_candidates("pending", min(max(limit, 1), 200))
+    def memory_candidates(limit: int = 100, project_id: str | None = None, workspace_id: str | None = None):
+        rows = store.list_memory_candidates("pending", min(max(limit, 1), 200), project_id=project_id, workspace_id=workspace_id)
         return [{
             "id": row["id"], "content": row["content"], "category": row["category"],
             "source": row["source"], "confidence": row["confidence"],
@@ -683,8 +684,8 @@ def create_app(config_path="config.toml", provider_name=None):
         } for row in rows]
 
     @app.post("/api/v1/memory-candidates/{candidate_id}/review")
-    def review_memory_candidate(candidate_id: str, payload: AgentApproval):
-        result = store.review_memory_candidate(candidate_id, payload.approved)
+    def review_memory_candidate(candidate_id: str, payload: AgentApproval, project_id: str | None = None, workspace_id: str | None = None):
+        result = store.review_memory_candidate(candidate_id, payload.approved, project_id=project_id, workspace_id=workspace_id)
         if result is None:
             raise HTTPException(status_code=404, detail="Pending memory candidate not found")
         return {"accepted": bool(payload.approved), "memory_id": result if payload.approved else None}
@@ -961,12 +962,27 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
-            conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
+            run_record = store.get_agent_run(run_id)
+            run_metadata = {}
+            if run_record is not None:
+                try:
+                    run_metadata = __import__("json").loads(run_record["metadata_json"] or "{}")
+                except Exception:
+                    run_metadata = {}
+            conversation_project_id = run_metadata.get("project_id")
+            conversation_workspace_id = run_metadata.get("workspace_id")
+            conversation_id = assistant.new_conversation(
+                "Agent: " + request_text[:80],
+                project_id=conversation_project_id,
+                workspace_id=conversation_workspace_id,
+            )
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
             agent = CodingAgent(assistant, workspace, config.allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
-                          stop_event=stop_event, on_progress=progress)
+                          stop_event=stop_event, on_progress=progress,
+                          project_id=conversation_project_id,
+                          workspace_id=conversation_workspace_id)
             else:
                 with lab_db.lock:
                     plan = orchestration.get_plan(lab_db.connection, plan_id)
@@ -989,7 +1005,9 @@ def create_app(config_path="config.toml", provider_name=None):
                         "\n\nInspect before changing files. Every write and command still requires user approval."
                     )
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
-                        stop_event=stop_event, on_progress=progress, finalize_run=False)
+                        stop_event=stop_event, on_progress=progress, finalize_run=False,
+                        project_id=conversation_project_id,
+                        workspace_id=conversation_workspace_id)
                     step_status = step_result.get("status")
                     agent_verification = step_result.get("verification", "not_configured")
                     if agent_verification not in {"passed", "failed", "not_run", "not_required", "not_configured"}:

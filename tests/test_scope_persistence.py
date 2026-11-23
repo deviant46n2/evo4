@@ -202,7 +202,7 @@ class ScopePersistenceTests(unittest.TestCase):
                 row = store.db.execute("SELECT project_id, workspace_id FROM memory_candidates WHERE id=?", (candidate_id,)).fetchone()
                 self.assertEqual(row["project_id"], project["project_id"])
                 self.assertEqual(row["workspace_id"], workspace["workspace_id"])
-                accepted_id = store.review_memory_candidate(candidate_id, True)
+                accepted_id = store.review_memory_candidate(candidate_id, True, project_id=project["project_id"], workspace_id=workspace["workspace_id"])
                 memory = store.db.execute("SELECT project_id, workspace_id FROM memories WHERE id=?", (accepted_id,)).fetchone()
                 self.assertEqual(memory["project_id"], project["project_id"])
                 self.assertEqual(memory["workspace_id"], workspace["workspace_id"])

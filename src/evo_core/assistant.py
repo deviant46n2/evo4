@@ -9,20 +9,42 @@ class EvoAssistant:
         self.provider = provider or OpenAICompatibleProvider(config.base_url,config.api_key,
                                                                config.model,config.timeout_seconds)
 
-    def new_conversation(self, title="New conversation"):
-        return self.store.create_conversation(title)
+    def new_conversation(self, title="New conversation", project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self.store, project_id, workspace_id)
+        return self.store.create_conversation(title, project_id=project_id, workspace_id=workspace_id)
 
-    def _build_messages(self, conversation_id, user_text):
-        memories = self.store.search_memories(user_text, self.config.memory_limit)
-        memory_relations = self.store.get_memory_relations([row["id"] for row in memories])
+    def _build_messages(self, conversation_id, user_text, project_id=None, workspace_id=None):
+        conversation = self.store.get_conversation_record(conversation_id)
+        conversation_project = conversation["project_id"] if conversation is not None else None
+        conversation_workspace = conversation["workspace_id"] if conversation is not None else None
+        if conversation is not None:
+            if project_id is not None and project_id != conversation_project:
+                raise ValueError("project_id does not match the conversation scope")
+            if workspace_id is not None and workspace_id != conversation_workspace:
+                raise ValueError("workspace_id does not match the conversation scope")
+            if conversation_project is not None:
+                project_id, workspace_id = conversation_project, conversation_workspace
+            else:
+                # A global conversation remains global, even if a caller has
+                # another project selected elsewhere.
+                project_id, workspace_id = None, None
+        else:
+            # A missing conversation must not broaden retrieval.
+            project_id, workspace_id = None, None
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self.store, project_id, workspace_id)
+
+        memories = self.store.search_memories(user_text, self.config.memory_limit, project_id=project_id, workspace_id=workspace_id)
+        memory_relations = self.store.get_memory_relations([row["id"] for row in memories], project_id=project_id, workspace_id=workspace_id)
         known_relation_ids = {row["id"] for row in memory_relations}
-        for relation in self.store.search_memory_relations(user_text, 5):
+        for relation in self.store.search_memory_relations(user_text, 5, project_id=project_id, workspace_id=workspace_id):
             if relation["id"] not in known_relation_ids:
                 memory_relations.append(relation)
                 known_relation_ids.add(relation["id"])
-        lessons = self.store.search_lessons(user_text, 5)
-        research = self.store.search_research(user_text, 3)
-        history = self.store.get_messages(conversation_id, self.config.history_messages)
+        lessons = self.store.search_lessons(user_text, 5, project_id=project_id, workspace_id=workspace_id)
+        research = self.store.search_research(user_text, 3, project_id=project_id, workspace_id=workspace_id)
+        history = self.store.get_messages(conversation_id, self.config.history_messages, project_id=project_id, workspace_id=workspace_id)
         selected_history = []
         used_chars = 0
         for row in reversed(history):
@@ -202,11 +224,11 @@ class EvoAssistant:
                     return self.store.propose_memory(content,category,source="conversation:user",conversation_id=conversation_id,confidence=confidence)
         return None
 
-    def turn(self, conversation_id, user_text, on_token=None):
+    def turn(self, conversation_id, user_text, on_token=None, project_id=None, workspace_id=None):
         if not user_text.strip():
             raise ValueError("Message cannot be empty")
         # Build context before persisting this turn so the current user message is not duplicated.
-        messages = self._build_messages(conversation_id,user_text)
+        messages = self._build_messages(conversation_id, user_text, project_id=project_id, workspace_id=workspace_id)
         self.store.add_message(conversation_id,"user",user_text)
         self._capture_memory_candidate(conversation_id,user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,

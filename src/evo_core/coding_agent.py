@@ -99,14 +99,15 @@ class CodingAgent:
         return ""
 
     def run(self, conversation_id, request, approval, on_token=None, run_id=None,
-            stop_event=None, on_progress=None, finalize_run=True):
+            stop_event=None, on_progress=None, finalize_run=True,
+            project_id=None, workspace_id=None):
         if not isinstance(request, str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
         if not callable(approval):
             raise ValueError("An approval callback is required")
 
         store = self.assistant.store
-        messages = self.assistant._build_messages(conversation_id, request)
+        messages = self.assistant._build_messages(conversation_id, request, project_id=project_id, workspace_id=workspace_id)
         messages[0]["content"] += CODING_POLICY
         allowed = getattr(self.workspace, "allowed_commands", ()) or ()
         if allowed:

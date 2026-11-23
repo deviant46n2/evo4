@@ -15,6 +15,23 @@ def _like_pattern(term):
     escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     return f"%{escaped}%"
 
+
+
+def _conversation_visible(row_project_id, row_workspace_id, request_project_id, request_workspace_id):
+    """Apply the complete conversation visibility contract."""
+    if request_project_id is None:
+        return row_project_id is None and row_workspace_id is None
+    if row_project_id is not None and row_project_id != request_project_id:
+        return False
+    if request_workspace_id is None:
+        return row_workspace_id is None
+    if row_project_id is None:
+        return row_workspace_id is None
+    if row_project_id == request_project_id:
+        return row_workspace_id is None or row_workspace_id == request_workspace_id
+    return False
+
+
 class EvoStore:
     """Persistent state store. Uses SQLite WAL and FTS5 when the SQLite build supports it."""
     def __init__(self, path):
@@ -155,13 +172,19 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
-        scope_project = "c.project_id IS NULL" if project_id is None else "(c.project_id IS NULL OR c.project_id = ?)"
-        scope_workspace = "c.workspace_id IS NULL" if workspace_id is None else "(c.workspace_id IS NULL OR c.workspace_id = ?)"
-        scope_params = []
-        if project_id is not None:
-            scope_params.append(project_id.strip())
-        if workspace_id is not None:
-            scope_params.append(workspace_id.strip())
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        request_project = project_id.strip() if isinstance(project_id, str) else project_id
+        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        if request_project is None:
+            scope_sql = "(c.project_id IS NULL AND c.workspace_id IS NULL)"
+            scope_params = []
+        elif request_workspace is None:
+            scope_sql = "((c.project_id IS NULL AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id IS NULL))"
+            scope_params = [request_project]
+        else:
+            scope_sql = "((c.project_id IS NULL AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id = ?))"
+            scope_params = [request_project, request_project, request_workspace]
         with self.lock:
             if query and query.strip():
                 pattern = _like_pattern(query.strip())
@@ -169,12 +192,12 @@ class EvoStore:
                          FROM conversations c WHERE (c.title LIKE ? ESCAPE '!'
                          OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id
                                     AND m.content LIKE ? ESCAPE '!'))
-                         AND """ + scope_project + " AND " + scope_workspace + """
+                         AND """ + scope_sql + """
                          ORDER BY c.updated_at DESC LIMIT ?"""
                 params = [pattern, pattern] + scope_params + [max(1, min(int(limit), 500))]
                 return self.db.execute(sql, params).fetchall()
             sql = """SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count
-                     FROM conversations c WHERE """ + scope_project + " AND " + scope_workspace + """
+                     FROM conversations c WHERE """ + scope_sql + """
                      ORDER BY c.updated_at DESC LIMIT ?"""
             params = scope_params + [max(1, min(int(limit), 500))]
             return self.db.execute(sql, params).fetchall()
@@ -184,15 +207,22 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        request_project = project_id.strip() if isinstance(project_id, str) else project_id
+        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         with self.lock:
             row = self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             if row is None:
                 return None
-            if project_id is not None and row["project_id"] not in (None, project_id.strip()):
-                return None
-            if workspace_id is not None and row["workspace_id"] not in (None, workspace_id.strip()):
+            if not _conversation_visible(row["project_id"], row["workspace_id"],
+                                        request_project, request_workspace):
                 return None
             return row
+
+    def get_conversation_record(self, conversation_id):
+        with self.lock:
+            return self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
 
     def rename_conversation(self, conversation_id, title):
         title = (title or "").strip()
@@ -252,13 +282,16 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        request_project = project_id.strip() if isinstance(project_id, str) else project_id
+        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         with self.lock:
             conversation = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             if conversation is None:
                 return []
-            if project_id is not None and conversation["project_id"] not in (None, project_id.strip()):
-                return []
-            if workspace_id is not None and conversation["workspace_id"] not in (None, workspace_id.strip()):
+            if not _conversation_visible(conversation["project_id"], conversation["workspace_id"],
+                                        request_project, request_workspace):
                 return []
             rows = self.db.execute("SELECT role,content,created_at FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?",
                                    (conversation_id, max(1, limit))).fetchall()
@@ -295,6 +328,8 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
         project_id = project_id.strip() if isinstance(project_id, str) else project_id
         workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         stop = {"a","an","and","are","as","at","be","been","by","can","could","did","do","does",
@@ -483,6 +518,8 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
         project_id = project_id.strip() if isinstance(project_id, str) else project_id
         workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         placeholders=",".join("?" for _ in ids)
@@ -529,6 +566,8 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
         project_id = project_id.strip() if isinstance(project_id, str) else project_id
         workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         scope = []
@@ -590,7 +629,7 @@ class EvoStore:
         from .scope_validation import validate_scope
         project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         if conversation_id is not None:
-            conversation = self.get_conversation(conversation_id)
+            conversation = self.get_conversation_record(conversation_id)
             if conversation is None:
                 raise ValueError("conversation_id does not refer to an existing conversation")
             if project_id is not None and project_id != conversation["project_id"]:
@@ -618,16 +657,45 @@ class EvoStore:
             self.db.commit()
         return candidate_id
 
-    def list_memory_candidates(self, status="pending", limit=50):
+    def list_memory_candidates(self, status="pending", limit=50, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        request_project = project_id.strip() if isinstance(project_id, str) else project_id
+        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        if request_project is None:
+            scope_sql = "(project_id IS NULL AND workspace_id IS NULL)"
+            scope_params = []
+        elif request_workspace is None:
+            scope_sql = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id = ? AND workspace_id IS NULL))"
+            scope_params = [request_project]
+        else:
+            scope_sql = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id = ? AND workspace_id IS NULL) OR (project_id = ? AND workspace_id = ?))"
+            scope_params = [request_project, request_project, request_workspace]
         with self.lock:
-            return self.db.execute("SELECT * FROM memory_candidates WHERE status=? ORDER BY created_at DESC LIMIT ?",
-                                   (status,max(1,limit))).fetchall()
+            sql = "SELECT * FROM memory_candidates WHERE status=? AND " + scope_sql + " ORDER BY created_at DESC LIMIT ?"
+            params = [status] + scope_params + [max(1, int(limit))]
+            return self.db.execute(sql, params).fetchall()
 
-    def review_memory_candidate(self, candidate_id, accept):
+    def review_memory_candidate(self, candidate_id, accept, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        request_project = project_id.strip() if isinstance(project_id, str) else project_id
+        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         with self.lock:
             row = self.db.execute("SELECT * FROM memory_candidates WHERE id=? AND status='pending'",
                                   (candidate_id,)).fetchone()
             if not row:
+                return None
+            if not _conversation_visible(row["project_id"], row["workspace_id"],
+                                        request_project, request_workspace):
                 return None
             memory_id = None
             try:
@@ -692,6 +760,8 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
         project_id = project_id.strip() if isinstance(project_id, str) else project_id
         workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         sql=f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM lessons WHERE status='active' AND ({' OR '.join(clauses)})"
@@ -739,6 +809,8 @@ class EvoStore:
             raise ValueError("project_id must be None or a non-empty string")
         if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
             raise ValueError("workspace_id must be None or a non-empty string")
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
         project_id = project_id.strip() if isinstance(project_id, str) else project_id
         workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
         clauses=[]
