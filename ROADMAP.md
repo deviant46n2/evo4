@@ -161,7 +161,8 @@ Proposed milestones:
 4. Project-scoped instructions and configuration.
    - Distinguish trusted Evo-managed project instructions from repository files.
    - Bind runtime policy to Registry configuration where appropriate.
-   - Likely files: `src/evo_core/workspaces.py`, `src/evo_core/coding_agent.py`, configuration APIs.
+   - The command-policy model is already settled in milestone 2b: effective permissions are the intersection of global and project permissions. This milestone integrates and tests that model; it does not reopen it.
+   - Likely files: `src/evo_core/workspaces.py`, `src/evo_core/coding_agent.py`, `src/evo_core/ai_configurations.py`, configuration APIs.
    - Tests: instruction precedence and command-policy enforcement.
    - Acceptance: repository files remain untrusted; trusted project policy cannot grant unauthorized capabilities.
 5. Explicit project selection and switching UX.
@@ -186,7 +187,9 @@ Risks and unresolved decisions:
 - Whether project scope should be nullable for legacy global conversations.
 - Whether global memory should be readable in every project by default.
 - Whether project instructions should be editable through Evo or only repository files.
-- Whether project-scoped command policy should override global allowed commands or intersect with them.
+- How trusted project instructions are reviewed, versioned, and revoked.
+
+Command policy is settled: effective permissions are the intersection of global and project permissions. Project policy can only restrict global permissions and cannot expand them. Missing, invalid, or ambiguous project policy must not silently grant broader access. Milestone 2b implements and enforces this model; milestone 4 tests instruction precedence and command-policy behavior against the already settled model.
 
 **Phase 3 — Participant contracts and runtime binding**
 - At least two distinct participant implementations can be registered and invoked through common, versioned contracts without hardcoding provider names as roles.
