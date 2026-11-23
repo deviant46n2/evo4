@@ -1,114 +1,92 @@
 # Evo4 Development Continuity
 
-This document is the continuity record for future Evo4 conversations. Important architectural decisions made in future conversations must be incorporated into version-controlled documentation such as this file, `README.md`, `ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT-CONTROL-PLANE.md`, and `AGENTS.md`, rather than existing only in chat history.
+This is the concise handoff record for future development conversations. Durable decisions belong in version-controlled documentation, not only chat history.
 
-## Central vision
+## Vision and identity
 
-See `docs/ARCHITECTURE.md` for the definitive entity model and architectural relationships. `ROADMAP.md` is the authoritative development sequence. `docs/PRODUCT-REDESIGN-PLAN.md` is the authoritative target user experience. `docs/GEMINI-AUDIT-LEDGER.md` is the authoritative audit record.
+Evo exists to make cooperating AIs and tools more capable together than any of them could be independently.
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a portable, model-agnostic platform for cooperative intelligence: infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management for heterogeneous models, agents, and tools.
+Evo is a portable, model-agnostic platform for cooperative intelligence. It supplies the coordination, shared context, delegation, verification, evaluation, governance, resource management, and user oversight that let heterogeneous models, agents, tools, and people combine their capabilities.
 
-The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering.
+The personal assistant and coding-agent experience is the initial practical product, not the platform's ultimate identity. GPT-6 and Kilo are the current human-mediated reasoning/implementation collaborators and a practical reference workflow, not permanent architectural dependencies. Evo does not currently orchestrate those external sessions directly. GitHub is the present handoff and source-of-truth mechanism.
 
-Evo is not pursuing foundation-model training, custom neural-network engineering, or a general-purpose machine-learning laboratory.
+The long-term ambition is to improve AI capability through software engineering and controlled system-level research, potentially pursuing increasingly capable and eventually superintelligent systems. This is an ambition, not a current capability claim.
 
-The personal assistant and coding-agent experience are the initial practical product through which the broader cooperative-intelligence purpose is realized. They are configurations built on this platform, not the fundamental reason the platform exists.
+## Document authority
 
-## Document hierarchy
+- `ROADMAP.md`: sole authority for development sequence, priorities, phase status, dependencies, milestones, and acceptance gates.
+- `docs/ARCHITECTURE.md`: system identity, domain model, architectural principles, and boundaries.
+- `docs/PRODUCT-REDESIGN-PLAN.md`: target UX and product interaction requirements only; its legacy phase outline is subordinate to `ROADMAP.md`.
+- `docs/DEVELOPMENT-CONTROL-PLANE.md`: proposed cooperative development-control architecture; not an implementation schedule or proof of implementation.
+- `docs/GEMINI-AUDIT-LEDGER.md`: audit findings, remediation evidence, and acceptance record.
+- `README.md`: user-facing description of implemented behavior and limitations.
+- `AGENTS.md`: repository engineering and safety instructions.
 
-- `ROADMAP.md`: authoritative unified development roadmap, priorities, sequencing, dependencies, status, milestones, and acceptance gates.
-- `docs/ARCHITECTURE.md`: authoritative system identity, domain model, architectural principles, boundaries, and long-term architecture.
-- `docs/PRODUCT-REDESIGN-PLAN.md`: authoritative target user experience and product interaction requirements. It is not a competing development schedule.
-- `docs/DEVELOPMENT-CONTINUITY.md`: concise current decisions, project state, branch/freeze status, and links to authoritative documents.
-- `docs/DEVELOPMENT-CONTROL-PLANE.md`: proposed control-plane design, clearly marked proposed rather than implemented.
-- `docs/GEMINI-AUDIT-LEDGER.md`: authoritative audit record.
+If documents conflict, follow this hierarchy. Update the authoritative source first and reconcile dependent documents in the same documentation pass.
 
 ## Accepted architectural decisions
 
-- Evo's identity is a portable, model-agnostic platform for cooperative intelligence. The original platform ambitions remain capabilities serving that purpose.
-- The fundamental entities are Evo, AI configurations, software projects, workspaces/sessions, experiments, execution environments, and resource management.
+- Cooperation is a first-class architectural principle and the reason Evo exists.
+- Evo is model/provider/agent/tool agnostic; roles are contracts, not fixed model identities.
+- The platform is governed hierarchically for authority, permissions, accountability, and consequential decisions, while allowing cooperative deliberation and delegation inside authorized scopes.
+- Every task has one accountable owner. Independent challenge/review is encouraged where useful.
+- Participant capability, trust, registration, and authorization are distinct. Registration never grants permission.
+- Delegation, concurrency, budgets, timeouts, loops, and execution scopes must be bounded and auditable.
+- Cooperation must be measured against credible single-participant baselines; more agents do not automatically improve results.
+- Provider terms, API rules, licensing, automation restrictions, and data-handling requirements must be respected. No bypasses or undocumented interfaces.
 - AI configurations and software projects are independent entities with independent version histories.
-- Workspaces and sessions connect configurations to authorized targets; neither owns the other.
-- Experiments preserve hypothesis, exact configuration version, exact software-project revision, environment, model/provider identity, settings, methodology, resource consumption, results, failures, conclusions, reproducibility information, and artifact references.
-- Git is the authoritative project history for source code, configuration definitions, versioned documentation, and reproducible development states.
-- Persistent experiment registries and artifact storage preserve structured findings and large artifacts; Git is not an indiscriminate dumping ground for large binary artifacts.
-- Failed experiments are valuable engineering knowledge and must not simply disappear.
-- Existing models and frameworks are replaceable components, not architectural foundations.
-- Evo owns its interfaces, integration contracts, experiment records, evaluation criteria, and orchestration.
-- Real models are integration targets and experimental subjects, not prerequisites for development.
-- Portability is a design requirement: single-user and local-first initially, with future export/import and multi-user support.
-- Subsystems should be independently replaceable where practical, but exact boundaries remain an implementation question.
-- Evo may eventually participate extensively in its own development, constrained by safety, authorization, demonstrated reliability, and available resources; it must not declare its own improvements successful without independent evidence.
-- GitHub remains the immediate shared engineering workspace and permanent source of truth.
-- Hybrid collaboration: cooperative agent networks plus hierarchical governance.
-- Every task has one accountable owner.
-- Multiple agents may independently review or challenge work.
-- Bounded delegation, budgets, timeouts, loop prevention, and auditability are required.
-- Provider compliance is mandatory; use supported interfaces and official APIs only.
-- Human steering and accountability remain central.
-- A minimal independent bootstrap/recovery mechanism must remain outside the control plane.
-- Agent and development-control-plane roles are contracts, not fixed model identities.
-- New agents begin with restricted evaluation access; permissions expand proportionally to demonstrated capability and explicit authorization.
-- The development control plane is a first-class Evo subsystem, but remains proposed architecture until implemented.
-- Lifecycle supervision is a separate future milestone, not part of current coding-agent reliability work.
-- Evo must not declare its own improvements successful without independent validation and measurable evidence.
-- Safety, authorization, demonstrated reliability, and available resources constrain autonomy; there is no arbitrary prohibition on self-development.
+- Workspaces/sessions connect configurations to explicitly authorized targets; neither entity owns the other.
+- Git is authoritative for source, configuration definitions, versioned documentation, and reproducible development states. The experiment registry stores structured records; artifact storage holds large outputs.
+- Persistent records preserve provenance, identity, history, and failure states. Derived data must not silently replace its source of truth.
+- Real models are integration targets, not prerequisites; deterministic mocks and fixtures are valid for platform development.
+- Autonomy is progressive and evidence-based. Consequential actions require safeguards and appropriate approval.
+- A minimal bootstrap/recovery path must remain independent of the development control plane.
 
-## Proposed decisions awaiting discussion
+## Current repository and implementation state
 
-- Storage choices, migration strategy, and schema evolution for experiment records and other persistent entities outside the approved Registry v1 baseline.
-- Portability mechanisms for project/configuration definitions and secrets.
-- Subsystem boundaries and how independently replaceable individual subsystems should be.
-- Detailed optimization priorities and tradeoffs.
-- Exact implementation and sequencing of autonomous self-development.
-- Development control plane implementation details and acceptance criteria.
-- Whether plan completion should require successful verification when verification is configured.
-- Whether an explicit `blocked` verification status is needed when no permitted command is available.
+- Repository: `deviant46n2/evo4`.
+- Active working branch: `agent-lifecycle-reconciliation-v1`.
+- Check branch HEAD from Git before every new engineering handoff; do not assume a SHA recorded in chat remains current.
+- Platform Registry v1 through M5 is implemented and validated: AI configurations, software projects, project checkouts, workspaces, and registered-workspace execution boundaries.
+- Existing agent runs, plans, approvals, cancellation, background tasks, and recovery provide partial lifecycle/orchestration foundations. They do not constitute the intended heterogeneous cooperative control plane.
+- Existing memory, experiment, and resource-management capabilities are partial. Consult the implementation documents and README before claiming completeness.
+- The desktop is an existing chat-first client with supporting workspaces; the proposed target experience is not fully implemented.
 
-## Current development state
-- Branch: `agent-lifecycle-reconciliation-v1`
-- Current branch: `agent-lifecycle-reconciliation-v1`. HEAD is recorded by Git; documentation commits are listed in Git history. The final resulting commit SHA is supplied in the engineering handoff and should not be self-referentially embedded here.
-- Platform Registry v1 has been implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are implemented and validated.
-- Registered-workspace execution boundary: implemented and accepted. API execution requires an active registered `workspace_id`; direct and plan-backed workers re-resolve before constructing `CodingAgent`; legacy plans fail closed.
-- Desktop `AgentsWorkspace` selection race correction: implemented and accepted.
-- The codebase is in a stabilization phase. The final GPT-6 review is complete and Priorities 1-6 are accepted; the stabilization freeze remains active until the user explicitly lifts it.
-- Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
-- Canonical roadmap stabilization section: `ROADMAP.md`.
-- Latest validation reported on this branch: 525 Python tests passed; compileall passed; `git diff --check` passed; no desktop build was run for the Priority 6 follow-up.
+## Stabilization freeze and authorization
 
-## Outstanding stabilization tasks
+**The stabilization freeze is active.** Do not change application code, runtime behavior, schemas, APIs, tests, dependencies, or deployment state unless the user explicitly lifts the freeze.
 
-None. Priorities 1-6 are accepted; the stabilization freeze remains active until the user explicitly lifts it.
+The six Gemini audit priorities are recorded as completed and accepted in `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`:
+1. Provider streaming reliability.
+2. Tool-call argument validation.
+3. Workspace filesystem boundary hardening.
+4. Untrusted retrieved-context isolation.
+5. Experiment lifecycle interruption finalization.
+6. ResourceMonitor shutdown race.
 
-Accepted:
-- Provider streaming reliability (Priority 1).
-- Tool-call argument validation (Priority 2).
-- Workspace filesystem boundary hardening (Priority 3).
-- Untrusted retrieved context isolation (Priority 4).
-- Experiment lifecycle interruption (Priority 5).
-- ResourceMonitor shutdown race (Priority 6).
+Reported validation: 525 Python tests passed, compileall passed, and `git diff --check` passed. These results were reported by implementation runs; GPT-6 did not independently rerun the complete suite. No desktop production build was run for the Priority 6 follow-up. Do not overstate the validation evidence.
 
-Latest reported validation for this branch: 525 Python tests passed; compileall passed; `git diff --check` passed; no desktop build was run for the Priority 6 follow-up. Validation was reported by Kilo implementation runs, not independently rerun by GPT-6.
+There are no outstanding stabilization tasks in the accepted audit ledger. The freeze nevertheless remains active until the user explicitly lifts it. Documentation work does not lift the freeze and does not authorize implementation, restart, or deployment.
 
-See `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`.
+## Current documentation state
 
-## Accepted product direction
+The unified roadmap/architecture reconciliation is complete as a documentation task. The next activity is independent critique and revision of these documents, not implementation.
 
-- Evo's underlying identity remains the existing model-agnostic AI development and experimentation platform.
-- The accepted user-experience direction is chat-first, with other application areas acting as windows into backend capabilities.
-- Projects are independent and must not blend instructions, memory, filesystem access, or task scope by default.
-- Automatic project selection/switching is reliability-gated and requires demonstrated isolation before enablement.
-- Project provisioning includes a dedicated folder, `git init`, and a complete initial framework.
-- Project deletion must remove project-owned files, Git history, and Evo-managed resources with verified cleanup and safeguards.
-- Global and project-specific instructions/memory are distinct.
-- Memory is a persistent context system with provenance, confidence, review, search, inspection, and editing.
-- AI configuration/Cyberdeck visualization must reflect actual backend configuration and runtime state.
-- Chat visuals are configurable rather than fixed.
-- Agent activity appears inline with reliable expansion; background orchestration and configurable autonomy/interruption are required goals.
+The first planned implementation milestone after explicit freeze-lift authorization is **Project Provisioning v1**, defined in `ROADMAP.md`. It is planned only, not started or authorized. Project deletion is explicitly excluded and must be designed as a separate safeguarded milestone.
 
-## Product redesign planning status
+## Working collaboration protocol
 
-- Redesign planning document: `docs/PRODUCT-REDESIGN-PLAN.md`.
-- No redesign implementation has been authorized.
-- The stabilization freeze remains active.
-- The redesign track is a prerequisite to further feature expansion, subject to user authorization and completion of stabilization review.
+- The user is Vision Officer and final authority for purpose, direction, boundaries, and consequential decisions.
+- GPT-6 acts as technical/product lead: independently makes routine architecture, product, sequencing, and engineering decisions; challenges assumptions; and reports evidence and uncertainty candidly.
+- Kilo is the local implementation/integration and validation partner. When Kilo must inspect or change local repository state, provide a complete copy-paste-ready prompt.
+- GPT-6 should directly author critical implementation logic when implementation is authorized and the relevant source is available; Kilo integrates locally, handles broad/mechanical/UI work, and runs local validation.
+- Git is the current collaboration bridge. Kilo makes task-scoped changes, stages only task files, preserves unrelated modifications/untracked files, commits and pushes the existing branch. GPT-6 reviews the actual pushed diff and evidence.
+- Gemini may provide independent critique. Treat its findings as hypotheses to evaluate, not automatic instructions; accept, reject, or modify them with reasons.
+- Do not ask the user to decide routine implementation details. Ask only for vision-level input, missing authority, or genuinely consequential trade-offs.
+
+## Next steps
+
+1. Obtain an independent Gemini critique of the current documentation pass.
+2. Evaluate each critique against the vision, architecture, implementation evidence, and freeze boundary.
+3. Revise the documents and reconcile contradictions.
+4. Only after documentation is accepted and the user explicitly lifts the freeze, begin Project Provisioning v1.
