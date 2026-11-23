@@ -90,6 +90,8 @@ class MemoryCreate(BaseModel):
     category: str = Field(default="general", max_length=80)
     source: str = Field(default="user", max_length=80)
     confidence: float = Field(default=1.0, ge=0, le=1)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class MemorySupersede(BaseModel):
@@ -610,25 +612,36 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
 
+    def _memory_scope_filter(project_id, workspace_id):
+        if project_id is None:
+            return "(project_id IS NULL AND workspace_id IS NULL)", []
+        if workspace_id is None:
+            return "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL))", [project_id]
+        return ("((project_id IS NULL AND workspace_id IS NULL) OR "
+                "(project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?)"),
+                [project_id, project_id, workspace_id]
+
     @app.get("/api/v1/memories")
-    def memories(q: str | None = None, status: str = "active", limit: int = 100):
+    def memories(q: str | None = None, status: str = "active", limit: int = 100,
+                 project_id: str | None = None, workspace_id: str | None = None):
         bounded = min(max(limit, 1), 200)
         if status not in {"active", "archived", "superseded"}:
             raise HTTPException(status_code=422, detail="Invalid memory status")
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        scope_sql, scope_params = _memory_scope_filter(project_id, workspace_id)
         with store.lock:
+            params = [status] + scope_params
+            sql = "SELECT * FROM memories WHERE status=? AND " + scope_sql
             if q and q.strip():
                 pattern = "%" + q.strip().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
-                rows = store.db.execute(
-                    """SELECT * FROM memories WHERE status=? AND
-                       (content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')
-                       ORDER BY updated_at DESC LIMIT ?""",
-                    (status, pattern, pattern, pattern, bounded),
-                ).fetchall()
-            else:
-                rows = store.db.execute(
-                    "SELECT * FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?",
-                    (status, bounded),
-                ).fetchall()
+                sql += " AND (content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')"
+                params.extend((pattern, pattern, pattern))
+            sql += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(bounded)
+            rows = store.db.execute(sql, params).fetchall()
         return [{
             "id": row["id"], "content": row["content"], "category": row["category"],
             "tags": json.loads(row["tags_json"] or "[]"), "source": row["source"],
@@ -638,12 +651,18 @@ def create_app(config_path="config.toml", provider_name=None):
         } for row in rows]
 
     @app.get("/api/v1/memories/review")
-    def memory_review(limit: int = 20):
+    def memory_review(limit: int = 20, project_id: str | None = None, workspace_id: str | None = None):
         bounded = min(max(limit, 1), 50)
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        scope_sql, scope_params = _memory_scope_filter(project_id, workspace_id)
         with store.lock:
             rows = store.db.execute(
-                """SELECT id,content,category,source,confidence,updated_at
-                   FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT 500"""
+                "SELECT id,content,category,source,confidence,updated_at FROM memories "
+                "WHERE status='active' AND " + scope_sql + " ORDER BY updated_at DESC LIMIT 500",
+                scope_params,
             ).fetchall()
         suggestions = find_duplicate_candidates(rows, limit=bounded)
         return {
@@ -659,8 +678,12 @@ def create_app(config_path="config.toml", provider_name=None):
     def memory_search_preview(q: str, limit: int = 8, project_id: str | None = None, workspace_id: str | None = None):
         if not q.strip():
             raise HTTPException(status_code=422, detail="Search query cannot be empty")
-        rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False,
-                                    project_id=project_id, workspace_id=workspace_id)
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False,
+                                        project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             "query": q, "count": len(rows),
             "retrieval": "hybrid lexical (FTS5 + LIKE candidates; no embeddings)",
@@ -676,15 +699,22 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.post("/api/v1/memories", status_code=201)
     def create_memory(payload: MemoryCreate):
         try:
+            project_id, workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
             memory_id = store.add_memory(payload.content, payload.category, source=payload.source,
-                                         confidence=payload.confidence)
+                                         confidence=payload.confidence, project_id=project_id,
+                                         workspace_id=workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"id": memory_id}
 
     @app.get("/api/v1/memory-candidates")
     def memory_candidates(limit: int = 100, project_id: str | None = None, workspace_id: str | None = None):
-        rows = store.list_memory_candidates("pending", min(max(limit, 1), 200), project_id=project_id, workspace_id=workspace_id)
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            rows = store.list_memory_candidates("pending", min(max(limit, 1), 200),
+                                                 project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return [{
             "id": row["id"], "content": row["content"], "category": row["category"],
             "source": row["source"], "confidence": row["confidence"],
@@ -692,30 +722,44 @@ def create_app(config_path="config.toml", provider_name=None):
         } for row in rows]
 
     @app.post("/api/v1/memory-candidates/{candidate_id}/review")
-    def review_memory_candidate(candidate_id: str, payload: AgentApproval, project_id: str | None = None, workspace_id: str | None = None):
-        result = store.review_memory_candidate(candidate_id, payload.approved, project_id=project_id, workspace_id=workspace_id)
+    def review_memory_candidate(candidate_id: str, payload: AgentApproval,
+                                project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            result = store.review_memory_candidate(candidate_id, payload.approved,
+                                                   project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         if result is None:
             raise HTTPException(status_code=404, detail="Pending memory candidate not found")
         return {"accepted": bool(payload.approved), "memory_id": result if payload.approved else None}
 
-
     @app.post("/api/v1/memories/{memory_id}/supersede")
-    def supersede_memory(memory_id: str, payload: MemorySupersede):
+    def supersede_memory(memory_id: str, payload: MemorySupersede,
+                         project_id: str | None = None, workspace_id: str | None = None):
         try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
             replacement_id = store.supersede_memory(
                 memory_id, payload.content, source="user", confidence=1.0,
-                reason=payload.reason,
-            )
+                reason=payload.reason, project_id=project_id, workspace_id=workspace_id)
         except ValueError as exc:
-            raise HTTPException(status_code=404 if "not found" in str(exc).lower() else 422,
-                                detail=str(exc)) from exc
+            message = str(exc)
+            raise HTTPException(status_code=404 if "not found" in message.lower() else 422,
+                                detail=message) from exc
         return {"id": replacement_id, "supersedes": memory_id}
 
     @app.post("/api/v1/memories/{memory_id}/archive")
-    def archive_memory(memory_id: str):
-        if not store.archive_memory(memory_id):
+    def archive_memory(memory_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            archived = store.archive_memory(memory_id, project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not archived:
             raise HTTPException(status_code=404, detail="Active memory not found")
         return {"archived": True, "id": memory_id}
+
+
 
     def serialize_run(row):
         try:
