@@ -323,6 +323,63 @@ def register_checkout(
     return _write(store, operation)
 
 
+def register_project_and_checkout(
+    store,
+    name,
+    *,
+    path,
+    description="",
+    git_remote=None,
+    default_ref=None,
+    project_type=None,
+    branch_or_ref=None,
+    last_known_commit=None,
+):
+    name = _text(name, "name", required=True)
+    description = _text(description, "description")
+    git_remote = _text(git_remote, "git_remote")
+    default_ref = _text(default_ref, "default_ref")
+    project_type = _text(project_type, "project_type")
+    branch_or_ref = _text(branch_or_ref, "branch_or_ref")
+    last_known_commit = _text(last_known_commit, "last_known_commit")
+    canonical_path = _canonical_directory(path)
+    project_id = str(uuid.uuid4())
+    checkout_id = str(uuid.uuid4())
+    now = utc_now()
+
+    def operation(db):
+        for row in db.execute("SELECT canonical_path FROM project_checkouts").fetchall():
+            if _paths_overlap(canonical_path, row["canonical_path"]):
+                raise CheckoutPathConflictError("checkout path overlaps an already registered checkout")
+        db.execute(
+            """INSERT INTO software_projects
+               (project_id, name, description, git_remote, default_ref,
+                project_type, status, created_at, updated_at, version)
+               VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, 1)""",
+            (project_id, name, description, git_remote, default_ref,
+             project_type, now, now),
+        )
+        try:
+            db.execute(
+                """INSERT INTO project_checkouts
+                   (checkout_id, project_id, canonical_path, branch_or_ref,
+                    last_known_commit, availability_status, created_at, updated_at, version)
+                   VALUES (?, ?, ?, ?, ?, 'available', ?, ?, 1)""",
+                (checkout_id, project_id, canonical_path, branch_or_ref,
+                 last_known_commit, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "canonical_path" in str(exc).lower() or "unique" in str(exc).lower():
+                raise CheckoutPathConflictError(
+                    "a checkout is already registered at this canonical path"
+                ) from exc
+            raise
+        return _project_row(db, project_id), _checkout_row(db, checkout_id)
+
+    project, checkout = _write(store, operation)
+    return project, checkout
+
+
 def get_checkout(store, checkout_id):
     return _read(store, lambda db: _checkout_row(db, checkout_id))
 

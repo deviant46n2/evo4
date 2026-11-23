@@ -95,18 +95,18 @@ class ProjectProvisioningTests(unittest.TestCase):
     def test_registry_failure_records_recoverable_partial_state(self):
         from unittest.mock import patch
 
-        with patch("evo_core.project_provisioning.register_project", side_effect=RuntimeError("registry boom")):
+        with patch("evo_core.project_provisioning.register_project_and_checkout", side_effect=RuntimeError("registry boom")):
             with self.assertRaises(Exception):
                 provision_project(self.store, "Demo", str(self.parent))
         rows = self.store.db.execute(
             "SELECT status, error, project_id, checkout_id FROM project_provisioning_operations"
         ).fetchall()
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["status"], "recovery_required")
         self.assertIn("registry boom", rows[0]["error"])
         self.assertIsNone(rows[0]["project_id"])
         self.assertIsNone(rows[0]["checkout_id"])
-        self.assertEqual(list(self.parent.iterdir()), [])
+        self.assertEqual(len(list(self.parent.iterdir())), 1)
 
     def test_invalid_configuration_raises(self):
         with self.assertRaises(Exception):
