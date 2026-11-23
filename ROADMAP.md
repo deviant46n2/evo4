@@ -25,7 +25,7 @@ This roadmap is provisional. Dependencies and acceptance criteria must be refine
 
 ## Unified roadmap
 
-1. **Governance, baseline, and architecture reconciliation.** Document the current implementation, accepted decisions, boundaries, and development process. This documentation task is the current authorized work. Status: in progress.
+1. **Governance, baseline, and architecture reconciliation.** Document the current implementation, accepted decisions, boundaries, and development process. This documentation reconciliation pass is complete. Status: complete.
 2. **Reliable project, workspace, and execution scope.** Build on Registry v1. Make project/task/workspace identity, ownership, instructions, filesystem access, permissions, lifecycle, and isolation reliable. Provisioning and deletion must be safe and verifiable. This is foundational for cooperation. Status: partially implemented; Registry v1 through M5 is implemented and validated, while provisioning, deletion safeguards, and project-scoped instructions/memory remain incomplete.
 3. **Cooperation contracts and participant integration.** Define the minimum common contracts for participants, capabilities, assignments, task ownership, messages, context envelopes, permissions, handoffs, and evidence. Support current workflows and integrations through legitimate interfaces. Avoid premature universal abstractions. Status: designed in part; not implemented as a common contract.
 4. **First cooperative vertical slice.** Demonstrate a real, useful task in which distinct participants contribute complementary work, exchange findings, challenge or review work, and produce a verifiable result. Use the GPT-6/Kilo workflow as the initial practical reference, without falsely claiming Evo already orchestrates these sessions directly. Preserve Git as the current engineering handoff. Status: not started.
@@ -49,14 +49,101 @@ Dependencies and sequencing:
 
 Safe parallel work includes documentation, tests, small UX improvements that support validation, and independent review. Continuous quality activities include tests proportionate to risk, independent review for consequential work, evidence-based capability claims, reproducible experiment records, documentation alignment, provider compliance, and resource limits.
 
-The first implementation milestone after the current documentation task must be explicit, small enough to validate, and useful. It must not be started by this documentation task.
+### First implementation milestone after stabilization
+
+**Project Provisioning v1** is the first planned implementation milestone after the user explicitly lifts the stabilization freeze. It is not authorized or started by this documentation pass.
+
+Scope:
+- Create a new, dedicated project directory without overwriting, adopting, or modifying unrelated existing data.
+- Validate the target path, reject unsafe locations and path traversal, and account for symlinks and filesystem canonicalization.
+- Initialize a Git repository in the new project directory.
+- Provision a minimal but genuinely useful initial project framework and project instructions from a versioned, inspectable template. Exact template contents are a just-in-time design decision.
+- Register the project, checkout, and workspace relationships consistently through the existing Registry model.
+- Establish explicit ownership of every created file/resource; keep secrets out of generated files and tracked configuration.
+- Make provisioning transactional where possible, with safe rollback or an explicit recoverable partial-failure state. Never report success or leave a misleading registry record when provisioning is incomplete.
+- Test successful creation, invalid and conflicting paths, symlink/path traversal cases, partial failures, registry consistency, Git initialization, and project/workspace isolation.
+
+Explicit exclusions:
+- Project deletion or destructive cleanup. Deletion is a separate future milestone requiring ownership manifests, preview/dry-run, confirmation, shared-resource protection, verified cleanup, and a recovery strategy.
+- Automatic project inference/switching, cross-project memory, broad template marketplaces, and unrelated UI redesign.
+
+**Exit gate:** a newly provisioned project is correctly registered, isolated, usable, and Git-backed; invalid or interrupted provisioning cannot damage unrelated data or leave a false-success state. This milestone may begin only after explicit freeze-lift authorization.
+
+## Phase acceptance gates
+
+A phase is not complete because code exists or a task was merged. Completion requires observable evidence against the relevant gate, recorded in project history and reviewed independently in proportion to risk. Status must distinguish implemented, tested, independently reviewed, and accepted.
+
+### Phase 1 — Governance and baseline
+- The document hierarchy is unambiguous and internally consistent.
+- Current, partial, proposed, and long-term capabilities are separated with evidence-backed status.
+- The stabilization freeze and authorization boundary are explicit.
+- Planning does not imply implementation authorization.
+
+### Phase 2 — Project/workspace/execution scope
+- Project, checkout, workspace, and task ownership relationships are explicit and consistently enforced.
+- Project Provisioning v1 passes success, path-safety, conflict, partial-failure, registry-consistency, and Git-history tests.
+- Project instructions, memory, files, and execution scope are isolated by default; cross-project access is explicit and auditable.
+- Tests demonstrate that one project's context or filesystem cannot leak into another project's work.
+- Project deletion is not bundled into provisioning; it requires its own destructive-operation acceptance gate.
+
+### Phase 3 — Cooperation contracts
+- At least two meaningfully different participant types can be represented without hardcoding provider/model names as architectural roles.
+- Identity, capabilities, availability, assignment, one accountable task owner, permissions, scope, context, handoff, and provenance are explicit.
+- Supported integrations pass provider terms, API, licensing, and automation compliance review.
+- Registration does not imply authorization; participants cannot expand their own authority.
+
+### Phase 4 — First cooperative vertical slice
+- A bounded task is completed by distinct participants doing complementary work.
+- Handoffs and findings are recorded; at least one participant independently challenges or reviews another's contribution.
+- The result has independent verification appropriate to the task.
+- Cooperative performance is compared with a credible single-participant baseline using the same task and evaluation criteria.
+- Disagreement, failure, and incomplete work remain inspectable; self-reported success is not proof.
+
+### Phase 5 — Durable orchestration
+- Task ownership, state transitions, handoffs, approvals, and evidence survive restart.
+- Interruption, cancellation, resumption, timeout, and participant/provider failure are tested; failures never silently become success.
+- Delegation depth, concurrency, budgets, and loops are bounded.
+- Permissions and workspace scope are revalidated at execution boundaries.
+
+### Phase 6 — Shared context and persistent memory
+- Global, project, and task context scopes are explicit and independently enforced.
+- Automated tests demonstrate no unauthorized cross-scope retrieval or injection.
+- Records retain source/provenance, timestamps, epistemic status, and correction history where applicable.
+- Users can inspect, correct, supersede, and constrain retained context.
+- Retrieval is evaluated on a held-out representative query set; synthetic tests are not proof of personal-memory recall.
+
+### Phase 7 — Evaluation, reproducibility, and resource intelligence
+- Cooperative and individual baselines use reproducible tasks, inputs, configurations, environments, and criteria.
+- Results include quality/correctness and relevant costs such as latency, tokens, compute, and failure rate.
+- Experiment records preserve failures and sufficient provenance for reproduction or explanation.
+- Resource admission and scheduling decisions are inspectable and respect budgets/shared-resource limits.
+- Collaboration expands only when evidence shows net benefit for the target workload.
+
+### Phase 8 — Product experience evolution
+- Chat remains a coherent primary interaction surface, with projects and supporting areas reflecting backend capabilities.
+- Activity views display actual task state, evidence, approvals, and outcomes rather than optimistic UI state.
+- Project/context scope is visible and safely inspectable/changeable.
+- UI actions respect backend authorization and isolation; integrated flows pass usability and reliability checks.
+
+### Phase 9 — Cyberdeck and system observability
+- Every displayed node maps to a real registered component or is explicitly labeled conceptual.
+- Edges represent real configured dependencies, communication, or ownership.
+- Runtime states distinguish active, idle, waiting, failed, unavailable, and unknown without fabricating certainty.
+- Configuration edits cannot silently mutate unrelated running components.
+
+### Phase 10 — Progressive autonomy and self-improvement
+- Each autonomous action class has explicit scope, permissions, resource/time budgets, and approval policy.
+- Changes occur in isolated workspaces and undergo independent verification.
+- Failure recovery and rollback are demonstrated before consequential autonomy is enabled.
+- Promotion/deployment cannot rely solely on the modifying agent's self-assessment.
+- Autonomy expands only with measured reliability and explicit user authorization.
 
 ## Mapping of original roadmap phases
 
 Original phase 0, architectural reconciliation and development governance: retained as Phase 1 and substantially in progress.
 Original phase 1, portable application foundation, persistent storage, and entity management: retained as Phase 2 baseline; Registry v1 M5 is implemented and validated.
 Original phase 2, independent software-project and AI-configuration management: retained as part of Phase 2 and Phase 3; Registry v1 provides initial capabilities.
-Original phase 3, Git integration, version histories, branching, and workspace isolation: retained as part of Phase 2 and Phase 6; Git and workspace isolation are partially implemented.
+Original phase 3, Git integration, version histories, branching, and workspace isolation: retained primarily in Phase 2; Git-backed project history and registered-workspace isolation are partially implemented. Memory scope belongs to Phase 6 and is not a substitute for project/workspace isolation.
 Original phase 4, provider/model/agent integration contracts and execution adapters: retained as Phase 3; integration exists but common contracts are incomplete.
 Original phase 5, resource discovery and resource-aware execution management: retained as Phase 7; only basic resource monitoring exists.
 Original phase 6, persistent experiment registry, artifacts, evaluation, and reproducibility: retained as Phase 7; experiment registry and evaluation exist.
@@ -71,7 +158,7 @@ No original phase is obsolete. Several are merged or resequenced to reflect the 
 
 The product redesign plan is recorded in `docs/PRODUCT-REDESIGN-PLAN.md`. It is a planning document, not implementation authorization.
 
-The redesign concerns the primary user experience and interaction model. It must preserve Evo's platform identity and existing safety boundaries. It is a prerequisite to further feature expansion, subject to user authorization and the active stabilization freeze.
+The redesign concerns the primary user experience and interaction model. It must preserve Evo's platform identity and existing safety boundaries. Its detailed UX requirements are subordinate to this roadmap's implementation sequence. Incremental usability work may accompany validated capabilities; a wholesale visual redesign is not a prerequisite to all feature work.
 
 ## Current implementation status
 
