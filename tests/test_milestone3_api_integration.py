@@ -483,3 +483,112 @@ class BackgroundRunMalformedTests(unittest.TestCase):
         run_id, created = self._run_with_metadata(json.dumps({"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}))
         run = self.store.get_agent_run(run_id)
         self.assertTrue(created["called"])
+
+
+
+class MemoryApiScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.store = self.app.state.store
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+        self.other = register_project(self.store, "Other")
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def _create_memory(self, content, project_id=None, workspace_id=None):
+        status, body = asgi_request(self.app, "POST", "/api/v1/memories", {
+            "content": content, "project_id": project_id, "workspace_id": workspace_id,
+        })
+        self.assertEqual(status, 201, body)
+        return body["id"]
+
+    def test_memory_listing_is_global_project_and_workspace_scoped(self):
+        global_id = self._create_memory("global alpha")
+        project_id = self._create_memory("project alpha", self.project["project_id"])
+        workspace_id = self._create_memory("workspace alpha", self.project["project_id"],
+                                           self.workspace["workspace_id"])
+        status, global_rows = asgi_request(self.app, "GET", "/api/v1/memories")
+        self.assertEqual(status, 200)
+        self.assertEqual({row["id"] for row in global_rows}, {global_id})
+        status, project_rows = asgi_request(
+            self.app, "GET", f"/api/v1/memories?project_id={self.project['project_id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual({row["id"] for row in project_rows}, {global_id, project_id})
+        status, workspace_rows = asgi_request(
+            self.app, "GET", f"/api/v1/memories?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual({row["id"] for row in workspace_rows}, {global_id, project_id, workspace_id})
+        status, invalid = asgi_request(self.app, "GET", "/api/v1/memories?project_id=missing")
+        self.assertEqual(status, 422)
+
+    def test_memory_review_never_compares_across_private_project_boundary(self):
+        self._create_memory("shared phrase global")
+        self._create_memory("shared phrase project", self.project["project_id"])
+        status, global_review = asgi_request(self.app, "GET", "/api/v1/memories/review")
+        self.assertEqual(status, 200)
+        self.assertEqual(global_review["analyzed_records"], 1)
+        status, project_review = asgi_request(
+            self.app, "GET", f"/api/v1/memories/review?project_id={self.project['project_id']}")
+        self.assertEqual(status, 200)
+        self.assertEqual(project_review["analyzed_records"], 2)
+
+    def test_memory_archive_and_supersede_require_scope_and_preserve_ownership(self):
+        project_memory = self._create_memory("project source", self.project["project_id"])
+        status, result = asgi_request(
+            self.app, "POST", f"/api/v1/memories/{project_memory}/supersede",
+            {"content": "replacement from project"})
+        self.assertEqual(status, 404)
+        status, result = asgi_request(
+            self.app, "POST",
+            f"/api/v1/memories/{project_memory}/supersede?project_id={self.project['project_id']}",
+            {"content": "replacement from project"})
+        self.assertEqual(status, 200)
+        replacement_id = result["id"]
+        row = self.store.db.execute(
+            "SELECT project_id,workspace_id FROM memories WHERE id=?", (replacement_id,)).fetchone()
+        self.assertEqual(row["project_id"], self.project["project_id"])
+        self.assertIsNone(row["workspace_id"])
+        status, result = asgi_request(
+            self.app, "POST", f"/api/v1/memories/{replacement_id}/archive")
+        self.assertEqual(status, 404)
+        status, result = asgi_request(
+            self.app, "POST",
+            f"/api/v1/memories/{replacement_id}/archive?project_id={self.project['project_id']}")
+        self.assertEqual(status, 200)
+
+    def test_memory_candidate_routes_validate_and_enforce_scope(self):
+        candidate_id = self.store.propose_memory(
+            "workspace candidate", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])
+        status, rows = asgi_request(self.app, "GET", "/api/v1/memory-candidates")
+        self.assertEqual(status, 200)
+        self.assertNotIn(candidate_id, [row["id"] for row in rows])
+        status, rows = asgi_request(
+            self.app, "GET",
+            f"/api/v1/memory-candidates?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+        self.assertIn(candidate_id, [row["id"] for row in rows])
+        status, result = asgi_request(
+            self.app, "POST", f"/api/v1/memory-candidates/{candidate_id}/review",
+            {"approved": True})
+        self.assertEqual(status, 404)
+        status, result = asgi_request(
+            self.app, "POST",
+            f"/api/v1/memory-candidates/{candidate_id}/review?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}",
+            {"approved": True})
+        self.assertEqual(status, 200)
