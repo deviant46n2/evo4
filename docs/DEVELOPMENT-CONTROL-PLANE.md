@@ -8,7 +8,7 @@ Evo exists to make cooperating AIs and tools more capable together than any one 
 
 The current GPT-6/Kilo workflow is human-mediated: GPT-6 provides reasoning/architecture/review, Kilo performs local repository work and validation, the user sets vision and retains final authority, and GitHub is the handoff/source-of-truth mechanism. This workflow is design inspiration only. Evo does not currently dispatch to or observe those external sessions. Phase 4 must validate Evo's own runtime contracts with participants Evo can actually invoke.
 
-A minimal recovery path must remain usable when the control-plane worker is unavailable: the existing local CLI and documented direct maintenance commands must be able to inspect configuration, inspect the database, create a SQLite backup, and use Git to restore source/configuration. Recovery documentation must identify the exact supported commands and backup/restore procedures before any control-plane dependency is introduced. The recovery path must not require the orchestration worker or a live participant provider.
+A minimal recovery path must remain usable when the control-plane worker is unavailable. Current support includes local CLI diagnostics and `evo backup <destination>` for a consistent SQLite backup, plus Git for source/configuration recovery. A dedicated application restore command is not currently documented as available; the exact SQLite-safe restore procedure, startup checks, and a recovery test must be specified before the control plane depends on this path. Recovery must not require the orchestration worker, scheduler, or a live participant provider.
 
 ## Governance and trust primitives
 
