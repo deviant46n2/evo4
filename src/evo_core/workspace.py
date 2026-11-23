@@ -94,6 +94,10 @@ class Workspace:
             raise WorkspaceError("Path escapes the configured workspace") from exc
         return candidate
 
+    def discover_instructions(self, target=".", **kwargs):
+        from . import instructions
+        return instructions.discover_repository_instructions(self.root, target=target, **kwargs)
+
     def list_files(self,relative_path=".",pattern="*",limit=500,include_status=False):
         files, truncated = self._list_files(relative_path,pattern,limit)
         if include_status:
