@@ -70,9 +70,9 @@ There are no outstanding stabilization tasks in the accepted audit ledger. The f
 
 ## Current documentation state
 
-The unified roadmap/architecture reconciliation is complete as a documentation task. The next activity is independent critique and revision of these documents, not implementation.
+The unified roadmap/architecture reconciliation remains in progress. Gemini's independent critique identified material architectural, sequencing, and factual gaps; the current revision is being updated to address or explicitly disposition those findings. Do not mark Phase 1 complete until that review is reconciled and the canonical documents are mutually consistent.
 
-The first planned implementation milestone after explicit freeze-lift authorization is **Project Provisioning v1**, defined in `ROADMAP.md`. It is planned only, not started or authorized. Project deletion is explicitly excluded and must be designed as a separate safeguarded milestone.
+The first planned implementation milestone after explicit freeze-lift authorization is **Project Provisioning v1**, defined in `ROADMAP.md`. It is planned only, not started or authorized. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
 
 ## Working collaboration protocol
 
