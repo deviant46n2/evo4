@@ -96,6 +96,18 @@ class EvoStore:
               created_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_run_feedback_run ON run_feedback(run_id,created_at);
             """)
+            scope_columns = {
+                "conversations": ("project_id", "workspace_id"),
+                "memories": ("project_id", "workspace_id"),
+                "lessons": ("project_id", "workspace_id"),
+                "research_documents": ("project_id", "workspace_id"),
+                "tasks": ("project_id", "workspace_id"),
+            }
+            for table, columns in scope_columns.items():
+                existing = {row[1] for row in self.db.execute(f"PRAGMA table_info({table})").fetchall()}
+                for column in columns:
+                    if column not in existing:
+                        self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
             try:
                 self.db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(memory_id UNINDEXED, content, category, tags)")
                 self.fts_available = True
@@ -122,12 +134,16 @@ class EvoStore:
                 )
             self.db.commit()
 
-    def create_conversation(self, title="New conversation"):
+    def create_conversation(self, title="New conversation", project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         cid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             try:
-                self.db.execute("INSERT INTO conversations(id,title,created_at,updated_at) VALUES(?,?,?,?)",
-                                (cid, title[:120], now, now))
+                self.db.execute("INSERT INTO conversations(id,title,created_at,updated_at,project_id,workspace_id) VALUES(?,?,?,?,?,?)",
+                                (cid, title[:120], now, now, project_id, workspace_id))
                 self.db.commit()
             except Exception:
                 self.db.rollback()
@@ -199,19 +215,24 @@ class EvoStore:
                                    (conversation_id, max(1, limit))).fetchall()
         return list(reversed(rows))
 
-    def add_memory(self, content, category="general", tags=None, source="user", confidence=1.0, metadata=None):
+    def add_memory(self, content, category="general", tags=None, source="user", confidence=1.0, metadata=None,
+                   project_id=None, workspace_id=None):
         content = content.strip()
         if not content:
             raise ValueError("Memory content cannot be empty")
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         mid, now = str(uuid.uuid4()), utc_now()
         tags = tags or []
         with self.lock:
-            self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
-                               VALUES(?,?,?,?,?,?,?,?,?)""",
+            self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json,project_id,workspace_id)
+                               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                             (mid, content, category, json.dumps(tags), source, float(confidence), now, now,
-                             json.dumps(metadata or {}, ensure_ascii=False)))
+                             json.dumps(metadata or {}, ensure_ascii=False), project_id, workspace_id))
             if self.fts_available:
                 self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
                                 (mid, content, category, " ".join(tags)))
@@ -427,11 +448,15 @@ class EvoStore:
         with self.lock:
             return self.db.execute(sql,params).fetchall()
 
-    def add_task(self, title, description="", priority=3, due_at=None):
+    def add_task(self, title, description="", priority=3, due_at=None, project_id=None, workspace_id=None):
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         tid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
-            self.db.execute("INSERT INTO tasks(id,title,description,priority,created_at,updated_at,due_at) VALUES(?,?,?,?,?,?,?)",
-                            (tid, title.strip(), description, max(1,min(5,int(priority))), now, now, due_at))
+            self.db.execute("INSERT INTO tasks(id,title,description,priority,created_at,updated_at,due_at,project_id,workspace_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (tid, title.strip(), description, max(1,min(5,int(priority))), now, now, due_at, project_id, workspace_id))
             self.db.commit()
         return tid
 
@@ -500,16 +525,22 @@ class EvoStore:
                 self.db.rollback()
                 raise
 
-    def add_lesson(self, lesson, trigger_text="", category="general", source="user", confidence=1.0):
+    def add_lesson(self, lesson, trigger_text="", category="general", source="user", confidence=1.0,
+                   project_id=None, workspace_id=None):
         if not lesson.strip():
             raise ValueError("Lesson cannot be empty")
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         lesson_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
-            self.db.execute("""INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
-                               VALUES(?,?,?,?,?,?,?)""",
-                            (lesson_id,trigger_text,lesson.strip(),category,source,float(confidence),now))
+            self.db.execute("""INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at,project_id,workspace_id)
+                               VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (lesson_id, trigger_text, lesson.strip(), category, source, float(confidence), now,
+                             project_id, workspace_id))
             self.db.commit()
         return lesson_id
 
@@ -547,15 +578,20 @@ class EvoStore:
                 self.db.commit()
             return rows
 
-    def add_research_document(self, title, content, url=None, source_type="manual", metadata=None):
+    def add_research_document(self, title, content, url=None, source_type="manual", metadata=None,
+                             project_id=None, workspace_id=None):
         if not title.strip() or not content.strip():
             raise ValueError("Research title and content are required")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("project_id must be None or a non-empty string")
+        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+            raise ValueError("workspace_id must be None or a non-empty string")
         document_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
-            self.db.execute("""INSERT INTO research_documents(id,title,url,content,source_type,captured_at,metadata_json)
-                               VALUES(?,?,?,?,?,?,?)""",
-                            (document_id,title.strip(),url,content,source_type,now,
-                             json.dumps(metadata or {},ensure_ascii=False)))
+            self.db.execute("""INSERT INTO research_documents(id,title,url,content,source_type,captured_at,metadata_json,project_id,workspace_id)
+                               VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (document_id, title.strip(), url, content, source_type, now,
+                             json.dumps(metadata or {}, ensure_ascii=False), project_id, workspace_id))
             self.db.commit()
         return document_id
 

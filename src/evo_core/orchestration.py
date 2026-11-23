@@ -61,6 +61,8 @@ def initialize(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plans)")}
     if "workspace_id" not in columns:
         connection.execute("ALTER TABLE agent_plans ADD COLUMN workspace_id TEXT")
+    if "project_id" not in columns:
+        connection.execute("ALTER TABLE agent_plans ADD COLUMN project_id TEXT")
     connection.commit()
 
 def _event(connection, plan_id, event_type, payload=None, step_id=None):
@@ -68,7 +70,7 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         "INSERT INTO agent_plan_events(plan_id,step_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
-def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, workspace=None, proposal=None):
+def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, project_id=None, workspace=None, proposal=None):
     # Support both the legacy (workspace, proposal) signature and the new
     # (workspace_id, workspace, proposal) signature without breaking callers.
     positional = list(args)
@@ -90,6 +92,10 @@ def create_plan(connection, request, *args, allowed_commands=None, workspace_id=
         raise ValueError("workspace_id must be a non-empty string when provided")
     if isinstance(workspace_id, str):
         workspace_id = workspace_id.strip()
+    if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+        raise ValueError("project_id must be a non-empty string when provided")
+    if isinstance(project_id, str):
+        project_id = project_id.strip()
     if not isinstance(proposal, dict):
         raise ValueError("Plan proposal must be an object")
     raw_title, raw_summary = proposal.get("title"), proposal.get("summary")
@@ -134,9 +140,9 @@ def create_plan(connection, request, *args, allowed_commands=None, workspace_id=
     plan_id, stamp = uuid.uuid4().hex, _now()
     with connection:
         connection.execute(
-            """INSERT INTO agent_plans(id,request,workspace,workspace_id,title,summary,status,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (plan_id, request[:20000], workspace, workspace_id, title, summary, "proposed", stamp, stamp))
+            """INSERT INTO agent_plans(id,request,workspace,workspace_id,project_id,title,summary,status,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (plan_id, request[:20000], workspace, workspace_id, project_id, title, summary, "proposed", stamp, stamp))
         for index, step in enumerate(steps):
             connection.execute(
                 """INSERT INTO agent_plan_steps(id,plan_id,position,title,description,expected_outcome,verification,verification_commands_json)
@@ -197,7 +203,7 @@ def get_plan(connection, plan_id):
 
 def list_plans(connection, limit=50):
     rows = connection.execute(
-        "SELECT id,title,summary,status,workspace,workspace_id,created_at,updated_at,run_id,error FROM agent_plans ORDER BY created_at DESC LIMIT ?",
+        "SELECT id,title,summary,status,workspace,workspace_id,project_id,created_at,updated_at,run_id,error FROM agent_plans ORDER BY created_at DESC LIMIT ?",
         (min(max(int(limit), 1), 100),)).fetchall()
     return [dict(row) for row in rows]
 
