@@ -70,7 +70,7 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         "INSERT INTO agent_plan_events(plan_id,step_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
-def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, project_id=None, workspace=None, proposal=None):
+def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, project_id=None, workspace=None, proposal=None, store=None):
     # Support both the legacy (workspace, proposal) signature and the new
     # (workspace_id, workspace, proposal) signature without breaking callers.
     positional = list(args)
@@ -96,6 +96,9 @@ def create_plan(connection, request, *args, allowed_commands=None, workspace_id=
         raise ValueError("project_id must be a non-empty string when provided")
     if isinstance(project_id, str):
         project_id = project_id.strip()
+    if store is not None:
+        from .scope_validation import validate_scope
+        validate_scope(store, project_id, workspace_id)
     if not isinstance(proposal, dict):
         raise ValueError("Plan proposal must be an object")
     raw_title, raw_summary = proposal.get("title"), proposal.get("summary")

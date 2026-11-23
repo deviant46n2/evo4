@@ -138,7 +138,7 @@ class EvoStore:
 
     def create_conversation(self, title="New conversation", project_id=None, workspace_id=None):
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         cid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             try:
@@ -237,7 +237,7 @@ class EvoStore:
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         mid, now = str(uuid.uuid4()), utc_now()
         tags = tags or []
         with self.lock:
@@ -462,7 +462,7 @@ class EvoStore:
 
     def add_task(self, title, description="", priority=3, due_at=None, project_id=None, workspace_id=None):
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         tid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("INSERT INTO tasks(id,title,description,priority,created_at,updated_at,due_at,project_id,workspace_id) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -493,20 +493,27 @@ class EvoStore:
         if not content:
             raise ValueError("Candidate memory cannot be empty")
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         if conversation_id is not None:
             conversation = self.get_conversation(conversation_id)
             if conversation is None:
                 raise ValueError("conversation_id does not refer to an existing conversation")
+            if project_id is not None and project_id != conversation["project_id"]:
+                raise ValueError("project_id does not match the source conversation")
+            if workspace_id is not None and workspace_id != conversation["workspace_id"]:
+                raise ValueError("workspace_id does not match the source conversation")
             if project_id is None:
                 project_id = conversation["project_id"]
             if workspace_id is None:
                 workspace_id = conversation["workspace_id"]
-        self.validate_scope(project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         candidate_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
-            existing = self.db.execute("SELECT id FROM memory_candidates WHERE lower(content)=lower(?) AND status='pending'",
-                                       (content,)).fetchone()
+            existing = self.db.execute(
+                """SELECT id FROM memory_candidates
+                   WHERE lower(content)=lower(?) AND status='pending'
+                     AND project_id IS ? AND workspace_id IS ?""",
+                (content, project_id, workspace_id)).fetchone()
             if existing:
                 return existing["id"]
             self.db.execute("""INSERT INTO memory_candidates(id,content,category,source,conversation_id,project_id,workspace_id,confidence,created_at)
@@ -555,7 +562,7 @@ class EvoStore:
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         lesson_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("""INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at,project_id,workspace_id)
@@ -604,7 +611,7 @@ class EvoStore:
         if not title.strip() or not content.strip():
             raise ValueError("Research title and content are required")
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         document_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("""INSERT INTO research_documents(id,title,url,content,source_type,captured_at,metadata_json,project_id,workspace_id)

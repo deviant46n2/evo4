@@ -10,8 +10,11 @@ def validate_scope(store, project_id=None, workspace_id=None):
     if workspace_id is not None and project_id is None:
         raise ValueError("workspace_id requires project_id")
 
+    normalized_project = project_id.strip() if isinstance(project_id, str) else project_id
+    normalized_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+
     if project_id is None:
-        return
+        return (None, None)
 
     import sqlite3
     from .project_checkouts import _project_row, ProjectNotFoundError
@@ -24,7 +27,11 @@ def validate_scope(store, project_id=None, workspace_id=None):
             raise ValueError("project_id does not refer to an existing project") from exc
         except sqlite3.OperationalError as exc:
             raise ValueError("project_id cannot be validated without an initialized Registry") from exc
-        if workspace_id is not None:
+
+    if workspace_id is None:
+        return (normalized_project, None)
+
+    if workspace_id is not None:
             try:
                 workspace = _workspace_row(store.db, workspace_id)
             except WorkspaceNotFoundError as exc:
@@ -33,6 +40,8 @@ def validate_scope(store, project_id=None, workspace_id=None):
                 raise ValueError("workspace_id cannot be validated without an initialized Registry") from exc
             if workspace["project_id"] != project_id:
                 raise ValueError("workspace does not belong to the supplied project")
+
+    return (normalized_project, normalized_workspace)
 
 
 def scope_error(exc):

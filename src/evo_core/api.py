@@ -771,7 +771,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 plan = orchestration.create_plan(
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
                     allowed_commands=config.allowed_commands,
-                    project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None))
+                    project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+                    store=store)
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

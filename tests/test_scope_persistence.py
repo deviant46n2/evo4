@@ -225,6 +225,43 @@ class ScopePersistenceTests(unittest.TestCase):
             finally:
                 store.db.close()
 
+    def test_memory_candidate_dedup_is_scope_aware(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                global_first = store.propose_memory("same content")
+                global_second = store.propose_memory("same content")
+                project_first = store.propose_memory("same content", project_id=project["project_id"])
+                self.assertEqual(global_first, global_second)
+                self.assertNotEqual(global_first, project_first)
+
+                from evo_core.project_checkouts import register_project
+                other_project = register_project(store, "Other")
+                other_candidate = store.propose_memory("same content", project_id=other_project["project_id"])
+                self.assertNotEqual(project_first, other_candidate)
+                self.assertEqual(store.propose_memory("same content", project_id=other_project["project_id"]), other_candidate)
+            finally:
+                store.db.close()
+
+    def test_create_plan_rejects_invalid_scope_with_store(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                with self.assertRaises(ValueError):
+                    create_plan(store.db, "request", "workspace", "/workspace",
+                                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                                project_id="missing", store=store)
+                with self.assertRaises(ValueError):
+                    create_plan(store.db, "request", "workspace", "/workspace",
+                                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                                project_id="project", workspace_id=None, store=store)
+            finally:
+                store.db.close()
+
     def test_agent_plan_scope_persists(self):
         with tempfile.TemporaryDirectory() as temp:
             store = EvoStore(Path(temp) / "evo.sqlite3")
