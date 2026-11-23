@@ -763,6 +763,39 @@ def create_app(config_path="config.toml", provider_name=None):
 
 
 
+    def _validated_api_scope(project_id=None, workspace_id=None):
+        try:
+            return store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _run_visible_in_scope(row, project_id, workspace_id):
+        from .scope_validation import scope_is_visible
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        record_project = metadata.get("project_id")
+        record_workspace = metadata.get("workspace_id")
+        if record_workspace is not None and record_project is None:
+            return False
+        try:
+            record_project, record_workspace = store.validate_scope(record_project, record_workspace)
+        except ValueError:
+            return False
+        return scope_is_visible(record_project, record_workspace, project_id, workspace_id)
+
+    def _plan_visible_in_scope(plan, project_id, workspace_id):
+        from .scope_validation import scope_is_visible
+        try:
+            record_project, record_workspace = store.validate_scope(
+                plan.get("project_id"), plan.get("workspace_id"))
+        except ValueError:
+            return False
+        return scope_is_visible(record_project, record_workspace, project_id, workspace_id)
+
     def serialize_run(row):
         try:
             metadata = json.loads(row["metadata_json"] or "{}")
@@ -775,14 +808,19 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
     @app.get("/api/v1/agents")
-    def agent_runs(limit: int = 50, status: str | None = None):
-        return [serialize_run(row) for row in store.list_agent_runs(min(max(limit, 1), 100), status)]
+    def agent_runs(limit: int = 50, status: str | None = None,
+                   project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        rows = store.list_agent_runs(500, status)
+        visible = [row for row in rows if _run_visible_in_scope(row, project_id, workspace_id)]
+        return [serialize_run(row) for row in visible[:min(max(limit, 1), 100)]]
 
     @app.get("/api/v1/agents/{run_id}")
-    def agent_run(run_id: str):
+    def agent_run(run_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         row = store.get_agent_run(run_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Agent run not found")
+        if row is None or not _run_visible_in_scope(row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         result = serialize_run(row)
         with lab_db.lock:
             task = background_agent.get(lab_db.connection, run_id)
@@ -807,9 +845,14 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures.pop(run_id, None)
 
     @app.get("/api/v1/agents/plans")
-    def agent_plans(limit: int = 50):
+    def agent_plans(limit: int = 50, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
-            return orchestration.list_plans(lab_db.connection, limit)
+            rows = orchestration.list_plans(lab_db.connection, 100)
+        visible = [row for row in rows if _plan_visible_in_scope(row, project_id, workspace_id)]
+        return visible[:min(max(limit, 1), 100)]
+
+
 
     @app.post("/api/v1/agents/plans", status_code=201)
     def propose_agent_plan(payload: AgentPlanCreate):
@@ -835,22 +878,27 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=502, detail=f"Unable to generate a plan: {type(exc).__name__}: {str(exc)[:300]}") from exc
 
     @app.get("/api/v1/agents/plans/{plan_id}")
-    def agent_plan_detail(plan_id: str):
+    def agent_plan_detail(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
-        if plan is None:
-            raise HTTPException(status_code=404, detail="Agent plan not found")
+        if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
         return plan
 
     @app.post("/api/v1/agents/plans/{plan_id}/approve")
-    def approve_agent_plan(plan_id: str):
+    def approve_agent_plan(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         try:
             with lab_db.lock:
-                if orchestration.get_plan(lab_db.connection, plan_id) is None:
-                    raise HTTPException(status_code=404, detail="Agent plan not found")
+                plan = orchestration.get_plan(lab_db.connection, plan_id)
+                if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+                    raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
                 return orchestration.approve_plan(lab_db.connection, plan_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 
     def _finalize_agent_run(run_id, outcome, reason, plan_id=None):
         """Record one durable decision, then mirror it into dependent records.
@@ -870,13 +918,14 @@ def create_app(config_path="config.toml", provider_name=None):
         return decision
 
     @app.post("/api/v1/agents/plans/{plan_id}/execute", status_code=202)
-    def execute_agent_plan(plan_id: str):
+    def execute_agent_plan(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
-            if plan is None:
-                raise HTTPException(status_code=404, detail="Agent plan not found")
+            if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+                raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
         workspace_id = plan.get("workspace_id")
