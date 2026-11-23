@@ -119,11 +119,12 @@ Current verified implementation:
 - Project Provisioning v1 creates a dedicated folder, starter files, Git repository, project, and checkout. Source: `src/evo_core/project_provisioning.py`, `src/evo_core/project_checkouts.py`, `desktop/src/ProjectsWorkspace.tsx`.
 - Project Provisioning v1 is implemented, reviewed, accepted, and closed. Registry v1 and the registered-workspace execution boundary are existing foundations to reuse. Project deletion remains deferred. No genuinely incomplete provisioning capability is known beyond deferred deletion and later project-scoped context work.
 - Registry v1 stores configurations, projects, checkouts, and workspaces. Source: `src/evo_core/platform_registry.py`, `src/evo_core/workspaces.py`.
-- The registered-workspace execution boundary requires an active `workspace_id` and re-resolves it before `CodingAgent` construction. Source: `src/evo_core/api.py`, `src/evo_core/workspaces.py`.
-- Conversations and messages have no `project_id`. Source: `src/evo_core/store.py` conversations/messages schema.
-- Memories, lessons, research, and tasks have no project/workspace scope. Source: `src/evo_core/store.py` schema and `src/evo_core/assistant.py`.
-- Coding-agent context is assembled globally; retrieved context is isolated as untrusted data but not project-scoped. Source: `src/evo_core/assistant.py`.
-- Tasks and agent plans are global in `src/evo_core/orchestration.py` (`agent_plans` has no `project_id`, `workspace_id` is optional and nullable); task scope is not yet enforced.
+- The registered-workspace execution boundary requires an active `workspace_id`, re-resolves it before `CodingAgent` construction, and returns the exact configuration revision. The API currently applies workspace-derived command policy, but the actual assistant/provider passed to `CodingAgent` is still constructed from global TOML configuration. Source: `src/evo_core/api.py`, `src/evo_core/workspaces.py`, `src/evo_core/assistant.py`, `src/evo_core/config.py`.
+- Conversations carry `project_id` and `workspace_id`; messages inherit that scope through their parent conversation rather than storing duplicate scope columns. Store/API access applies scope visibility checks. Source: `src/evo_core/store.py`, `src/evo_core/api.py`.
+- Memories, memory candidates, lessons, research documents, and tasks carry project/workspace scope fields and scope-aware retrieval/listing paths. Source: `src/evo_core/store.py`, `src/evo_core/assistant.py`, `src/evo_core/api.py`.
+- Assistant context assembly resolves the conversation scope and filters repository instructions, memories, lessons, research, and message history by the authorized project/workspace scope. This is not evidence that every task, background-agent, or tool-execution path has passed the full isolation gate. Source: `src/evo_core/assistant.py`.
+- Agent plans carry nullable `project_id` and `workspace_id` fields and validate supplied scope; legacy/global plans remain possible. Full scope propagation and mismatch rejection through every approval, execution, interruption, recovery, and resumption path still require acceptance evidence. Source: `src/evo_core/orchestration.py`.
+- **Phase 2 remains partially implemented pending full acceptance reconciliation.** The bullets above describe current source behavior, not a claim that every Phase 2 acceptance criterion has passed. In particular, retain the full isolation test gate and verify CLI/API equivalence, instruction trust boundaries, checkout overlap/symlink protections, and scope continuity across all task/background execution paths before closing Phase 2.
 
 Proposed milestones:
 1. Scope and authority contract.
@@ -192,8 +193,10 @@ Risks and unresolved decisions:
 Command policy is settled: effective permissions are the intersection of global and project permissions. Project policy can only restrict global permissions and cannot expand them. Missing, invalid, or ambiguous project policy must not silently grant broader access. Milestone 2b implements and enforces this model; milestone 4 tests instruction precedence and command-policy behavior against the already settled model.
 
 **Phase 3 — Participant contracts and runtime binding**
-- At least two distinct participant implementations can be registered and invoked through common, versioned contracts without hardcoding provider names as roles.
-- AI Configuration revisions are resolved into actual runtime adapters; tests prove that different revisions produce the expected distinct model/provider/policy behavior.
+- Runnable AI Configuration components use an explicit, versioned typed schema; legacy opaque schema-version 1 definitions remain readable but are not executable by default.
+- The first runtime integration proves that the exact immutable workspace-bound configuration revision constructs and controls the participant/provider actually invoked. The global TOML assistant remains a separate legacy path only for callers without a Registry-bound workspace; no silent fallback is permitted.
+- At least two genuinely distinct production participant implementations can be registered and invoked through common, versioned contracts. A deterministic verifier is a distinct non-model participant; it does not count as an independent model judgment source. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
+- Secret resolution, cancellation semantics, and resource admission are explicit and bounded; missing secrets, unknown required capacity/quota, and unsupported components fail closed.
 - Participant identity, declared capabilities, availability, compliance status, trust evidence, role eligibility, and authorization are separate fields/concepts.
 - Assignment/task ownership, permission attenuation, context envelopes, message provenance, handoff schemas, verification contracts, and bounded dispatch are explicit.
 - Each dispatch is admitted against local resource reserves, concurrency caps, and provider quota/rate/token budgets; unknown capacity fails closed or requires an explicit policy override.
