@@ -166,7 +166,7 @@ This inventory is based on inspection of the current implementation, routes, com
 
 ### Phase 5 — AI configuration and Cyberdeck
 
-- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, revisions, activation, and selection. Workspace Registry links configurations to projects and checkouts. Configuration definitions use top-level `components` objects, but no explicit connection or dependency graph is defined in the inspected implementation.
+- Existing implementation: Configuration workspace in `desktop/src/ConfigurationsWorkspace.tsx` and APIs in `src/evo_core/ai_configurations.py` support configuration creation, immutable revisions, archiving/reactivation of records, and Registry association. Reactivation is not runtime activation; configuration-to-provider runtime binding and provider selection are not implemented. Workspace Registry links configurations to projects and checkouts. Configuration definitions use top-level `components` objects, but no explicit connection or dependency graph is defined in the inspected implementation.
 - Status: Partially implemented.
 - Redesign gap: Node-based visual canvas, component inspection, and status indicators are not implemented.
 - Backend gap: Missing backend requirements include an explicit component graph or relationship model, runtime-state queryability for components, and status reporting. Existing configuration entities and revisions should be reused, but a generic component configuration is not already a complete executable or observable graph.
@@ -183,68 +183,9 @@ This inventory is based on inspection of the current implementation, routes, com
 - Validation: `npm run build`, Python test suite, compileall, `git diff --check`.
 
 
-## 10. Historical product-planning phase outline (non-authoritative)
+## 10–12. Historical planning note
 
-- Phase 0: Product redesign specification and architecture reconciliation.
-- Phase 1: Chat-first interface and navigation foundation.
-- Phase 2: Project lifecycle, provisioning, and isolation.
-- Phase 3: Agent interaction, background execution, and interruption handling.
-- Phase 4: Persistent memory and context experience.
-- Phase 5: AI configuration and Cyberdeck visualization.
-- Phase 6: Integration, visual polish, accessibility/usability, and reliability validation.
-
-Refine dependencies where justified, but do not turn this into a detailed task breakdown for every future implementation.
-
-## 11. Historical UX dependency notes (subordinate to ROADMAP.md)
-
-- Phase 0 must reconcile the redesign with the existing platform architecture before implementation.
-- Phase 1 establishes the primary chat surface that later phases build on.
-- Phase 2 must establish project isolation before automatic project selection or cross-project consultation is enabled.
-- Phase 3 depends on the chat-first surface and must preserve existing approval and execution-safety controls.
-- Phase 4 depends on project scoping to avoid memory cross-contamination.
-- Phase 5 depends on real backend configuration and runtime state.
-- Phase 6 validates integrated behavior and cannot be replaced by visual polish alone.
-
-## 12. UX outcome criteria (not development phase gates)
-
-### Phase 0
-- Redesign plan and architecture reconciliation are documented.
-- An evidence-based Existing Capability vs. Redesign Gap Inventory is included in this plan.
-- Confirmed decisions, proposed approaches, and open questions are clearly separated.
-- Existing capabilities are distinguished from new backend requirements and UI/UX changes.
-- No implementation is implied by planning documents.
-
-### Phase 1
-- Evo opens into chat.
-- Users can create, reopen, and switch conversations.
-- Other application areas are reachable without becoming mandatory workflows.
-
-### Phase 2
-- Users can create, inspect, edit, and delete independent projects.
-- Default project creation provisions a dedicated folder, Git repository, and initial framework.
-- Global and project-specific instructions coexist without blending project identity.
-- Project isolation has automated test coverage.
-
-### Phase 3
-- Agent activity appears inline in chat.
-- Activity expansion works reliably and shows relevant details.
-- Background work does not unnecessarily block chat.
-- Existing approval and command authorization remain intact.
-
-### Phase 4
-- Memory is searchable, inspectable, editable, and understandable.
-- Provenance and relationships are preserved.
-- Global and project memory are clearly distinguished.
-
-### Phase 5
-- Cyberdeck visualization reflects actual backend configuration and runtime state.
-- Component inspection works.
-- Status indicators are meaningful rather than decorative.
-
-### Phase 6
-- Integrated flows pass reliability and usability validation.
-- Accessibility and usability review is complete.
-- No unresolved serious defects block the redesign.
+The former product-only phase outline is retired to avoid a competing phase hierarchy. Its useful UX requirements remain in Sections 1–9 and 13–14. Implementation sequence, dependencies, and phase gates are defined exclusively in `ROADMAP.md`.
 
 ## 13. Explicitly open design decisions
 
