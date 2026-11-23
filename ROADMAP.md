@@ -42,7 +42,7 @@ Dependencies and sequencing:
 - Phase 3 defines the contracts needed by Phase 4 and Phase 5.
 - Phase 4 validates whether cooperation actually works before broader orchestration investment.
 - Phase 5 generalizes only after Phase 4 demonstrates value.
-- Phase 6 should strengthen measurement before large-scale parallelism.
+- Phase 7 should strengthen measurement before large-scale parallelism; Phase 6 establishes scoped context and memory needed to make cooperation coherent.
 - Phase 8 can proceed incrementally alongside Phases 2-7 where it supports validation.
 - Phase 9 depends on Phases 3 and 5.
 - Phase 10 depends on all earlier phases.
