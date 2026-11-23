@@ -244,17 +244,38 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     const params = scopeParams();
     return params.toString() ? "?" + params.toString() : "";
   }, [scopeParams]);
+  const scopeKey = `${projectId || "global"}:${scopeWorkspaceId || ""}`;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const runsGeneration = useRef(0);
+  const plansGeneration = useRef(0);
   const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [planning, setPlanning] = useState(false);
   const refresh = useCallback(async () => {
-    try { setRuns(await api<Run[]>("/agents?limit=100" + scopeSuffix())); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [scopeSuffix]);
+    const requestId = ++runsGeneration.current;
+    const requestedScope = scopeKey;
+    try {
+      const rows = await api<Run[]>("/agents?limit=100" + scopeSuffix());
+      if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) setRuns(rows);
+    } catch (e) {
+      if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, [scopeSuffix, scopeKey]);
   const refreshPlans = useCallback(async () => {
-    try { setPlans(await api<AgentPlanSummary[]>("/agents/plans?limit=30" + scopeSuffix())); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [scopeSuffix]);
+    const requestId = ++plansGeneration.current;
+    const requestedScope = scopeKey;
+    try {
+      const rows = await api<AgentPlanSummary[]>("/agents/plans?limit=30" + scopeSuffix());
+      if (requestId === plansGeneration.current && scopeKeyRef.current === requestedScope) setPlans(rows);
+    } catch (e) {
+      if (requestId === plansGeneration.current && scopeKeyRef.current === requestedScope) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, [scopeSuffix, scopeKey]);
   const loadPlan = useCallback(async (id: string) => {
     const token = ++planDetailGeneration.current;
     try {
@@ -360,8 +381,12 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setWorkspaceId(scopeWorkspaceId || "");
   }, [scopeWorkspaceId]);
   useEffect(() => {
+    runsGeneration.current += 1;
+    plansGeneration.current += 1;
     runDetailGeneration.current += 1;
     planDetailGeneration.current += 1;
+    setRuns([]);
+    setPlans([]);
     setSelected(null);
     setDetail(null);
     setPlan(null);
