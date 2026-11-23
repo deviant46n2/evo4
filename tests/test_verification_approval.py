@@ -84,7 +84,7 @@ class VerificationApprovalApiTests(unittest.TestCase):
     def _wait_pending(self, run_id, timeout=10):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            body = self.routes[("/api/v1/agents/{run_id}", "GET")](
+            body = self.routes[("/api/v1/agents/{run_id:uuid}", "GET")](
                 run_id, project_id=self.project["project_id"],
                 workspace_id=self.workspace["workspace_id"])
             if body.get("pending_approval"):
@@ -97,7 +97,7 @@ class VerificationApprovalApiTests(unittest.TestCase):
     def _wait_terminal(self, run_id, timeout=10):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            body = self.routes[("/api/v1/agents/{run_id}", "GET")](
+            body = self.routes[("/api/v1/agents/{run_id:uuid}", "GET")](
                 run_id, project_id=self.project["project_id"],
                 workspace_id=self.workspace["workspace_id"])
             if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
