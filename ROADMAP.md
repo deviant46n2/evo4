@@ -54,7 +54,7 @@ Phase status is evidence-based. "Designed" is not implemented; "implemented" is 
 
 ### First implementation milestone after stabilization
 
-**Project Provisioning v1** has been implemented on this branch and is pending GPT-6 review. It was authorized by the user as the first implementation milestone after the stabilization freeze was lifted.
+**Project Provisioning v1** is implemented, reviewed, accepted, and closed at commit `d0b56afee86b208aab738994cee8a13c63bff107`. It was authorized by the user as the first implementation milestone after the stabilization freeze was lifted for that milestone.
 
 Scope:
 - Create a new, dedicated project directory. Never silently adopt, overwrite, move, or modify unrelated existing data.
@@ -178,7 +178,7 @@ Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` 
 
 ## Stabilization and Gemini Audit Remediation
 
-Feature development is frozen until all confirmed serious audit findings have been fixed, tested, reviewed, and accepted.
+Feature development for the broader redesign remains unauthorized. The six stabilization audit priorities are implemented and accepted. The stabilization freeze was lifted for the explicitly authorized Project Provisioning v1 milestone, which is complete and accepted. Broader redesign and subsequent implementation still require explicit user authorization.
 
 Canonical audit ledger: `docs/GEMINI-AUDIT-LEDGER.md`.
 

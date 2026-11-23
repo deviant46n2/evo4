@@ -1,6 +1,6 @@
 # Evo4 Product Redesign Plan
 
-Status: **Planning only.** No redesign implementation has been authorized. The stabilization freeze remains active.
+Status: **Planning only.** The redesign plan remains a planning/specification document. Project Provisioning v1 was a specifically authorized and accepted implementation milestone. The stabilization freeze was lifted for that milestone. Broader redesign implementation still requires explicit user authorization.
 
 This document records the target product experience and UX requirements for Evo4. It is not a development roadmap; implementation order, dependencies, milestone scope, and acceptance gates are governed exclusively by `ROADMAP.md`.
 
