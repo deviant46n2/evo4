@@ -60,7 +60,7 @@ There are no outstanding stabilization tasks in the accepted audit ledger. The f
 
 The unified roadmap/architecture reconciliation remains in progress. Gemini's independent critique identified material architectural, sequencing, and factual gaps; the current revision is being updated to address or explicitly disposition those findings. Do not mark Phase 1 complete until that review is reconciled and the canonical documents are mutually consistent.
 
-**Project Provisioning v1** has been implemented on this branch and is pending GPT-6 review. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
+**Project Provisioning v1** was accepted and closed at commit `d0b56afee86b208aab738994cee8a13c63bff107`. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
 
 ## Working collaboration protocol
 
