@@ -273,14 +273,21 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.app.state.lab_db.close()
         self.temp.cleanup()
 
+    def _scoped_path(self, path):
+        separator = "&" if "?" in path else "?"
+        return (f"{path}{separator}project_id={self.project['project_id']}"
+                f"&workspace_id={self.workspace['workspace_id']}")
+
     def _run_status(self, run_id):
         deadline = time.time() + 5
         while time.time() < deadline:
-            status, body = asgi_request(self.app, "GET", f"/api/v1/agents/{run_id}")
+            status, body = asgi_request(
+                self.app, "GET", self._scoped_path(f"/api/v1/agents/{run_id}"))
             if status == 200 and body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
                 return status, body
             time.sleep(0.05)
-        status, body = asgi_request(self.app, "GET", f"/api/v1/agents/{run_id}")
+        status, body = asgi_request(
+            self.app, "GET", self._scoped_path(f"/api/v1/agents/{run_id}"))
         return status, body
 
     def test_valid_workspace_starts_run(self):
@@ -390,7 +397,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         plan_id = body["id"]
         with self.app.state.lab_db.lock:
             approve_plan(self.app.state.lab_db.connection, plan_id)
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan_id}/execute", {})
+        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
         self.assertEqual(status, 202)
         run = self.store.get_agent_run(body["run_id"])
         metadata = json.loads(run["metadata_json"])
@@ -407,7 +414,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         from evo_core.workspaces import archive_workspace
 
         archive_workspace(self.store, self.workspace["workspace_id"], expected_version=self.workspace["version"])
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan_id}/execute", {})
+        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
         self.assertEqual(status, 409)
 
     def test_worker_revalidation_failure_finalizes_run(self):
@@ -439,9 +446,9 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         plan_id = body["id"]
         with self.app.state.lab_db.lock:
             approve_plan(self.app.state.lab_db.connection, plan_id)
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan_id}/execute", {})
+        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
         self.assertEqual(status, 202)
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan_id}/execute", {})
+        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
         self.assertEqual(status, 409)
 
     def test_plan_worker_revalidation_finalizes_plan(self):
@@ -463,7 +470,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
             plan_id = body["id"]
             with self.app.state.lab_db.lock:
                 approve_plan(self.app.state.lab_db.connection, plan_id)
-            status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan_id}/execute", {})
+            status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
             self.assertEqual(status, 202)
             run_id = body["run_id"]
             self._run_status(run_id)
