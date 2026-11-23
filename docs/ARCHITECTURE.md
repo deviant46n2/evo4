@@ -41,6 +41,20 @@ Infrastructure on which models, agents, tools, and experiments execute. The arch
 ### Resource management
 A distinct subsystem responsible for discovering and managing compute, memory, models, endpoints, concurrency, provider quotas, costs, task priorities, reservations, and scheduling. It must accommodate both resource-constrained single-user installations and large distributed deployments. Coordination overhead and available resources must inform scheduling; more agents do not automatically improve results.
 
+### Participants and capabilities
+A participant is an independently identifiable source of work or capability that Evo may coordinate. Participant types include model endpoints, agent runtimes, tools, external services, and human contributors. A model is not automatically an agent; an agent may use one or more models and tools; a tool may be invoked directly or by an agent. These distinctions must not be collapsed into provider-specific assumptions.
+
+A participant definition should eventually capture stable identity, type, version, declared capabilities, supported input/output contracts, availability, execution location, resource requirements, provenance, trust/evaluation status, and integration/compliance constraints. Declared capability is not proof of reliability, and registration is not authorization. Runtime availability and authorization are separate states.
+
+Roles such as planner, implementer, researcher, reviewer, or verifier are task-scoped responsibilities assigned to eligible participants. Roles are not permanent identities and must not be hardcoded to GPT-6, Kilo, or any specific provider.
+
+### Tasks, assignments, and collaboration records
+A task is a durable unit of work with an objective, scope, acceptance criteria, accountable owner, authorized resources, and lifecycle. A task may contain bounded subtasks and assignments to multiple participants, but exactly one owner remains accountable for the overall task outcome.
+
+Assignments define which participant is responsible for a bounded contribution, under what permissions, inputs, output contract, resource budget, and deadline. Handoffs transfer responsibility for a defined next action; they do not silently transfer authority or expand scope.
+
+Messages, artifacts, observations, decisions, challenges, and verification results are durable collaboration records. They retain authorship, timestamps, task/assignment association, provenance, trust classification, and references to relevant source revisions. Retrieved or participant-supplied content is evidence/data, not privileged instruction. Conflicting claims remain attributable and inspectable rather than being silently merged into one asserted truth.
+
 ## Conceptual relationship
 
 ```text
