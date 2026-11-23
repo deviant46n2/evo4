@@ -196,7 +196,11 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
   </div>;
 }
 
-export function AgentsWorkspace() {
+export function AgentsWorkspace({ projectId, workspaceId, onScopeChange }: {
+  projectId: string | null;
+  workspaceId: string | null;
+  onScopeChange: (projectId: string | null, workspaceId: string | null) => void;
+}) {
   const [runs, setRuns] = useState<Run[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
@@ -210,39 +214,49 @@ export function AgentsWorkspace() {
   const planDetailGeneration = useRef(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const scopeParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (workspaceId) params.set("workspace_id", workspaceId);
+    return params;
+  }, [projectId, workspaceId]);
+  const scopeSuffix = useCallback(() => {
+    const params = scopeParams();
+    return params.toString() ? "?" + params.toString() : "";
+  }, [scopeParams]);
   const [plans, setPlans] = useState<AgentPlanSummary[]>([]);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [planning, setPlanning] = useState(false);
   const refresh = useCallback(async () => {
-    try { setRuns(await api<Run[]>("/agents?limit=100")); }
+    try { setRuns(await api<Run[]>("/agents?limit=100" + scopeSuffix())); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, []);
+  }, [scopeSuffix]);
   const refreshPlans = useCallback(async () => {
-    try { setPlans(await api<AgentPlanSummary[]>("/agents/plans?limit=30")); }
+    try { setPlans(await api<AgentPlanSummary[]>("/agents/plans?limit=30" + scopeSuffix())); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, []);
+  }, [scopeSuffix]);
   const loadPlan = useCallback(async (id: string) => {
     const token = ++planDetailGeneration.current;
     try {
-      const result = await api<AgentPlan>("/agents/plans/" + encodeURIComponent(id));
+      const result = await api<AgentPlan>("/agents/plans/" + encodeURIComponent(id) + scopeSuffix());
       if (token !== planDetailGeneration.current) return;
       setPlan(result);
     } catch (e) {
       if (token !== planDetailGeneration.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [scopeSuffix]);
   const refreshDetail = useCallback(async (id: string) => {
     const token = ++runDetailGeneration.current;
     try {
-      const result = await api<RunDetail>("/agents/" + encodeURIComponent(id));
+      const result = await api<RunDetail>("/agents/" + encodeURIComponent(id) + scopeSuffix());
       if (token !== runDetailGeneration.current) return;
       setDetail(result);
     } catch (e) {
       if (token !== runDetailGeneration.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [scopeSuffix]);
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -304,25 +318,30 @@ export function AgentsWorkspace() {
     if (!window.confirm("Approve this plan and start sequential execution? File writes and commands will still require separate approval.")) return;
     setBusy(true); setError("");
     try {
-      if (plan.status === "proposed") await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve", json({}));
-      const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute", json({}));
+      if (plan.status === "proposed") await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve" + scopeSuffix(), json({}));
+      const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute" + scopeSuffix(), json({}));
       setSelected(result.run_id); await loadPlan(plan.id); await refresh(); await refreshPlans(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await loadPlan(plan.id); }
     finally { setBusy(false); }
   }
   async function cancelRun() {
     if (!detail || !window.confirm("Request cancellation? Evo will stop at the next safe boundary. A provider call or tool action already in progress may need to finish or time out first.")) return;
-    try { await api("/agents/" + encodeURIComponent(detail.id) + "/cancel", json({})); await refresh(); await refreshDetail(detail.id); }
+    try { await api("/agents/" + encodeURIComponent(detail.id) + "/cancel" + scopeSuffix(), json({})); await refresh(); await refreshDetail(detail.id); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   async function decide(approved: boolean) {
     if (!detail) return;
     try {
-      await api("/agents/" + encodeURIComponent(detail.id) + "/approval", json({ approved }));
+      await api("/agents/" + encodeURIComponent(detail.id) + "/approval" + scopeSuffix(), json({ approved }));
       await refreshDetail(detail.id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
+  useEffect(() => {
+    setWorkspaceId(workspaceId || "");
+  }, [workspaceId]);
   const executableWorkspaces = registryWorkspaces.filter(workspace => {
+    if (projectId && workspace.project_id !== projectId) return false;
+    if (workspaceId && workspace.workspace_id !== workspaceId) return false;
     if (workspace.status !== "active" || !workspace.checkout_id) return false;
     const project = projects.find(item => item.project_id === workspace.project_id);
     if (!project || project.status !== "active") return false;
@@ -344,7 +363,13 @@ export function AgentsWorkspace() {
       <form className="agent-launch" onSubmit={start}>
         <textarea value={request} onChange={e => setRequest(e.target.value)} rows={3} placeholder="Describe the task. Evo will inspect the workspace first, then request approval before writes or commands…"/>
         <div className="agent-launch-footer">
-          <select value={workspaceId} onChange={e => setWorkspaceId(e.target.value)} disabled={executableWorkspaces.length === 0}>
+          <select value={workspaceId} onChange={e => {
+            const nextId = e.target.value;
+            setWorkspaceId(nextId);
+            const selectedWorkspace = executableWorkspaces.find(item => item.workspace_id === nextId);
+            if (selectedWorkspace) onScopeChange(selectedWorkspace.project_id, selectedWorkspace.workspace_id);
+            else onScopeChange(projectId, null);
+          }} disabled={executableWorkspaces.length === 0}>
             <option value="">Select an executable workspace…</option>
             {executableWorkspaces.map(item => (
               <option key={item.workspace_id} value={item.workspace_id}>
