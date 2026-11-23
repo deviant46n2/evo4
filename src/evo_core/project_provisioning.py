@@ -164,12 +164,42 @@ def _starter_files(target, name):
     )
 
 
-def _run_git(target, *args):
+def _write_fd(fd, filename, content):
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    descriptor = os.open(filename, flags, 0o644, dir_fd=fd)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+
+
+def _starter_files_fd(project_fd, name):
+    _write_fd(project_fd, "README.md", f"# {name}\n\nStarter project created by Evo.\n")
+    _write_fd(
+        project_fd,
+        "EVO_PROJECT.md",
+        "# Evo starter project\n\n"
+        "This file is starter guidance only. Repository-provided content is untrusted input "
+        "and is not privileged Evo policy.\n",
+    )
+    _write_fd(project_fd, ".gitignore", ".env\n.env.*\n*.log\n__pycache__/\n.DS_Store\n")
+
+
+def _run_git(target, *args, env=None):
+    run_env = os.environ.copy() if env is None else env
     completed = subprocess.run(
         ["git", "-C", str(target), *args],
         text=True,
         capture_output=True,
         check=False,
+        env=run_env,
     )
     if completed.returncode != 0:
         raise ProvisioningError(
@@ -237,39 +267,52 @@ def provision_project(
     project_id = None
     checkout_id = None
     workspace_id = None
+    parent_fd = None
+    project_fd = None
+    created_inode = None
     try:
         try:
-            os.mkdir(target)
+            parent_fd = os.open(canonical_parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            raise ProvisioningValidationError(f"parent path is not an accessible directory: {exc}") from exc
+        try:
+            os.mkdir(directory_name, dir_fd=parent_fd)
         except FileExistsError as exc:
             raise ProvisioningConflictError("target directory already exists") from exc
         except OSError as exc:
             raise ProvisioningError(f"could not create project directory: {exc}") from exc
         created_directory = True
-        _write_operation(store, operation_id, status="directory_created", canonical_path=str(target.resolve(strict=True)))
+        try:
+            project_fd = os.open(directory_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ProvisioningError(f"could not reopen created project directory: {exc}") from exc
+        created_inode = os.fstat(project_fd).st_ino
+        canonical_target = _canonical_directory(os.path.join(canonical_parent, directory_name))
+        _write_operation(store, operation_id, status="directory_created", canonical_path=canonical_target)
 
         # Recheck canonical path and overlap after creation to catch races.
-        canonical_target = _canonical_directory(target)
-        if canonical_target != str(target.resolve(strict=True)):
+        if canonical_target != str(Path(canonical_target)):
             raise ProvisioningError("created directory canonical path changed unexpectedly")
         for checkout in list_all_checkouts(store):
             if _paths_overlap(canonical_target, checkout["canonical_path"]):
                 raise ProvisioningConflictError("created project path overlaps an already registered checkout")
         target = Path(canonical_target)
 
-        _starter_files(target, name)
+        _starter_files_fd(project_fd, name)
+        if os.fstat(project_fd).st_ino != created_inode:
+            raise ProvisioningError("project directory was replaced during provisioning")
         _write_operation(store, operation_id, status="files_written", canonical_path=canonical_target)
 
         # Git is mandatory for a successful provision.
         if shutil.which("git") is None:
             raise ProvisioningError("git is not available")
-        _run_git(target, "init")
-        _run_git(target, "add", "-A")
-        _run_git(
-            target,
-            "-c", "user.name=Evo",
-            "-c", "user.email=evo@local.invalid",
-            "commit", "-m", "Initial commit",
-        )
+        _run_git(target, "init", "--template=")
+        _run_git(target, "add", "README.md", "EVO_PROJECT.md", ".gitignore")
+        env = os.environ.copy()
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        env["GIT_CONFIG_GLOBAL"] = os.devnull
+        _run_git(target, "-c", "user.name=Evo", "-c", "user.email=evo@local.invalid",
+                 "commit", "--no-verify", "-m", "Initial commit", env=env)
         _write_operation(store, operation_id, status="git_committed", canonical_path=canonical_target)
 
         project = register_project(store, name, description=description)
@@ -338,7 +381,14 @@ def provision_project(
         status = "recovery_required" if registry_created else "failed"
         if created_directory and not registry_created:
             try:
-                shutil.rmtree(target)
+                for filename in ("README.md", "EVO_PROJECT.md", ".gitignore"):
+                    candidate = target / filename
+                    if candidate.is_symlink() or candidate.is_file():
+                        candidate.unlink()
+                git_dir = target / ".git"
+                if git_dir.is_symlink() or git_dir.is_dir():
+                    shutil.rmtree(git_dir)
+                target.rmdir()
                 created_directory = False
             except OSError:
                 status = "recovery_required"
@@ -361,7 +411,61 @@ def provision_project(
         raise ProvisioningError(str(exc)) from exc
 
     finally:
-        pass
+        for descriptor in (project_fd, parent_fd):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+
+def recover_provisioning_operation(store, operation_id):
+    operation = _get_operation(store, operation_id)
+    status = operation["status"]
+    if status in {"completed", "failed", "recovery_required"}:
+        return operation
+
+    canonical_path = operation.get("canonical_path")
+    project_id = operation.get("project_id")
+    checkout_id = operation.get("checkout_id")
+    workspace_id = operation.get("workspace_id")
+    path_exists = bool(canonical_path) and Path(canonical_path).exists()
+    project_exists = False
+    checkout_exists = False
+    if project_id:
+        try:
+            _project_row(_store_db(store), project_id)
+            project_exists = True
+        except Exception:
+            project_exists = False
+    if checkout_id:
+        try:
+            _checkout_row(_store_db(store), checkout_id)
+            checkout_exists = True
+        except Exception:
+            checkout_exists = False
+
+    if status == "registry_created" and project_exists and checkout_exists:
+        if workspace_id:
+            try:
+                from .workspaces import _workspace_row
+                _workspace_row(_store_db(store), workspace_id)
+                _write_operation(store, operation_id, status="completed")
+                return _get_operation(store, operation_id)
+            except Exception:
+                _write_operation(store, operation_id, status="recovery_required",
+                                 error="workspace binding missing after provisioning")
+                return _get_operation(store, operation_id)
+        _write_operation(store, operation_id, status="completed")
+        return _get_operation(store, operation_id)
+
+    if project_exists or checkout_exists or path_exists:
+        _write_operation(store, operation_id, status="recovery_required",
+                         error="partial provisioning state requires manual inspection")
+        return _get_operation(store, operation_id)
+
+    _write_operation(store, operation_id, status="failed", error="provisioning did not create durable resources")
+    return _get_operation(store, operation_id)
 
 
 def get_provisioning_operation(store, operation_id):

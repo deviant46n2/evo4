@@ -8,8 +8,9 @@ from unittest.mock import patch
 from evo_core.ai_configurations import create_configuration
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_project, register_checkout, CheckoutPathConflictError
-from evo_core.project_provisioning import (provision_project, ProvisioningConflictError, ProvisioningError,
-    ProvisioningValidationError)
+from evo_core.project_provisioning import (get_provisioning_operation, provision_project,
+    ProvisioningConflictError, ProvisioningError, ProvisioningValidationError,
+    recover_provisioning_operation)
 from evo_core.store import EvoStore
 
 
@@ -37,6 +38,8 @@ class ProjectProvisioningTests(unittest.TestCase):
         self.assertTrue((target / ".git").is_dir())
         completed = subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0)
+        tracked = subprocess.run(["git", "-C", str(target), "ls-files"], capture_output=True, text=True)
+        self.assertEqual(sorted(tracked.stdout.splitlines()), [".gitignore", "EVO_PROJECT.md", "README.md"])
         self.assertEqual(result["project"]["name"], "Demo")
         self.assertEqual(result["checkout"]["canonical_path"], str(target.resolve()))
         projects = self.store.db.execute("SELECT COUNT(*) FROM software_projects").fetchone()[0]
@@ -115,6 +118,32 @@ class ProjectProvisioningTests(unittest.TestCase):
                 configuration_revision_id="missing",
             )
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0], 0)
+
+
+    def test_symlink_parent_is_rejected(self):
+        real = self.root / "real"
+        real.mkdir()
+        link = self.root / "link"
+        link.symlink_to("/")
+        with self.assertRaises(ProvisioningValidationError):
+            provision_project(self.store, "Demo", str(link))
+
+    def test_existing_target_is_not_adopted(self):
+        target = self.parent / "Demo-fixed"
+        target.mkdir()
+        (target / "marker.txt").write_text("keep", encoding="utf-8")
+        # Force the generated directory name by monkeypatching _safe_directory_name.
+        with patch("evo_core.project_provisioning._safe_directory_name", return_value="Demo-fixed"):
+            with self.assertRaises(ProvisioningConflictError):
+                provision_project(self.store, "Demo", str(self.parent))
+        self.assertEqual((target / "marker.txt").read_text(), "keep")
+
+    def test_operation_status_and_recovery(self):
+        result = provision_project(self.store, "Demo", str(self.parent))
+        operation = get_provisioning_operation(self.store, result["operation_id"])
+        self.assertEqual(operation["status"], "completed")
+        recovered = recover_provisioning_operation(self.store, result["operation_id"])
+        self.assertEqual(recovered["status"], "completed")
 
     def test_no_workspace_when_unbound(self):
         result = provision_project(self.store, "Demo", str(self.parent))

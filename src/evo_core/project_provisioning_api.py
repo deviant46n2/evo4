@@ -71,4 +71,13 @@ def build_project_provisioning_router(store):
         except Exception as exc:
             raise HTTPException(status_code=500, detail="internal error") from exc
 
+    @router.post("/project-provisioning/{operation_id}/recover", response_model=dict)
+    def recover_provisioning_operation_route(operation_id: str):
+        try:
+            return project_provisioning.recover_provisioning_operation(store, operation_id)
+        except project_provisioning.ProvisioningError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
     return router
