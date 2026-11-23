@@ -2,11 +2,11 @@
 
 Status: **Planning only.** No redesign implementation has been authorized. The stabilization freeze remains active.
 
-This document records the accepted product direction for Evo4's primary user experience and a phased roadmap for reconciling that direction with the existing platform architecture.
+This document records the target product experience and UX requirements for Evo4. It is not a development roadmap; implementation order, dependencies, milestone scope, and acceptance gates are governed exclusively by `ROADMAP.md`.
 
 ## 1. Product vision and guiding principles
 
-Evo's underlying identity remains the existing model-agnostic AI development and experimentation platform. The redesign changes the primary user experience and interaction model, not that identity.
+Evo's identity is a model/provider/agent/tool-agnostic cooperative-intelligence platform: it exists to make cooperating AIs and tools more capable together than any could be independently. The personal assistant and coding experience is the initial practical product through which that broader purpose is delivered. This redesign defines the user-facing experience; it does not narrow or redefine the platform's identity.
 
 Guiding principles:
 
@@ -107,6 +107,12 @@ Application areas should remain windows into backend capabilities rather than se
 - Retrieved context remains untrusted reference data, not instructions.
 - Workspace and command boundaries remain governed by existing safety controls.
 
+## Relationship to the authoritative development roadmap
+
+The phase sequence in Sections 10–12 is retained as a historical product-planning reference describing how UX requirements were originally grouped. It is not an active implementation sequence and must not override `ROADMAP.md`. The unified roadmap is the only authority for development priorities, sequencing, dependencies, implementation milestones, phase status, and acceptance gates. Where this document's phase labels or dependencies conflict with the unified roadmap, `ROADMAP.md` takes precedence. The inventory below is a capability/gap reference, not authorization to implement any listed item.
+
+Incremental usability improvements may accompany validated platform work when authorized and useful. A wholesale visual redesign is not a prerequisite to all further feature development.
+
 ## Existing Capability vs. Redesign Gap Inventory
 
 This inventory is based on inspection of the current implementation, routes, components, services, persistence, and tests. It distinguishes existing capabilities from redesign gaps and identifies what should be reused.
@@ -177,7 +183,7 @@ This inventory is based on inspection of the current implementation, routes, com
 - Validation: `npm run build`, Python test suite, compileall, `git diff --check`.
 
 
-## 10. Phased implementation roadmap
+## 10. Historical product-planning phase outline (non-authoritative)
 
 - Phase 0: Product redesign specification and architecture reconciliation.
 - Phase 1: Chat-first interface and navigation foundation.
@@ -189,7 +195,7 @@ This inventory is based on inspection of the current implementation, routes, com
 
 Refine dependencies where justified, but do not turn this into a detailed task breakdown for every future implementation.
 
-## 11. Dependencies and sequencing rationale
+## 11. Historical UX dependency notes (subordinate to ROADMAP.md)
 
 - Phase 0 must reconcile the redesign with the existing platform architecture before implementation.
 - Phase 1 establishes the primary chat surface that later phases build on.
@@ -199,7 +205,7 @@ Refine dependencies where justified, but do not turn this into a detailed task b
 - Phase 5 depends on real backend configuration and runtime state.
 - Phase 6 validates integrated behavior and cannot be replaced by visual polish alone.
 
-## 12. Acceptance criteria for each phase
+## 12. UX outcome criteria (not development phase gates)
 
 ### Phase 0
 - Redesign plan and architecture reconciliation are documented.
@@ -252,7 +258,7 @@ Refine dependencies where justified, but do not turn this into a detailed task b
 - Exact visual embed configuration defaults and controls.
 - Whether the mechanical/spider-like memory metaphor will be used.
 
-## 14. Definition of redesign completion
+## 14. Definition of target UX completion
 
 The redesign is complete when the chat-first experience, project lifecycle, agent activity, memory experience, configuration visualization, and reliability requirements are implemented, integrated, tested, and independently accepted, while preserving Evo's platform identity and existing safety boundaries.
 
