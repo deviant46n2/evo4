@@ -126,8 +126,9 @@ class RetrievalIsolationTests(unittest.TestCase):
             project, other, workspace, other_workspace = make_fixtures(store, root)
             a = store.add_memory("memory a", project_id=project["project_id"])
             b = store.add_memory("memory b", project_id=other["project_id"])
-            store.relate_memories(a, b, "supports", "evidence")
-            # from project scope, relation should not expose b
+            with self.assertRaises(ValueError):
+                store.relate_memories(a, b, "supports", "evidence", project_id=project["project_id"])
+            # The rejected cross-project relation is never persisted.
             rows = store.get_memory_relations([a], project_id=project["project_id"])
             self.assertEqual(rows, [])
             store.close()
@@ -313,3 +314,97 @@ class RetrievalIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class RemainingScopeClosureStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.store = make_store(self.root)
+        self.project, self.other, self.workspace, self.other_workspace = make_fixtures(self.store, self.root)
+
+    def tearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    def test_supersede_preserves_project_and_workspace_ownership(self):
+        memory_id = self.store.add_memory(
+            "private original", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])
+        replacement_id = self.store.supersede_memory(
+            memory_id, "private replacement", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])
+        row = self.store.db.execute(
+            "SELECT project_id,workspace_id FROM memories WHERE id=?", (replacement_id,)).fetchone()
+        self.assertEqual(row["project_id"], self.project["project_id"])
+        self.assertEqual(row["workspace_id"], self.workspace["workspace_id"])
+        self.assertIn(replacement_id, [r["id"] for r in self.store.search_memories(
+            "replacement", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])])
+        self.assertNotIn(replacement_id, [r["id"] for r in self.store.search_memories("replacement")])
+
+    def test_supersede_and_archive_require_visibility(self):
+        memory_id = self.store.add_memory("private memory", project_id=self.project["project_id"])
+        with self.assertRaises(ValueError):
+            self.store.supersede_memory(memory_id, "should not promote")
+        self.assertFalse(self.store.archive_memory(memory_id))
+        self.assertTrue(self.store.archive_memory(memory_id, project_id=self.project["project_id"]))
+
+    def test_relation_creation_rejects_cross_project_and_cross_workspace(self):
+        project_memory = self.store.add_memory("project memory", project_id=self.project["project_id"])
+        other_memory = self.store.add_memory("other memory", project_id=self.other["project_id"])
+        ws_memory = self.store.add_memory(
+            "workspace memory", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])
+        sibling_memory = self.store.add_memory(
+            "sibling memory", project_id=self.project["project_id"],
+            workspace_id=self.other_workspace["workspace_id"])
+        with self.assertRaises(ValueError):
+            self.store.relate_memories(project_memory, other_memory, "supports",
+                                       project_id=self.project["project_id"])
+        with self.assertRaises(ValueError):
+            self.store.relate_memories(ws_memory, sibling_memory, "supports",
+                                       project_id=self.project["project_id"],
+                                       workspace_id=self.workspace["workspace_id"])
+
+    def test_task_listing_and_updates_obey_scope(self):
+        global_task = self.store.add_task("global task")
+        project_task = self.store.add_task("project task", project_id=self.project["project_id"])
+        workspace_task = self.store.add_task(
+            "workspace task", project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"])
+        other_task = self.store.add_task("other task", project_id=self.other["project_id"])
+        ids = lambda rows: {row["id"] for row in rows}
+        self.assertEqual(ids(self.store.list_tasks()), {global_task})
+        self.assertEqual(ids(self.store.list_tasks(project_id=self.project["project_id"])),
+                         {global_task, project_task})
+        self.assertEqual(ids(self.store.list_tasks(project_id=self.project["project_id"],
+                                                   workspace_id=self.workspace["workspace_id"])),
+                         {global_task, project_task, workspace_task})
+        self.assertNotIn(other_task, ids(self.store.list_tasks(project_id=self.project["project_id"])))
+        self.assertFalse(self.store.update_task_status(project_task, "done"))
+        self.assertTrue(self.store.update_task_status(project_task, "done", project_id=self.project["project_id"]))
+        self.assertFalse(self.store.update_task_status(
+            workspace_task, "done", project_id=self.project["project_id"],
+            workspace_id=self.other_workspace["workspace_id"]))
+
+    def test_run_feedback_lesson_inherits_run_scope(self):
+        run_id = self.store.start_agent_run("coding", {
+            "project_id": self.project["project_id"],
+            "workspace_id": self.workspace["workspace_id"],
+        })
+        result = self.store.record_run_feedback(run_id, "success", lesson="workspace lesson")
+        row = self.store.db.execute(
+            "SELECT project_id,workspace_id FROM lessons WHERE id=?", (result["lesson_id"],)).fetchone()
+        self.assertEqual(row["project_id"], self.project["project_id"])
+        self.assertEqual(row["workspace_id"], self.workspace["workspace_id"])
+        self.assertEqual(len(self.store.list_lessons(project_id=self.project["project_id"])), 0)
+        self.assertEqual(len(self.store.list_lessons(
+            project_id=self.project["project_id"], workspace_id=self.workspace["workspace_id"])), 1)
+
+    def test_invalid_scope_is_rejected_for_candidates_and_memory_search(self):
+        with self.assertRaises(ValueError):
+            self.store.list_memory_candidates(project_id="missing-project")
+        with self.assertRaises(ValueError):
+            self.store.search_memories("anything", project_id="missing-project")
