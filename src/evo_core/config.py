@@ -51,7 +51,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
         raise ValueError("workspace.allowed_commands must be a list of argv lists")
     allowed_commands = []
     for command in raw_commands:
-        if not isinstance(command, (list, tuple)) or not command or not all(isinstance(part, str) and part for part in command):
+        if not isinstance(command, (list, tuple)) or not command or not all(isinstance(part, str) and part and "\\x00" not in part for part in command):
             raise ValueError("workspace.allowed_commands entries must be non-empty lists of strings")
         allowed_commands.append(tuple(command))
     allowed_commands = tuple(allowed_commands)
