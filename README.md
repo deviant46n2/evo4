@@ -1,6 +1,6 @@
 # Evo 4
 
-Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
+Evo exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a portable, model-agnostic platform for cooperative intelligence, providing infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management for heterogeneous models, agents, and tools. The personal assistant and coding-agent experiences are the initial practical product through which that purpose is realized.
 
 The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. The personal assistant and coding-agent experiences are configurations built on this platform, not its fundamental identity.
 
@@ -14,7 +14,7 @@ The repository contains two independently usable applications:
 
 ## Central identity
 
-Evo4 is a model-agnostic AI development and experimentation platform designed to assemble, evaluate, coordinate, and continuously improve AI systems using existing models, agents, tools, and infrastructure.
+Evo4 exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a model-agnostic platform for cooperative intelligence; its personal assistant and coding-agent experiences are configurations built on that platform, not its fundamental identity.
 
 The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software development: memory, context management, orchestration, tools, agent collaboration, evaluation, and controlled self-improvement.
 

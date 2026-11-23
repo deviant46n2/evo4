@@ -4,13 +4,17 @@ This document describes Evo4's intended architecture. It distinguishes current i
 
 ## Evo's identity
 
-Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
+Evo exists to make cooperating AIs and tools more capable together than any of them could be independently.
+
+Evo is a portable, model-agnostic platform for cooperative intelligence. Its purpose is to provide the infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management that allow heterogeneous models, agents, and tools to produce better combined results than any participant could produce alone.
 
 The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. Target areas include memory architectures, context management, agent architectures, orchestration, tool integration, evaluation, hardware/resource efficiency, autonomous research and software development, and controlled self-improvement.
 
-Evo is not a foundation-model trainer, custom neural-network engineering project, or general-purpose machine-learning laboratory. Existing models and frameworks are components that Evo uses and experiments with; they are not the foundation of Evo's architecture.
+Evo is not a foundation-model trainer, custom neural-network engineering project, or general-purpose machine-learning laboratory. Existing models and frameworks are components that Evo coordinates and experiments with; they are not the foundation of Evo's architecture.
 
-The personal assistant and coding-agent experiences are configurations assembled using Evo, not Evo's fundamental identity.
+The personal assistant and coding-agent experiences are the initial practical product through which the broader cooperative-intelligence purpose is realized. They are configurations assembled using Evo, not Evo's fundamental identity.
+
+Evo must not imply that it already directly orchestrates external AI sessions such as GPT-6 or Kilo. Those are currently coordinated through a human-mediated workflow and Git. Future integrations must use supported interfaces and comply with provider terms, policies, licensing, and API rules.
 
 ## Fundamental entities
 
@@ -50,6 +54,26 @@ Resource management determines what can execute and where.
 ```
 
 These entities must be independently identifiable and maintain appropriate histories.
+
+## Cooperation as an architectural principle
+
+Cooperation is a first-class architectural concern, not merely a feature. Evo must support, without prematurely implementing everything:
+
+- Heterogeneous participants: models, agents, tools, external services, and human participants.
+- Explicit identities, capabilities, compatibility, availability, and lifecycle for participants.
+- Task ownership and bounded delegation.
+- Communication, handoffs, challenges, and independent review.
+- Shared context with provenance and scope.
+- Explicit authority, trust, and permissions.
+- Durable task state, evidence, decisions, and history.
+- Failure handling, cancellation, timeouts, recovery, and loop prevention.
+- Resource-aware admission, scheduling, concurrency, and budgets.
+- Provider-compliant adapters and integration boundaries.
+- Replaceable participants and roles, with no fixed model-specific architecture.
+
+Governance remains hybrid: hierarchical authority and accountability for consequential decisions, with cooperative deliberation and delegation inside authorized scopes. Every task has one accountable owner. Agents cannot grant themselves permissions.
+
+Cooperation must be evaluated empirically. More agents do not automatically produce better results. Evo must measure whether collaboration improves correctness, quality, reliability, time, resource use, or other task-relevant outcomes compared with individual participants.
 
 ## Version control and persistent engineering knowledge
 

@@ -4,19 +4,28 @@ This document is the continuity record for future Evo4 conversations. Important 
 
 ## Central vision
 
-See `docs/ARCHITECTURE.md` for the definitive entity model and architectural relationships.
+See `docs/ARCHITECTURE.md` for the definitive entity model and architectural relationships. `ROADMAP.md` is the authoritative development sequence. `docs/PRODUCT-REDESIGN-PLAN.md` is the authoritative target user experience. `docs/GEMINI-AUDIT-LEDGER.md` is the authoritative audit record.
 
-Evo is a portable, model-agnostic AI development and experimentation platform. Its purpose is to assemble, configure, evaluate, experiment with, coordinate, and continuously improve increasingly capable AI systems using existing models, agents, memory systems, tools, frameworks, and execution infrastructure.
+Evo exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a portable, model-agnostic platform for cooperative intelligence: infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management for heterogeneous models, agents, and tools.
 
 The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering.
 
-Evo is not pursuing foundation-model training, custom neural-network engineering, or a general-purpose AI research laboratory.
+Evo is not pursuing foundation-model training, custom neural-network engineering, or a general-purpose machine-learning laboratory.
 
-The personal assistant and coding-agent experience are configurations built on this platform, not the fundamental reason the platform exists.
+The personal assistant and coding-agent experience are the initial practical product through which the broader cooperative-intelligence purpose is realized. They are configurations built on this platform, not the fundamental reason the platform exists.
+
+## Document hierarchy
+
+- `ROADMAP.md`: authoritative unified development roadmap, priorities, sequencing, dependencies, status, milestones, and acceptance gates.
+- `docs/ARCHITECTURE.md`: authoritative system identity, domain model, architectural principles, boundaries, and long-term architecture.
+- `docs/PRODUCT-REDESIGN-PLAN.md`: authoritative target user experience and product interaction requirements. It is not a competing development schedule.
+- `docs/DEVELOPMENT-CONTINUITY.md`: concise current decisions, project state, branch/freeze status, and links to authoritative documents.
+- `docs/DEVELOPMENT-CONTROL-PLANE.md`: proposed control-plane design, clearly marked proposed rather than implemented.
+- `docs/GEMINI-AUDIT-LEDGER.md`: authoritative audit record.
 
 ## Accepted architectural decisions
 
-- Evo's identity is a portable, model-agnostic AI development and experimentation platform.
+- Evo's identity is a portable, model-agnostic platform for cooperative intelligence. The original platform ambitions remain capabilities serving that purpose.
 - The fundamental entities are Evo, AI configurations, software projects, workspaces/sessions, experiments, execution environments, and resource management.
 - AI configurations and software projects are independent entities with independent version histories.
 - Workspaces and sessions connect configurations to authorized targets; neither owns the other.
@@ -58,7 +67,7 @@ The personal assistant and coding-agent experience are configurations built on t
 
 ## Current development state
 - Branch: `agent-lifecycle-reconciliation-v1`
-- Verified baseline HEAD before this stabilization pass: `bdfed18ec0fade94b2c634aac97b1e5b4ed16cb4`. The final resulting commit SHA is supplied in the engineering handoff; this document intentionally does not claim to contain its own final commit hash.
+- Current branch: `agent-lifecycle-reconciliation-v1`. HEAD is recorded by Git; documentation commits are listed in Git history. The final resulting commit SHA is supplied in the engineering handoff and should not be self-referentially embedded here.
 - Platform Registry v1 has been implemented through M5: AI configurations, software projects, project checkouts, workspaces, and the registered-workspace execution boundary are implemented and validated.
 - Registered-workspace execution boundary: implemented and accepted. API execution requires an active registered `workspace_id`; direct and plan-backed workers re-resolve before constructing `CodingAgent`; legacy plans fail closed.
 - Desktop `AgentsWorkspace` selection race correction: implemented and accepted.
