@@ -21,6 +21,7 @@ from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
 from .config import load_config
+from .command_policy import CommandPolicyError, effective_project_command_prefixes
 from .store import EvoStore
 from . import platform_registry
 from .memory_review import find_duplicate_candidates
@@ -1074,6 +1075,19 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures.pop(run_id, None)
             return
 
+        try:
+            effective_allowed_commands = effective_project_command_prefixes(
+                config.allowed_commands,
+                binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None),
+            )
+        except CommandPolicyError as exc:
+            _finalize_agent_run(
+                run_id, "failed", f"Command policy could not be resolved: {exc}", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+
         conversation_project_id = authoritative_project_id
         conversation_workspace_id = authoritative_workspace_id
 
@@ -1123,7 +1137,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 workspace_id=conversation_workspace_id,
             )
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
-            agent = CodingAgent(assistant, workspace, config.allowed_commands)
+            agent = CodingAgent(assistant, workspace, effective_allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
                           stop_event=stop_event, on_progress=progress,
