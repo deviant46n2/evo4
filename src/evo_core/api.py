@@ -828,6 +828,10 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
+        plan_project_id = plan.get("project_id")
+        binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
+        if plan_project_id != binding_project_id:
+            raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
             if plan is None:

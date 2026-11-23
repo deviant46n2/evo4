@@ -68,6 +68,7 @@ class VerificationApprovalApiTests(unittest.TestCase):
                         }
                     ],
                 },
+                project_id=project["project_id"],
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, self.plan["id"])
 

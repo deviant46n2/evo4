@@ -114,6 +114,13 @@ class AgentPlanScopeTests(unittest.TestCase):
                 project_id=other_project["project_id"],
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
+        before = len(self.store.list_agent_runs(limit=1000))
         status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute", {})
         self.assertEqual(status, 409)
         self.assertIn("does not match", body["detail"])
+        after = len(self.store.list_agent_runs(limit=1000))
+        self.assertEqual(before, after)
+        with self.app.state.lab_db.lock:
+            unchanged = get_plan(self.app.state.lab_db.connection, plan["id"])
+        self.assertEqual(unchanged["project_id"], other_project["project_id"])
+        self.assertEqual(unchanged["status"], "approved")
