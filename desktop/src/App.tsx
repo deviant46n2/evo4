@@ -8,6 +8,8 @@ import { ProjectsWorkspace } from "./ProjectsWorkspace";
 import { WorkspaceRegistryWorkspace } from "./WorkspaceRegistryWorkspace";
 
 type Conversation = { id: string; title: string; updated_at?: string; message_count?: number };
+type Project = { project_id: string; name: string; status: string };
+type Workspace = { workspace_id: string; name: string; project_id: string; status: string };
 type Message = { role: "user" | "assistant"; content: string; created_at?: string };
 type Health = { status: string; provider: string; model: string; endpoint: string; backend_started_at?: string; backend_revision?: string; backend_build_id?: string | null; backend_dirty?: boolean | null; build?: { backend_started_at?: string; backend_revision?: string; backend_build_id?: string | null; backend_dirty?: boolean | null } };
 type StreamEvent = { event: string; data: unknown };
@@ -65,6 +67,11 @@ function Markdown({ content }: { content: string }) {
 export default function App() {
   const [view, setView] = useState<"chat" | "agents" | "memory" | "hardware" | "experiments" | "configurations" | "projects" | "workspaces">("chat");
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [scopeProjectId, setScopeProjectId] = useState<string | null>(null);
+  const [scopeWorkspaceId, setScopeWorkspaceId] = useState<string | null>(null);
+  const [scopeLoading, setScopeLoading] = useState(false);
   const [active, setActive] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -78,38 +85,85 @@ export default function App() {
   const endRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const activeRef = useRef<string | null>(null);
+  const scopeKey = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
+  const activeScopeKeyRef = useRef(scopeKey);
+  const conversationListRequestRef = useRef(0);
+
+  const scopeParams = useCallback((projectId = scopeProjectId, workspaceId = scopeWorkspaceId) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (workspaceId) params.set("workspace_id", workspaceId);
+    return params;
+  }, [scopeProjectId, scopeWorkspaceId]);
+
+  const scopeBody = useCallback(() => ({
+    ...(scopeProjectId ? { project_id: scopeProjectId } : {}),
+    ...(scopeWorkspaceId ? { workspace_id: scopeWorkspaceId } : {}),
+  }), [scopeProjectId, scopeWorkspaceId]);
+
+  const switchScope = useCallback((projectId: string | null, workspaceId: string | null = null) => {
+    if (busy) return;
+    const nextKey = `${projectId || "global"}:${workspaceId || ""}`;
+    if (nextKey === activeScopeKeyRef.current) return;
+    activeScopeKeyRef.current = nextKey;
+    setScopeProjectId(projectId);
+    setScopeWorkspaceId(workspaceId);
+    activeRef.current = null;
+    setActive(null);
+    setMessages([]);
+    setConversations([]);
+    setLoadingMessages(false);
+    setError("");
+  }, [busy]);
 
   const refreshConversations = useCallback(async (query = search) => {
+    const requestId = ++conversationListRequestRef.current;
+    const requestedScope = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
     const params = new URLSearchParams({ limit: "100" });
     if (query.trim()) params.set("q", query.trim());
+    scopeParams().forEach((value, key) => params.set(key, value));
     const items = await request<Conversation[]>(`/conversations?${params.toString()}`);
-    setConversations(items);
-  }, [search]);
+    if (requestId === conversationListRequestRef.current && activeScopeKeyRef.current === requestedScope) {
+      setConversations(items);
+    }
+  }, [search, scopeProjectId, scopeWorkspaceId, scopeParams]);
 
   const openConversation = useCallback(async (id: string) => {
+    const requestedScope = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
     setLoadingMessages(true);
     setError("");
     try {
-      const rows = await request<Message[]>(`/conversations/${encodeURIComponent(id)}/messages`);
+      const params = scopeParams();
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const rows = await request<Message[]>(`/conversations/${encodeURIComponent(id)}/messages${suffix}`);
+      if (activeScopeKeyRef.current !== requestedScope) return;
       activeRef.current = id;
       setActive(id);
       setMessages(rows);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally { setLoadingMessages(false); }
-  }, []);
+      if (activeScopeKeyRef.current === requestedScope) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (activeScopeKeyRef.current === requestedScope) setLoadingMessages(false);
+    }
+  }, [scopeProjectId, scopeWorkspaceId, scopeParams]);
 
   const createConversation = useCallback(async () => {
+    const requestedScope = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
     try {
-      const conversation = await request<Conversation>("/conversations", { method: "POST" });
+      const conversation = await request<Conversation>("/conversations", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scopeBody()),
+      });
+      if (activeScopeKeyRef.current !== requestedScope) return;
       activeRef.current = conversation.id;
       setActive(conversation.id);
       setMessages([]);
       setDraft("");
       await refreshConversations();
       draftRef.current?.focus();
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [refreshConversations]);
+    } catch (e) {
+      if (activeScopeKeyRef.current === requestedScope) setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [scopeProjectId, scopeWorkspaceId, scopeBody, refreshConversations]);
 
   const healthInFlight = useRef(false);
   const refreshHealth = useCallback(async () => {
@@ -150,11 +204,57 @@ export default function App() {
   }, [refreshHealth, refreshConversations]);
 
   useEffect(() => {
+    let alive = true;
+    setScopeLoading(true);
+    request<{ items: Project[] }>("/projects?status=active")
+      .then(result => {
+        if (alive) setProjects(result.items || []);
+      })
+      .catch(e => {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setScopeLoading(false);
+      });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    if (!scopeProjectId) {
+      setWorkspaces([]);
+      setScopeWorkspaceId(null);
+      return () => { alive = false; };
+    }
+    setScopeLoading(true);
+    request<{ items: Workspace[] }>(`/workspaces?project_id=${encodeURIComponent(scopeProjectId)}&status=active`)
+      .then(result => {
+        if (!alive) return;
+        const available = result.items || [];
+        setWorkspaces(available);
+        if (scopeWorkspaceId && !available.some(item => item.workspace_id === scopeWorkspaceId)) {
+          setScopeWorkspaceId(null);
+          activeScopeKeyRef.current = `${scopeProjectId}:`;
+          activeRef.current = null;
+          setActive(null);
+          setMessages([]);
+        }
+      })
+      .catch(e => {
+        if (alive) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setScopeLoading(false);
+      });
+    return () => { alive = false; };
+  }, [scopeProjectId, scopeWorkspaceId]);
+
+  useEffect(() => {
     const handle = window.setTimeout(() => {
       refreshConversations(search).catch(e => setError(e instanceof Error ? e.message : String(e)));
     }, 180);
     return () => window.clearTimeout(handle);
-  }, [search, refreshConversations]);
+  }, [search, refreshConversations, scopeKey]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [messages, busy]);
 
@@ -173,10 +273,13 @@ export default function App() {
     const text = draft.trim();
     if (!text || busy) return;
     setError("");
+    const requestedScope = scopeKey;
     let conversationId = activeRef.current;
     try {
       if (!conversationId) {
-        const created = await request<Conversation>("/conversations", { method: "POST" });
+        const created = await request<Conversation>("/conversations", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scopeBody()),
+        });
         conversationId = created.id;
         activeRef.current = conversationId;
         setActive(conversationId);
@@ -187,7 +290,7 @@ export default function App() {
       const response = await fetch(API + "/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ conversation_id: conversationId, message: text }),
+        body: JSON.stringify({ conversation_id: conversationId, message: text, ...scopeBody() }),
       });
       if (!response.ok || !response.body) {
         let detail = "Chat request failed";
@@ -225,13 +328,15 @@ export default function App() {
       // Reconcile with the durable transcript after the stream closes. The
       // database is authoritative if a provider emits unusual chunk framing.
       if (conversationId && activeRef.current === conversationId) {
-        const persisted = await request<Message[]>(`/conversations/${encodeURIComponent(conversationId)}/messages`);
-        setMessages(persisted);
+        const params = scopeParams();
+        const suffix = params.toString() ? `?${params.toString()}` : "";
+        const persisted = await request<Message[]>(`/conversations/${encodeURIComponent(conversationId)}/messages${suffix}`);
+        if (activeScopeKeyRef.current === requestedScope) setMessages(persisted);
       }
-      await refreshConversations();
+      if (activeScopeKeyRef.current === requestedScope) await refreshConversations();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(message);
+      if (activeScopeKeyRef.current === requestedScope) setError(message);
       setMessages(previous => {
         const next = [...previous];
         if (next[next.length - 1]?.role === "assistant" && !next[next.length - 1].content) next.pop();
@@ -239,7 +344,7 @@ export default function App() {
       });
     } finally {
       setBusy(false);
-      refreshConversations().catch(() => undefined);
+      if (activeScopeKeyRef.current === requestedScope) refreshConversations().catch(() => undefined);
     }
   }
 
@@ -247,7 +352,9 @@ export default function App() {
     const title = window.prompt("Rename conversation", conversation.title);
     if (title === null || !title.trim() || title.trim() === conversation.title) return;
     try {
-      await request(`/conversations/${encodeURIComponent(conversation.id)}`, {
+      const params = scopeParams();
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      await request(`/conversations/${encodeURIComponent(conversation.id)}${suffix}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: title.trim() }),
       });
       await refreshConversations();
@@ -257,7 +364,9 @@ export default function App() {
   async function removeConversation(conversation: Conversation) {
     if (!window.confirm(`Delete “${conversation.title}”? This also deletes its messages.`)) return;
     try {
-      await request(`/conversations/${encodeURIComponent(conversation.id)}`, { method: "DELETE" });
+      const params = scopeParams();
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      await request(`/conversations/${encodeURIComponent(conversation.id)}${suffix}`, { method: "DELETE" });
       if (activeRef.current === conversation.id) {
         activeRef.current = null; setActive(null); setMessages([]);
       }
@@ -306,7 +415,28 @@ export default function App() {
     <main className="main">
       <header className="topbar">
         <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : view === "memory" ? "Memory" : view === "hardware" ? "Hardware" : view === "projects" ? "Projects" : view === "configurations" ? "Configurations" : view === "workspaces" ? "Workspaces" : "Experiments"}</strong></div>
-        <div className="topbar-right"><span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div><div className="build-pill" title={`Frontend build: ${FRONTEND_BUILD_TIME || "unknown"} (${FRONTEND_BUILD_COMMIT || "unknown"})\nBackend started: ${health?.backend_started_at || health?.build?.backend_started_at || "unknown"}\nBackend revision: ${health?.backend_revision || health?.build?.backend_revision || "unknown"}${(health?.backend_dirty ?? health?.build?.backend_dirty) ? " (dirty)" : ""}`}>{import.meta.env.DEV ? "FE DEV SERVER" : `FE ${formatBuildTime(FRONTEND_BUILD_TIME)}`} <span className="build-separator">/</span> {health ? (health.backend_revision || health.build?.backend_revision || "BE unknown") : "BE unavailable"}</div></div>
+        <div className="topbar-right">
+          {view === "chat" && <div className="scope-controls" aria-label="Conversation scope">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#91a2b5", fontSize: 10 }}>
+              <span>Scope</span>
+              <select aria-label="Select project scope" value={scopeProjectId || ""} disabled={busy || scopeLoading}
+                onChange={event => switchScope(event.target.value || null, null)}
+                style={{ maxWidth: 180, height: 30, padding: "4px 8px", border: "1px solid #344252", borderRadius: 5, background: "#141c25", color: "#dce6f0", fontSize: 10 }}>
+                <option value="">Global</option>
+                {projects.map(project => <option key={project.project_id} value={project.project_id}>{project.name}</option>)}
+              </select>
+            </label>
+            {scopeProjectId && <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#91a2b5", fontSize: 10 }}>
+              <span>Workspace</span>
+              <select aria-label="Select workspace scope" value={scopeWorkspaceId || ""} disabled={busy || scopeLoading}
+                onChange={event => switchScope(scopeProjectId, event.target.value || null)}
+                style={{ maxWidth: 180, height: 30, padding: "4px 8px", border: "1px solid #344252", borderRadius: 5, background: "#141c25", color: "#dce6f0", fontSize: 10 }}>
+                <option value="">Project-wide</option>
+                {workspaces.map(workspace => <option key={workspace.workspace_id} value={workspace.workspace_id}>{workspace.name}</option>)}
+              </select>
+            </label>}
+          </div>}
+          <span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div><div className="build-pill" title={`Frontend build: ${FRONTEND_BUILD_TIME || "unknown"} (${FRONTEND_BUILD_COMMIT || "unknown"})\nBackend started: ${health?.backend_started_at || health?.build?.backend_started_at || "unknown"}\nBackend revision: ${health?.backend_revision || health?.build?.backend_revision || "unknown"}${(health?.backend_dirty ?? health?.build?.backend_dirty) ? " (dirty)" : ""}`}>{import.meta.env.DEV ? "FE DEV SERVER" : `FE ${formatBuildTime(FRONTEND_BUILD_TIME)}`} <span className="build-separator">/</span> {health ? (health.backend_revision || health.build?.backend_revision || "BE unknown") : "BE unavailable"}</div></div>
       </header>
       {view === "chat" ? <section className="chat-area">
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
