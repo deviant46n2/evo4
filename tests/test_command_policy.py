@@ -67,7 +67,7 @@ class CommandPolicyTests(unittest.TestCase):
             )
 
     def test_project_policy_rejects_malformed_prefixes(self):
-        for malformed in (None, "python", [["python", ""]], [["python", "\\x00"]], [[]]):
+        for malformed in (None, "python", [["python", ""]], [["python", "\x00"]], [[]]):
             with self.subTest(malformed=malformed):
                 with self.assertRaises(CommandPolicyError):
                     project_command_prefixes(
