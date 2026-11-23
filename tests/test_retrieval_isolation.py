@@ -357,9 +357,13 @@ class RemainingScopeClosureStoreTests(unittest.TestCase):
         ws_memory = self.store.add_memory(
             "workspace memory", project_id=self.project["project_id"],
             workspace_id=self.workspace["workspace_id"])
+        sibling_workspace = create_workspace(
+            self.store, "Sibling", self.project["project_id"],
+            self.workspace["configuration_id"], self.workspace["configuration_revision_id"],
+            checkout_id=self.workspace["checkout_id"])
         sibling_memory = self.store.add_memory(
             "sibling memory", project_id=self.project["project_id"],
-            workspace_id=self.other_workspace["workspace_id"])
+            workspace_id=sibling_workspace["workspace_id"])
         with self.assertRaises(ValueError):
             self.store.relate_memories(project_memory, other_memory, "supports",
                                        project_id=self.project["project_id"])
