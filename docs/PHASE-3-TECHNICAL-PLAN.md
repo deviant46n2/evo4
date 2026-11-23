@@ -24,18 +24,21 @@ The following observations are from the current implementation on `agent-lifecyc
 
 | Area | Existing implementation | Phase 3 gap |
 |---|---|---|
-| AI Configurations | `src/evo_core/ai_configurations.py` stores validated JSON definitions and immutable revisions. The top-level schema is `schema_version`, `components`, and optional `extensions`. | Component payloads are not resolved to installed adapters or executable participant instances. |
-| Registry | `src/evo_core/platform_registry.py` and `src/evo_core/workspaces.py` persist configurations, revisions, projects, checkouts, and workspace relationships. | Workspace resolution validates the relationship and returns the configuration/revision, but does not produce a runtime composition. |
-| Provider | `src/evo_core/provider.py` implements `OpenAICompatibleProvider` with model listing and streamed chat completions. | No Evo-owned provider-neutral invocation contract, adapter registry, or participant identity layer. |
-| Configuration loading | `src/evo_core/config.py` loads the active assistant provider profile from TOML and environment-backed credentials. | This legacy application-level provider selection is separate from Registry AI Configuration execution. |
-| Assistant | `src/evo_core/assistant.py` constructs or accepts a provider and uses it for chat. | No configuration-revision-driven provider construction or general participant dispatch. |
-| Coding agent | `src/evo_core/coding_agent.py` uses the assistant's provider and existing approval-gated tool boundary. | The coding agent is not yet a separately registered runtime participant with its own versioned contract and explicit binding. |
-| Resource intelligence | `evo_experiments.intelligence.assess_workload` and hardware APIs provide advisory admission based on telemetry and estimates. | Admission is not a mandatory gate in participant dispatch; provider quotas and per-invocation token/rate budgets are not integrated. |
+| AI Configurations | `src/evo_core/ai_configurations.py` stores validated JSON definitions and immutable revisions. The top-level shape is `schema_version`, `components`, and optional `extensions`. Validation is deliberately generic: component names and object payloads are checked, but component-specific schemas are not enforced. Existing tests use illustrative `model` and `agents` objects. | Component payloads are not resolved to installed adapters or executable participant instances. P3.1 must define typed component schemas and a compatibility/migration strategy without assuming existing opaque definitions already satisfy them. |
+| Registry/workspaces | `src/evo_core/platform_registry.py` and `src/evo_core/workspaces.py` persist configurations, immutable revisions, projects, checkouts, and workspace relationships. `resolve_executable_workspace` checks active relationships and the registered checkout path, and returns the exact configuration revision. | Workspace resolution validates and returns the binding; it does not produce a runtime composition. The existing boundary is a foundation to call, not a replacement for dispatch authorization. |
+| Provider/config loading | `src/evo_core/provider.py` implements `OpenAICompatibleProvider` with model listing and streamed chat completions. `src/evo_core/config.py` loads the active assistant provider profile from TOML and environment-backed credentials. | The TOML-selected application provider and Registry AI Configuration are separate paths. Phase 3 must introduce Registry-driven binding without casually replacing or breaking the legacy CLI/chat path. |
+| Assistant | `src/evo_core/assistant.py` constructs or accepts one provider and uses it for chat/context generation. | No configuration-revision-driven provider construction or general participant dispatch. |
+| Coding agent | `src/evo_core/coding_agent.py` is a tool-using loop over the assistant's same provider, with workspace controls and per-action approval. | It is a distinct runtime behavior, but not an independent model/provider implementation. It must not be counted as a second independent model participant merely because it wraps the same provider. A coding-agent adapter is useful only if it creates a genuinely distinct runtime contract without recursive dispatch or bypassing current approvals. |
+| Resource intelligence | `evo_experiments.intelligence.assess_workload` and hardware APIs provide advisory admission based on telemetry and estimates; the hardware scheduler records reservations for separately managed workloads. | The admission endpoint is advisory and does not reserve capacity; the existing scheduler is not a participant scheduler. Neither is a mandatory atomic gate in participant dispatch. Provider quotas and per-invocation token/rate budgets are not integrated. |
 | Scheduler | Existing workload queue/reservations and managed execution cover bounded external/command workloads. | This is not a participant scheduler and must not be repurposed as one without an explicit design. |
 | Compliance | Provider access uses configured endpoints and credential references/environment variables. | No structured, versioned integration compliance status that can gate use. |
 | Persistence | Agent runs, tool events, plans, and experiment records already preserve useful execution history. | No common participant invocation record capturing the exact participant, adapter, configuration revision, effective policy, admission decision, and outcome. |
 
 Important distinction: the current assistant provider profile and Registry AI Configurations are two separate configuration paths. Phase 3 must make the Registry configuration executable without accidentally breaking the existing CLI/chat path. Migration or replacement of the legacy path is not a prerequisite unless implementation proves it necessary.
+
+**Phase 2 status caveat:** the roadmap still labels Phase 2 partially implemented. The accepted isolation audit and accepted Project Provisioning v1 are meaningful completed milestones, but they do not by themselves prove every Phase 2 acceptance item is closed. Phase 3 must call the existing workspace resolver and preserve its boundaries, while any uncovered Phase 2 prerequisite remains explicitly tracked. Do not describe Phase 2 as fully complete until the roadmap's complete acceptance gate has been reconciled and accepted.
+
+**Participant-count caveat:** two configuration instances that point to the same endpoint/model are not two independent participants for cooperation testing. Likewise, the current CodingAgent wraps the assistant's provider; it is not an independent model implementation. Phase 3 must demonstrate two genuinely distinct participant implementations or runtime kinds through the common contract, and Phase 4 must identify exactly which independent participants are contributing. A second adapter may be a distinct non-model runtime (for example, a deterministic verifier) if it has a real bounded contract and useful contribution; a fake test adapter does not satisfy production acceptance. If the chosen Phase 4 cooperation pattern requires two independent model judgments, that requires two independently addressable model participants and must be tested as such.
 
 ## 3. Architectural decisions
 
@@ -225,12 +228,14 @@ The following order minimizes speculative framework work.
 
 **Exit:** existing chat/provider tests still pass, and the same endpoint can be invoked through a Registry-bound participant with equivalent observable behavior.
 
-### P3.4 — Second participant boundary
-- Integrate the existing coding-agent runtime behind a distinct adapter if safe and non-recursive.
-- Preserve registered workspace validation, project command-policy intersection, per-action approval, and tool-event provenance.
-- Otherwise document the exact blocker and leave the adapter explicitly unsupported; do not weaken boundaries to meet a count.
+### P3.4 — Second genuinely distinct participant implementation
+- Select a second real runtime kind that contributes a meaningfully different capability under the common contract. Candidates include the existing coding-agent runtime (only if it can be wrapped without recursion and its distinct tool-use/approval semantics are represented honestly) or a bounded deterministic verifier/tool participant.
+- Do not count a second configuration pointing at the same provider/model, a renamed wrapper around the same call path, or a test fake as a second production participant implementation.
+- Preserve registered workspace validation, project command-policy intersection, per-action approval, and tool-event provenance for any coding-agent integration.
+- If the Phase 4 cooperation pattern requires independent model judgment, also bind two independently addressable model endpoints; a deterministic verifier is complementary evidence, not a substitute for an independent model challenger.
+- If no second production runtime can be integrated safely within Phase 3, report the blocker and revise the Phase 3/4 acceptance path with the user rather than weakening boundaries or claiming the gate passed.
 
-**Exit:** two genuinely distinct adapter implementations can be bound and exercised with deterministic tests, or the unresolved boundary is explicitly escalated before Phase 4 planning.
+**Exit:** two genuinely distinct production participant implementations can be bound and invoked through the common contract, with deterministic contract tests. Their actual independence and contribution are documented; fake adapters and duplicate endpoint aliases do not count.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - Add a single dispatch boundary that resolves task/workspace scope and effective permissions.
