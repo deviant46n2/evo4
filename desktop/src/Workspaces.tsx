@@ -391,7 +391,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setDetail(null);
     setPlan(null);
     setError("");
-  }, [projectId, scopeWorkspaceId]);
+    void refresh();
+    void refreshPlans();
+  }, [projectId, scopeWorkspaceId, refresh, refreshPlans]);
   const executableWorkspaces = registryWorkspaces.filter(workspace => {
     if (projectId && workspace.project_id !== projectId) return false;
     if (scopeWorkspaceId && workspace.workspace_id !== scopeWorkspaceId) return false;
