@@ -75,9 +75,9 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
   const scopeParams = useCallback(() => {
     const params = new URLSearchParams();
     if (projectId) params.set("project_id", projectId);
-    if (workspaceId) params.set("workspace_id", workspaceId);
+    if (scopeWorkspaceId) params.set("workspace_id", scopeWorkspaceId);
     return params;
-  }, [projectId, workspaceId]);
+  }, [projectId, scopeWorkspaceId]);
   const scopeSuffix = useCallback(() => {
     const params = scopeParams();
     return params.toString() ? "?" + params.toString() : "";
@@ -196,7 +196,7 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
   </div>;
 }
 
-export function AgentsWorkspace({ projectId, workspaceId, onScopeChange }: {
+export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onScopeChange }: {
   projectId: string | null;
   workspaceId: string | null;
   onScopeChange: (projectId: string | null, workspaceId: string | null) => void;
@@ -337,11 +337,19 @@ export function AgentsWorkspace({ projectId, workspaceId, onScopeChange }: {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   useEffect(() => {
-    setWorkspaceId(workspaceId || "");
-  }, [workspaceId]);
+    setWorkspaceId(scopeWorkspaceId || "");
+  }, [scopeWorkspaceId]);
+  useEffect(() => {
+    runDetailGeneration.current += 1;
+    planDetailGeneration.current += 1;
+    setSelected(null);
+    setDetail(null);
+    setPlan(null);
+    setError("");
+  }, [projectId, scopeWorkspaceId]);
   const executableWorkspaces = registryWorkspaces.filter(workspace => {
     if (projectId && workspace.project_id !== projectId) return false;
-    if (workspaceId && workspace.workspace_id !== workspaceId) return false;
+    if (scopeWorkspaceId && workspace.workspace_id !== scopeWorkspaceId) return false;
     if (workspace.status !== "active" || !workspace.checkout_id) return false;
     const project = projects.find(item => item.project_id === workspace.project_id);
     if (!project || project.status !== "active") return false;
