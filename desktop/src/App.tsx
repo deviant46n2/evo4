@@ -208,7 +208,18 @@ export default function App() {
     setScopeLoading(true);
     request<{ items: Project[] }>("/projects?status=active")
       .then(result => {
-        if (alive) setProjects(result.items || []);
+        if (!alive) return;
+        const available = result.items || [];
+        setProjects(available);
+        if (scopeProjectId && !available.some(project => project.project_id === scopeProjectId)) {
+          activeScopeKeyRef.current = "global:";
+          setScopeProjectId(null);
+          setScopeWorkspaceId(null);
+          activeRef.current = null;
+          setActive(null);
+          setMessages([]);
+          setConversations([]);
+        }
       })
       .catch(e => {
         if (alive) setError(e instanceof Error ? e.message : String(e));
@@ -217,7 +228,7 @@ export default function App() {
         if (alive) setScopeLoading(false);
       });
     return () => { alive = false; };
-  }, []);
+  }, [scopeProjectId]);
 
   useEffect(() => {
     let alive = true;
@@ -275,17 +286,18 @@ export default function App() {
     setError("");
     const requestedScope = scopeKey;
     let conversationId = activeRef.current;
+    setBusy(true);
     try {
       if (!conversationId) {
         const created = await request<Conversation>("/conversations", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(scopeBody()),
         });
+        if (activeScopeKeyRef.current !== requestedScope) return;
         conversationId = created.id;
         activeRef.current = conversationId;
         setActive(conversationId);
       }
       setDraft("");
-      setBusy(true);
       setMessages(previous => [...previous, { role: "user", content: text }, { role: "assistant", content: "" }]);
       const response = await fetch(API + "/chat", {
         method: "POST",
