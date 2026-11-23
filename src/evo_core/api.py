@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -816,7 +817,7 @@ def create_app(config_path="config.toml", provider_name=None):
         return [serialize_run(row) for row in visible[:min(max(limit, 1), 100)]]
 
     @app.get("/api/v1/agents/{run_id:uuid}")
-    def agent_run(run_id: str, project_id: str | None = None, workspace_id: str | None = None):
+    def agent_run(run_id: UUID, project_id: str | None = None, workspace_id: str | None = None):
         run_id = str(run_id)
         project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         row = store.get_agent_run(run_id)
