@@ -659,8 +659,8 @@ class AgentScopeApiTests(unittest.TestCase):
         status, rows = asgi_request(self.app, "GET", "/api/v1/agents/plans?limit=30")
         self.assertEqual(status, 200)
         self.assertNotIn(plan["id"], {row["id"] for row in rows})
-        scoped_query = f"?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}"
-        status, rows = asgi_request(self.app, "GET", "/api/v1/agents/plans?limit=30" + scoped_query)
+        scoped_query = f"project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}"
+        status, rows = asgi_request(self.app, "GET", "/api/v1/agents/plans?limit=30&" + scoped_query)
         self.assertEqual(status, 200)
         self.assertIn(plan["id"], {row["id"] for row in rows})
         status, data = asgi_request(
@@ -673,5 +673,5 @@ class AgentScopeApiTests(unittest.TestCase):
         self.assertEqual(status, 404)
         status, data = asgi_request(
             self.app, "POST",
-            f"/api/v1/agents/plans/{plan['id']}/approve" + scoped_query, {})
+            f"/api/v1/agents/plans/{plan['id']}/approve?" + scoped_query, {})
         self.assertEqual(status, 200)
