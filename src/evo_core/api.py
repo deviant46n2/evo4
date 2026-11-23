@@ -617,9 +617,11 @@ def create_app(config_path="config.toml", provider_name=None):
             return "(project_id IS NULL AND workspace_id IS NULL)", []
         if workspace_id is None:
             return "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL))", [project_id]
-        return ("((project_id IS NULL AND workspace_id IS NULL) OR "
-                "(project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?)"),
-                [project_id, project_id, workspace_id]
+        return (
+            "((project_id IS NULL AND workspace_id IS NULL) OR "
+            "(project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?)",
+            [project_id, project_id, workspace_id],
+        )
 
     @app.get("/api/v1/memories")
     def memories(q: str | None = None, status: str = "active", limit: int = 100,
