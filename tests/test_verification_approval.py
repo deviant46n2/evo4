@@ -51,6 +51,8 @@ class VerificationApprovalApiTests(unittest.TestCase):
             revision["revision_id"],
             checkout_id=checkout["checkout_id"],
         )
+        self.project = project
+        self.workspace = workspace
         with self.app.state.lab_db.lock:
             self.plan = orchestration.create_plan(
                 self.app.state.lab_db.connection,
@@ -82,7 +84,9 @@ class VerificationApprovalApiTests(unittest.TestCase):
     def _wait_pending(self, run_id, timeout=10):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            body = self.routes[("/api/v1/agents/{run_id}", "GET")](run_id)
+            body = self.routes[("/api/v1/agents/{run_id}", "GET")](
+                run_id, project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             if body.get("pending_approval"):
                 return body["pending_approval"]
             if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
@@ -93,7 +97,9 @@ class VerificationApprovalApiTests(unittest.TestCase):
     def _wait_terminal(self, run_id, timeout=10):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            body = self.routes[("/api/v1/agents/{run_id}", "GET")](run_id)
+            body = self.routes[("/api/v1/agents/{run_id}", "GET")](
+                run_id, project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
                 return body
             time.sleep(0.1)
@@ -108,7 +114,9 @@ class VerificationApprovalApiTests(unittest.TestCase):
             "elapsed_seconds": 0.01,
         }
         with patch("evo_core.workspace.Workspace.run", return_value=fake_result) as run_mock:
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](self.plan["id"])
+            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                self.plan["id"], project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             self.assertEqual(result["status"], "running")
             run_id = result["run_id"]
 
@@ -117,13 +125,18 @@ class VerificationApprovalApiTests(unittest.TestCase):
             self.assertEqual(pending["tool_name"], "run_command")
             self.assertEqual(pending["arguments"]["argv"], ["python", "-c", "print('ok')"])
 
-            approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](run_id, AgentApproval(approved=True))
+            approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](
+                run_id, AgentApproval(approved=True),
+                project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             self.assertTrue(approval["approved"])
 
             run = self._wait_terminal(run_id)
             self.assertIn(run["status"], {"completed", "failed"})
 
-            plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](self.plan["id"])
+            plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](
+                self.plan["id"], project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             checks = plan["steps"][0]["verification_checks"]
             self.assertEqual(len(checks), 1)
             self.assertEqual(checks[0]["status"], "passed")
@@ -134,7 +147,9 @@ class VerificationApprovalApiTests(unittest.TestCase):
 
     def test_rejected_verification_does_not_execute_and_is_denied(self):
         with patch("evo_core.workspace.Workspace.run", side_effect=AssertionError("workspace command must not run")):
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](self.plan["id"])
+            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                self.plan["id"], project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             self.assertEqual(result["status"], "running")
             run_id = result["run_id"]
 
@@ -142,13 +157,18 @@ class VerificationApprovalApiTests(unittest.TestCase):
             self.assertIsNotNone(pending)
             self.assertEqual(pending["tool_name"], "run_command")
 
-            approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](run_id, AgentApproval(approved=False))
+            approval = self.routes[("/api/v1/agents/{run_id}/approval", "POST")](
+                run_id, AgentApproval(approved=False),
+                project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             self.assertFalse(approval["approved"])
 
             run = self._wait_terminal(run_id)
             self.assertIn(run["status"], {"completed", "failed", "cancelled"})
 
-            plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](self.plan["id"])
+            plan = self.routes[("/api/v1/agents/plans/{plan_id}", "GET")](
+                self.plan["id"], project_id=self.project["project_id"],
+                workspace_id=self.workspace["workspace_id"])
             checks = plan["steps"][0]["verification_checks"]
             self.assertEqual(len(checks), 1)
             self.assertEqual(checks[0]["status"], "denied")
