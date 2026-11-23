@@ -29,7 +29,10 @@ context_window_tokens = 49152
 [system]
 prompt = "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference."
 
-# Coding-agent project access. Writes and command execution still require approval.
+# Global command-policy ceiling. Project-bound coding agents intersect this
+# allowlist with components.command_policy.allowed_commands in the workspace's
+# pinned configuration revision. Missing or invalid project policy denies
+# project command execution. Allowlisting is not an OS-level sandbox.
 [workspace]
 root = "."
 allowed_commands = [["python", "-m", "unittest"], ["pytest"]]
