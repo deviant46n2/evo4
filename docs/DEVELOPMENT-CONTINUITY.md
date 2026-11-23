@@ -24,23 +24,11 @@ The long-term ambition is to improve AI capability through software engineering 
 
 If documents conflict, follow this hierarchy. Update the authoritative source first and reconcile dependent documents in the same documentation pass.
 
-## Accepted architectural decisions
+## Canonical architectural decisions
 
-- Cooperation is a first-class architectural principle and the reason Evo exists.
-- Evo is model/provider/agent/tool agnostic; roles are contracts, not fixed model identities.
-- The platform is governed hierarchically for authority, permissions, accountability, and consequential decisions, while allowing cooperative deliberation and delegation inside authorized scopes.
-- Every task has one accountable owner. Independent challenge/review is encouraged where useful.
-- Participant capability, trust, registration, and authorization are distinct. Registration never grants permission.
-- Delegation, concurrency, budgets, timeouts, loops, and execution scopes must be bounded and auditable.
-- Cooperation must be measured against credible single-participant baselines; more agents do not automatically improve results.
-- Provider terms, API rules, licensing, automation restrictions, and data-handling requirements must be respected. No bypasses or undocumented interfaces.
-- AI configurations and software projects are independent entities with independent version histories.
-- Workspaces/sessions connect configurations to explicitly authorized targets; neither entity owns the other.
-- Git is authoritative for source, configuration definitions, versioned documentation, and reproducible development states. The experiment registry stores structured records; artifact storage holds large outputs.
-- Persistent records preserve provenance, identity, history, and failure states. Derived data must not silently replace its source of truth.
-- Real models are integration targets, not prerequisites; deterministic mocks and fixtures are valid for platform development.
-- Autonomy is progressive and evidence-based. Consequential actions require safeguards and appropriate approval.
-- A minimal bootstrap/recovery path must remain independent of the development control plane.
+The durable architecture is defined in `docs/ARCHITECTURE.md`; cooperative governance, participant contracts, and collaboration semantics are defined in `docs/DEVELOPMENT-CONTROL-PLANE.md`; sequencing and acceptance gates are defined only in `ROADMAP.md`. Do not maintain competing copies of those detailed specifications here.
+
+The operating invariants for handoff are: user authority remains ultimate; tasks have one accountable owner; registration/capability/trust/availability never imply authorization; provider integrations must comply with their terms and supported interfaces; permissions and resource budgets are bounded; project/context isolation is mandatory; and consequential results require evidence independent of contributor self-report.
 
 ## Current repository and implementation state
 
