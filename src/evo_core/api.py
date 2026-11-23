@@ -1216,7 +1216,11 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures.pop(run_id, None)
 
     @app.post("/api/v1/agents/{run_id}/cancel")
-    def cancel_agent(run_id: str):
+    def cancel_agent(run_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         # Same lock order as worker finalization prevents a late cancellation
         # from racing a completed terminal state.
         with agent_registry_guard:
@@ -1245,14 +1249,24 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"cancelled": True, "status": "cancelled" if previous_status == "queued" else "cancel_requested"}
 
     @app.get("/api/v1/agents/{run_id}/events")
-    def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200):
+    def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200,
+                                 project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         with lab_db.lock:
             if background_agent.get(lab_db.connection, run_id) is None:
                 raise HTTPException(status_code=404, detail="Background agent task not found")
             return background_agent.events(lab_db.connection, run_id, after_id, limit)
 
     @app.post("/api/v1/agents/{run_id}/approval")
-    def decide_agent_approval(run_id: str, payload: AgentApproval):
+    def decide_agent_approval(run_id: str, payload: AgentApproval,
+                              project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         with approval_guard:
             match = next(((key, value) for key, value in pending_approvals.items()
                           if value["run_id"] == run_id), None)
