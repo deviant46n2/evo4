@@ -5,6 +5,7 @@ from pathlib import Path
 
 from evo_core.orchestration import create_plan, get_plan, initialize
 from evo_core.store import EvoStore
+from evo_core.project_checkouts import register_project, register_checkout
 
 
 class ScopePersistenceTests(unittest.TestCase):
@@ -242,6 +243,110 @@ class ScopePersistenceTests(unittest.TestCase):
                 other_candidate = store.propose_memory("same content", project_id=other_project["project_id"])
                 self.assertNotEqual(project_first, other_candidate)
                 self.assertEqual(store.propose_memory("same content", project_id=other_project["project_id"]), other_candidate)
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_explicit_matching_scope_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                conversation_id = store.create_conversation("scoped", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                candidate_id = store.propose_memory(
+                    "remember this",
+                    conversation_id=conversation_id,
+                    project_id=project["project_id"],
+                    workspace_id=workspace["workspace_id"],
+                )
+                row = store.db.execute("SELECT project_id, workspace_id FROM memory_candidates WHERE id=?", (candidate_id,)).fetchone()
+                self.assertEqual(row["project_id"], project["project_id"])
+                self.assertEqual(row["workspace_id"], workspace["workspace_id"])
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_rejects_mismatched_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                other = register_project(store, "Other")
+                conversation_id = store.create_conversation("scoped", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                before = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    store.propose_memory("bad", conversation_id=conversation_id, project_id=other["project_id"])
+                after = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_rejects_mismatched_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                other_dir = root / "other-checkout"
+                other_dir.mkdir()
+                other_project = register_project(store, "Other")
+                other_checkout = register_checkout(store, other_project["project_id"], other_dir)
+                from evo_core.ai_configurations import create_configuration
+                from evo_core.workspaces import create_workspace
+                cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg2")
+                other_workspace = create_workspace(store, "OtherWorkspace", other_project["project_id"],
+                                                  cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                                  checkout_id=other_checkout["checkout_id"])
+                conversation_id = store.create_conversation("scoped", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                before = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    store.propose_memory("bad", conversation_id=conversation_id, workspace_id=other_workspace["workspace_id"])
+                after = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_rejects_project_scope_for_global_conversation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                conversation_id = store.create_conversation("global")
+                before = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    store.propose_memory("bad", conversation_id=conversation_id, project_id=project["project_id"])
+                after = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_rejects_project_scope_for_legacy_conversation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                # Legacy conversation has NULL scope columns.
+                conversation_id = store.create_conversation("legacy")
+                with self.store.lock if False else store.lock:
+                    store.db.execute("UPDATE conversations SET project_id=NULL, workspace_id=NULL WHERE id=?", (conversation_id,))
+                    store.db.commit()
+                before = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    store.propose_memory("bad", conversation_id=conversation_id, project_id=project["project_id"])
+                after = store.db.execute("SELECT COUNT(*) FROM memory_candidates").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_memory_candidate_rejects_workspace_without_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                with self.assertRaises(ValueError):
+                    store.propose_memory("bad", workspace_id="workspace-1")
             finally:
                 store.db.close()
 
