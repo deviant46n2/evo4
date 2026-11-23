@@ -95,7 +95,7 @@ class AgentPlanScopeTests(unittest.TestCase):
                 project_id=self.project["project_id"],
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute", {})
+        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
         self.assertEqual(status, 202)
         run = self.store.get_agent_run(body["run_id"])
         metadata = _json.loads(run["metadata_json"])
@@ -115,7 +115,7 @@ class AgentPlanScopeTests(unittest.TestCase):
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
         before = len(self.store.list_agent_runs(limit=1000))
-        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute", {})
+        status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
         self.assertEqual(status, 409)
         self.assertIn("does not match", body["detail"])
         after = len(self.store.list_agent_runs(limit=1000))
