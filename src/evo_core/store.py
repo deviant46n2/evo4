@@ -665,14 +665,8 @@ class EvoStore:
         return candidate_id
 
     def list_memory_candidates(self, status="pending", limit=50, project_id=None, workspace_id=None):
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        request_project = project_id.strip() if isinstance(project_id, str) else project_id
-        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        request_project, request_workspace = validate_scope(self, project_id, workspace_id)
         if request_project is None:
             scope_sql = "(project_id IS NULL AND workspace_id IS NULL)"
             scope_params = []
@@ -688,14 +682,8 @@ class EvoStore:
             return self.db.execute(sql, params).fetchall()
 
     def review_memory_candidate(self, candidate_id, accept, project_id=None, workspace_id=None):
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        request_project = project_id.strip() if isinstance(project_id, str) else project_id
-        request_workspace = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        request_project, request_workspace = validate_scope(self, project_id, workspace_id)
         with self.lock:
             row = self.db.execute("SELECT * FROM memory_candidates WHERE id=? AND status='pending'",
                                   (candidate_id,)).fetchone()
@@ -753,7 +741,7 @@ class EvoStore:
             scope_sql, scope_params = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?))", [project_id, project_id, workspace_id]
         with self.lock:
             return self.db.execute("SELECT * FROM lessons WHERE status='active' AND " + scope_sql + " ORDER BY created_at DESC LIMIT ?",
-                                   scope_params + [max(1,limit)])
+                                   scope_params + [max(1,limit)]).fetchall()
 
 
 
