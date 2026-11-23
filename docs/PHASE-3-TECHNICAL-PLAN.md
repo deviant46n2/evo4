@@ -170,9 +170,11 @@ Implement only the smallest useful set needed to prove the contracts.
 - OpenAI-compatible chat-completions endpoint, reusing and hardening the existing `OpenAICompatibleProvider` transport where practical.
 - Support text generation first; tool-call output can be represented as a capability, but tool execution remains behind existing Evo-owned approval and command boundaries.
 
-**Second adapter boundary:**
-- A separate adapter for the existing approval-gated coding-agent runtime, if source review confirms it can be wrapped without creating recursive provider dispatch or bypassing its current safety controls.
-- If it cannot be cleanly separated in Phase 3, define the contract and register it as unsupported/unavailable until the boundary is refactored. Do not fake an independent implementation by registering two names for the same provider object.
+**Second production participant boundary:**
+- Prefer a bounded deterministic verifier/tool participant as the second production runtime kind. It must perform a real, useful verification function under the common contract; it is not a model and must be identified honestly as such.
+- The existing CodingAgent may be exposed as a distinct tool-using runtime only if it can be wrapped without recursive provider dispatch or bypassing its current workspace and per-action approval controls. Because it wraps the same underlying assistant provider, it does not count as an independent model judgment source.
+- If the Phase 4 cooperation pattern requires independent model judgment (for example, an independent model challenger), bind two independently addressable model endpoints and test them as separate participants. A deterministic verifier complements but does not replace that requirement.
+- Do not count aliases, duplicate endpoint/model configurations, renamed wrappers around the same call path, or test fakes as independent production participants.
 
 **Test adapters:**
 - Deterministic fake participants for unit/integration tests, including success, malformed output, timeout, cancellation, unavailable, and budget exhaustion.
@@ -215,23 +217,26 @@ For the local-first deployment, do not invent token/cost estimates when the endp
 
 The following order minimizes speculative framework work.
 
-### P3.1 — Contract and schema freeze
-- Define typed component schemas and versioning rules.
-- Define adapter, participant, invocation-envelope, event, and result contracts.
-- Define identity/lifecycle/availability/compliance/authorization distinctions.
-- Specify compatibility and migration behavior for existing configuration definitions.
-- Add architecture decision records for any decisions that materially constrain future adapters.
+### P3.1 — Executable configuration contract (prerequisite)
+- Freeze the minimum typed component schema, adapter ID/version fields, and component contract versions.
+- Keep schema-version 1 definitions readable and editable for compatibility, but treat them as non-executable unless a specific, reviewed migration proves their components satisfy the new executable contract. Do not infer runtime validity from generic JSON acceptance.
+- Require the new schema version for runnable components; reject unknown component types, adapter IDs, component versions, and unsupported settings with actionable errors.
+- Define adapter, participant, invocation-envelope, event, and result contracts, including explicit availability, authorization, and compliance states.
+- Specify the initial secret-reference grammar and environment-variable-backed resolver only. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
+- Define bounded/cooperative cancellation semantics consistent with the current provider transport; do not promise interruption of an in-flight blocking request unless implemented and tested.
+- Reconcile the Phase 2 roadmap status and acceptance evidence before Phase 3 runtime implementation proceeds.
 
-**Exit:** contracts are documented, schema-validated, and independently reviewed before runtime code is introduced.
+**Exit:** the executable schema and compatibility policy are documented, validated, and independently reviewed. Existing schema-1 examples cannot accidentally become runnable.
 
-### P3.2 — Adapter registry and configuration binding
-- Add a code-controlled adapter registry.
-- Resolve exact immutable configuration revisions.
-- Validate component references/settings and secret references.
-- Construct immutable participant instances with explicit capabilities, provenance, and limits.
-- Return actionable errors for unsupported/missing components; no fallback.
+### P3.2 — Registry-driven runtime binding (critical path)
+- Make the first runtime slice a concrete factory that takes the resolved workspace binding and exact immutable AI Configuration revision and constructs the participant/provider actually used by the invocation.
+- Binding order is fixed: authorized workspace → active configuration relationship → exact immutable revision → typed component validation → code-controlled adapter registry → resolved secret references → immutable participant instance.
+- The selected revision must determine provider, model, supported settings, and applicable configuration policy. Record this provenance in the participant and invocation.
+- Do not fall back to the global TOML provider when a registered workspace binding is missing, invalid, stale, or unsupported. Preserve the existing global TOML assistant path only for callers that do not use a Registry-bound workspace.
+- Resolve endpoint/model availability explicitly; distinguish unavailable from unknown and do not substitute another model.
+- Add deterministic binding tests proving that two revisions with different provider/model/policy settings produce the corresponding distinct runtime behavior, plus invalid component, missing adapter, bad secret, unavailable endpoint, stale revision, and workspace/configuration mismatch tests.
 
-**Exit:** deterministic tests prove valid binding, invalid binding, missing adapter, unavailable endpoint, bad secret reference, and stale revision behavior.
+**Exit:** an end-to-end test proves that the exact immutable workspace configuration revision—not the global TOML profile—determines the provider/model/policy used by registered-workspace execution. This is the Phase 3 prerequisite; contract scaffolding without this proof does not pass.
 
 ### P3.3 — First provider participant
 - Wrap/reuse the existing OpenAI-compatible transport behind the new adapter boundary.
@@ -241,14 +246,14 @@ The following order minimizes speculative framework work.
 
 **Exit:** existing chat/provider tests still pass, and the same endpoint can be invoked through a Registry-bound participant with equivalent observable behavior.
 
-### P3.4 — Second genuinely distinct participant implementation
-- Select a second real runtime kind that contributes a meaningfully different capability under the common contract. Candidates include the existing coding-agent runtime (only if it can be wrapped without recursion and its distinct tool-use/approval semantics are represented honestly) or a bounded deterministic verifier/tool participant.
-- Do not count a second configuration pointing at the same provider/model, a renamed wrapper around the same call path, or a test fake as a second production participant implementation.
-- Preserve registered workspace validation, project command-policy intersection, per-action approval, and tool-event provenance for any coding-agent integration.
-- If the Phase 4 cooperation pattern requires independent model judgment, also bind two independently addressable model endpoints; a deterministic verifier is complementary evidence, not a substitute for an independent model challenger.
-- If no second production runtime can be integrated safely within Phase 3, report the blocker and revise the Phase 3/4 acceptance path with the user rather than weakening boundaries or claiming the gate passed.
+### P3.4 — Second production participant implementation
+- Implement a bounded deterministic verifier/tool participant as the default second production runtime kind, unless source investigation shows a more useful safe runtime.
+- Give it a real input/output contract, explicit limits, deterministic behavior, and evidence-bearing results. It must not gain authority to execute arbitrary tools or expand permissions.
+- Keep the CodingAgent option separate: it may qualify as a distinct runtime kind only if its tool-use and approval behavior are genuinely represented through the participant contract; it never counts as an independent model.
+- If the Phase 4 pattern requires independent model judgment, add and test two independently addressable model endpoints as separate participants.
+- If no second production runtime can be integrated safely, report the blocker and seek an explicit Phase 3/4 acceptance revision rather than weakening boundaries.
 
-**Exit:** two genuinely distinct production participant implementations can be bound and invoked through the common contract, with deterministic contract tests. Their actual independence and contribution are documented; fake adapters and duplicate endpoint aliases do not count.
+**Exit:** two genuinely distinct production participant implementations can be bound and invoked through the common contract, with deterministic contract tests and documented contributions. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - Add a single dispatch boundary that resolves task/workspace scope and effective permissions.
@@ -306,19 +311,19 @@ Phase 3 does not implement:
 
 These remain governed by later roadmap phases or separate explicit decisions.
 
-## 11. Open decisions to resolve during P3.1
+## 11. Decisions and bounded implementation choices
 
-These are intentionally deferred until the contract review, not assumed:
+The following choices constrain P3.1 and should not be reopened without new source evidence or an explicit user decision:
 
-1. Exact typed component schema shape and whether current opaque component objects need a migration.
-2. Whether participant identity is persistent Registry data, derived per immutable configuration revision, or a hybrid (stable integration identity plus revision-specific instance identity).
-3. Exact credential-reference resolver and supported secret stores.
-4. Whether the coding-agent runtime can be wrapped as a distinct adapter without recursion or authority leakage.
-5. The minimal atomic reservation mechanism for dispatch against shared local resources.
-6. Initial provider quota dimensions and how unknown usage is represented.
-7. Which two production-capable participant implementations will be used for the first real cooperative benchmark.
+1. **Schema compatibility:** schema-version 1 remains readable/editable but is non-executable by default. Runnable typed components require the next schema version and explicit component type/version plus adapter ID/version. Any schema-1 migration must be explicit, validated, and auditable.
+2. **Secret resolution:** the initial resolver supports environment-variable references only, with strict syntax, required-variable checks, and redaction. Other secret stores are out of scope until separately designed and approved.
+3. **Runtime binding:** registered-workspace execution has no global TOML fallback. The global TOML assistant remains a separate legacy path only for non-Registry callers.
+4. **Cancellation:** cancellation is cooperative at safe boundaries and bounded by provider request timeout. Terminal status and partial evidence must be accurate; immediate in-flight cancellation is not promised by the current transport.
+5. **Second participant:** default to a bounded deterministic verifier/tool participant. It is not an independent model. If Phase 4 requires independent model judgment, require two independently addressable model endpoints.
+6. **Admission:** do not use the advisory assess_workload function as a dispatch gate. P3.5 must use an atomic participant reservation/lease (or an explicitly single-flight policy proven to serialize all relevant dispatch) so concurrent calls cannot overcommit shared capacity. Unknown required capacity/quota fails closed.
+7. **Participant identity:** choose persistent integration identity plus immutable revision-specific participant instance identity unless implementation evidence shows that this complicates correctness.
 
-Resolve these using source inspection, threat modeling, and the smallest demonstrable use case. Do not turn them into an open-ended product-discovery exercise.
+The precise Python names and persistence details remain implementation choices, but these invariants are not optional. Keep the implementation minimal and evidence-driven.
 
 ---
 
