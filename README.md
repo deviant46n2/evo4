@@ -98,25 +98,6 @@ See [`docs/DEVELOPMENT-CONTINUITY.md`](docs/DEVELOPMENT-CONTINUITY.md) for the c
 - Preserves failed and incomplete runs for diagnosis; legacy completions without a recorded finish reason are reclassified as unknown during migration.
 
 
-### Desktop API additions
-
-The desktop API exposes:
-- `GET/POST/PATCH /api/v1/configurations...` and revision endpoints for AI configuration management.
-- `GET/POST/PATCH /api/v1/projects...` and `/api/v1/projects/{id}/checkouts` for project and checkout registration.
-- `GET/POST/PATCH /api/v1/workspaces...` for registered workspaces.
-- `GET /api/v1/hardware/current` — live CPU, RAM, NVIDIA GPU, GPU process, active provider/model, resource headroom, and advisory pressure status.
-- `GET /api/v1/hardware/history` — recent persisted samples from Evo Lab runs.
-- `GET /api/v1/hardware/runtimes` — heuristic local inference-process discovery without exposing arguments or environment variables.
-- `GET/POST /api/v1/hardware/profiles` — save and list named runtime configurations.
-- `POST /api/v1/hardware/estimate` — conservative model-file and architecture-derived KV-cache estimates; fit remains unknown without full runtime allocation data.
-- `POST /api/v1/hardware/admission` — advisory allow/defer/unknown resource check with protected VRAM/RAM reserves.
-- `GET/POST /api/v1/hardware/scheduler` — inspect the persistent workload queue and create workload entries.
-- `POST /api/v1/hardware/scheduler/dispatch` — evaluate queued work and reserve capacity without launching it.
-- `POST /api/v1/hardware/scheduler/jobs/{id}/start|finish|cancel` — explicitly confirm externally started work, record completion, or cancel queued/reserved work.
-- `GET /api/v1/experiments` — recent experiment runs and grouped performance aggregates.
-
-The desktop API initializes/migrates the Evo Lab tables in the same SQLite database used by the assistant. Older experiment databases gain the expanded telemetry columns in place; existing samples are preserved. Hardware polling is read-only. The dashboard deliberately does not expose process command-line arguments, which can contain credentials.
-
 ## Requirements and installation
 
 - Linux recommended; RAM telemetry reads `/proc/meminfo`.
@@ -150,7 +131,7 @@ The desktop includes functional Agents, Memory, Hardware, Experiments, Projects,
 - Agents can launch the existing bounded coding agent in an active registered workspace selected from the Workspace Registry, inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default. API execution requires a registered workspace ID; arbitrary caller-supplied paths do not authorize execution.
 - Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.\n- Hardware shows live CPU/RAM/GPU metrics, NVIDIA compute processes, pressure warnings, and recorded resource history. Process command-line arguments are deliberately not exposed because they can contain credentials.\n- Experiments displays Evo Lab run history and configuration aggregates, including tokens/sec, time-to-first-token, evaluation outcomes, and sampled VRAM/RAM peaks.
 - Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
-- Hardware resource management now includes a persistent reservation-based workload queue. Evo can reserve estimated RAM/VRAM capacity and track user-confirmed external work, but it does not launch or stop processes, change GPU clocks/power limits, stop services, or modify runtime settings. Agent cancellation, pause/resume, live plan streaming, and provider switching are not implemented and are not simulated. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
+- Hardware resource management now includes a persistent reservation-based workload queue. Evo can reserve estimated RAM/VRAM capacity and track user-confirmed external work, but it does not launch or stop processes, change GPU clocks/power limits, stop services, or modify runtime settings. Pause/resume, live plan streaming, and runtime provider switching are not implemented and are not simulated. Background-agent cancellation is implemented as cooperative cancellation at safe boundaries; an in-flight provider request cannot be interrupted. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 
@@ -190,6 +171,27 @@ The API is versioned under `/api/v1`. Current routes:
 - `GET /agents`, `GET /agents/{run_id}`, `POST /agents`, and `POST /agents/{run_id}/approval`
 
 The capabilities endpoint is the source of truth for which future workspace areas the running backend actually supports. The browser is a presentation/client layer; conversation persistence, prompts, memory retrieval, provider calls, and assistant orchestration remain in Python/SQLite.
+
+
+Additional desktop endpoints:
+
+The desktop API exposes:
+- `GET/POST/PATCH /api/v1/configurations...` and revision endpoints for AI configuration management.
+- `GET/POST/PATCH /api/v1/projects...` and `/api/v1/projects/{id}/checkouts` for project and checkout registration.
+- `GET/POST/PATCH /api/v1/workspaces...` for registered workspaces.
+- `GET /api/v1/hardware/current` — live CPU, RAM, NVIDIA GPU, GPU process, active provider/model, resource headroom, and advisory pressure status.
+- `GET /api/v1/hardware/history` — recent persisted samples from Evo Lab runs.
+- `GET /api/v1/hardware/runtimes` — heuristic local inference-process discovery without exposing arguments or environment variables.
+- `GET/POST /api/v1/hardware/profiles` — save and list named runtime configurations.
+- `POST /api/v1/hardware/estimate` — conservative model-file and architecture-derived KV-cache estimates; fit remains unknown without full runtime allocation data.
+- `POST /api/v1/hardware/admission` — advisory allow/defer/unknown resource check with protected VRAM/RAM reserves.
+- `GET/POST /api/v1/hardware/scheduler` — inspect the persistent workload queue and create workload entries.
+- `POST /api/v1/hardware/scheduler/dispatch` — evaluate queued work and reserve capacity without launching it.
+- `POST /api/v1/hardware/scheduler/jobs/{id}/start|finish|cancel` — explicitly confirm externally started work, record completion, or cancel queued/reserved work.
+- `GET /api/v1/experiments` — recent experiment runs and grouped performance aggregates.
+
+The desktop API initializes/migrates the Evo Lab tables in the same SQLite database used by the assistant. Older experiment databases gain the expanded telemetry columns in place; existing samples are preserved. Hardware polling is read-only. The dashboard deliberately does not expose process command-line arguments, which can contain credentials.
+
 
 ## Evo assistant commands
 
@@ -292,7 +294,7 @@ Reserved scheduler jobs can now run explicitly approved commands through Evo's m
 
 ## Background agent execution
 
-The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
+The desktop includes Projects, Configurations, and Workspaces areas backed by Registry APIs. Configuration records support immutable revisions and archive/reactivation; reactivation is not runtime provider activation, and configuration-to-runtime binding/provider selection remain unimplemented. The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
 
 
 ## Agent Intelligence & Orchestration v1
