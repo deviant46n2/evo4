@@ -72,6 +72,11 @@ export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string 
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const scopeWorkspaceId = workspaceId;
+  const scopeKey = `${projectId || "global"}:${scopeWorkspaceId || ""}`;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const refreshGeneration = useRef(0);
   const scopeParams = useCallback(() => {
     const params = new URLSearchParams();
     if (projectId) params.set("project_id", projectId);
@@ -230,16 +235,12 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const planDetailGeneration = useRef(0);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const scopeKey = `${projectId || "global"}:${workspaceId || ""}`;
-  const scopeKeyRef = useRef(scopeKey);
-  scopeKeyRef.current = scopeKey;
-  const refreshGeneration = useRef(0);
   const scopeParams = useCallback(() => {
     const params = new URLSearchParams();
     if (projectId) params.set("project_id", projectId);
-    if (workspaceId) params.set("workspace_id", workspaceId);
+    if (scopeWorkspaceId) params.set("workspace_id", scopeWorkspaceId);
     return params;
-  }, [projectId, workspaceId]);
+  }, [projectId, scopeWorkspaceId]);
   const scopeSuffix = useCallback(() => {
     const params = scopeParams();
     return params.toString() ? "?" + params.toString() : "";
