@@ -262,6 +262,25 @@ class ScopePersistenceTests(unittest.TestCase):
             finally:
                 store.db.close()
 
+    def test_scope_normalization_persists_trimmed_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            try:
+                project, workspace = self._fixtures(store, root)
+                padded_project = "  " + project["project_id"] + "  "
+                padded_workspace = "  " + workspace["workspace_id"] + "  "
+                conversation_id = store.create_conversation("scoped", project_id=padded_project, workspace_id=padded_workspace)
+                memory_id = store.add_memory("memory", project_id=padded_project, workspace_id=padded_workspace)
+                row = store.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+                self.assertEqual(row["project_id"], project["project_id"])
+                self.assertEqual(row["workspace_id"], workspace["workspace_id"])
+                memory = store.db.execute("SELECT project_id, workspace_id FROM memories WHERE id=?", (memory_id,)).fetchone()
+                self.assertEqual(memory["project_id"], project["project_id"])
+                self.assertEqual(memory["workspace_id"], workspace["workspace_id"])
+            finally:
+                store.db.close()
+
     def test_agent_plan_scope_persists(self):
         with tempfile.TemporaryDirectory() as temp:
             store = EvoStore(Path(temp) / "evo.sqlite3")

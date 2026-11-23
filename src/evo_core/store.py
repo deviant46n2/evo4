@@ -200,7 +200,7 @@ class EvoStore:
         if workspace_id is not None and project_id is None:
             raise ValueError("workspace_id requires project_id")
         from .scope_validation import validate_scope
-        validate_scope(self, project_id, workspace_id)
+        return validate_scope(self, project_id, workspace_id)
 
     def add_message(self, conversation_id, role, content, metadata=None):
         now = utc_now()
