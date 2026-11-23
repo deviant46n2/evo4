@@ -62,6 +62,7 @@ class EvoStore:
             CREATE TABLE IF NOT EXISTS memory_candidates (
               id TEXT PRIMARY KEY, content TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general',
               source TEXT NOT NULL, conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+              project_id TEXT, workspace_id TEXT,
               confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'pending',
               created_at TEXT NOT NULL, reviewed_at TEXT, memory_id TEXT REFERENCES memories(id));
             CREATE INDEX IF NOT EXISTS idx_memory_candidates_status ON memory_candidates(status,created_at);
@@ -99,6 +100,7 @@ class EvoStore:
             scope_columns = {
                 "conversations": ("project_id", "workspace_id"),
                 "memories": ("project_id", "workspace_id"),
+                "memory_candidates": ("project_id", "workspace_id"),
                 "lessons": ("project_id", "workspace_id"),
                 "research_documents": ("project_id", "workspace_id"),
                 "tasks": ("project_id", "workspace_id"),
@@ -135,10 +137,8 @@ class EvoStore:
             self.db.commit()
 
     def create_conversation(self, title="New conversation", project_id=None, workspace_id=None):
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
         cid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             try:
@@ -188,6 +188,20 @@ class EvoStore:
             self.db.commit()
             return cur.rowcount == 1
 
+    def validate_scope(self, project_id=None, workspace_id=None):
+        if project_id is not None:
+            if not isinstance(project_id, str) or not project_id.strip():
+                raise ValueError("project_id must be None or a non-empty string")
+            project_id = project_id.strip()
+        if workspace_id is not None:
+            if not isinstance(workspace_id, str) or not workspace_id.strip():
+                raise ValueError("workspace_id must be None or a non-empty string")
+            workspace_id = workspace_id.strip()
+        if workspace_id is not None and project_id is None:
+            raise ValueError("workspace_id requires project_id")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
+
     def add_message(self, conversation_id, role, content, metadata=None):
         now = utc_now()
         with self.lock:
@@ -222,10 +236,8 @@ class EvoStore:
             raise ValueError("Memory content cannot be empty")
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
         mid, now = str(uuid.uuid4()), utc_now()
         tags = tags or []
         with self.lock:
@@ -449,10 +461,8 @@ class EvoStore:
             return self.db.execute(sql,params).fetchall()
 
     def add_task(self, title, description="", priority=3, due_at=None, project_id=None, workspace_id=None):
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
         tid, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("INSERT INTO tasks(id,title,description,priority,created_at,updated_at,due_at,project_id,workspace_id) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -477,20 +487,32 @@ class EvoStore:
             self.db.commit()
             return cur.rowcount == 1
 
-    def propose_memory(self, content, category="general", source="conversation", conversation_id=None, confidence=0.5):
+    def propose_memory(self, content, category="general", source="conversation", conversation_id=None, confidence=0.5,
+                       project_id=None, workspace_id=None):
         content = content.strip()
         if not content:
             raise ValueError("Candidate memory cannot be empty")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
+        if conversation_id is not None:
+            conversation = self.get_conversation(conversation_id)
+            if conversation is None:
+                raise ValueError("conversation_id does not refer to an existing conversation")
+            if project_id is None:
+                project_id = conversation["project_id"]
+            if workspace_id is None:
+                workspace_id = conversation["workspace_id"]
+        self.validate_scope(project_id, workspace_id)
         candidate_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             existing = self.db.execute("SELECT id FROM memory_candidates WHERE lower(content)=lower(?) AND status='pending'",
                                        (content,)).fetchone()
             if existing:
                 return existing["id"]
-            self.db.execute("""INSERT INTO memory_candidates(id,content,category,source,conversation_id,confidence,created_at)
-                               VALUES(?,?,?,?,?,?,?)""",
-                            (candidate_id,content,category,source,conversation_id,
-                             max(0.0,min(1.0,float(confidence))),now))
+            self.db.execute("""INSERT INTO memory_candidates(id,content,category,source,conversation_id,project_id,workspace_id,confidence,created_at)
+                               VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (candidate_id, content, category, source, conversation_id, project_id, workspace_id,
+                             max(0.0, min(1.0, float(confidence))), now))
             self.db.commit()
         return candidate_id
 
@@ -510,10 +532,11 @@ class EvoStore:
                 if accept:
                     memory_id = str(uuid.uuid4())
                     now = utc_now()
-                    self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
-                                       VALUES(?,?,?,?,?,?,?,?,?)""",
-                                    (memory_id,row["content"],row["category"],"[]",row["source"],
-                                     row["confidence"],now,now,json.dumps({"candidate_id":candidate_id})))
+                    self.db.execute("""INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json,project_id,workspace_id)
+                                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                                    (memory_id, row["content"], row["category"], "[]", row["source"],
+                                     row["confidence"], now, now, json.dumps({"candidate_id": candidate_id}),
+                                     row["project_id"], row["workspace_id"]))
                     if self.fts_available:
                         self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
                                         (memory_id,row["content"],row["category"],""))
@@ -531,10 +554,8 @@ class EvoStore:
             raise ValueError("Lesson cannot be empty")
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
         lesson_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("""INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at,project_id,workspace_id)
@@ -582,10 +603,8 @@ class EvoStore:
                              project_id=None, workspace_id=None):
         if not title.strip() or not content.strip():
             raise ValueError("Research title and content are required")
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
+        from .scope_validation import validate_scope
+        validate_scope(self, project_id, workspace_id)
         document_id, now = str(uuid.uuid4()), utc_now()
         with self.lock:
             self.db.execute("""INSERT INTO research_documents(id,title,url,content,source_type,captured_at,metadata_json,project_id,workspace_id)
