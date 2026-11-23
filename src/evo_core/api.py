@@ -71,10 +71,18 @@ def _backend_identity():
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str = Field(min_length=1, max_length=200000)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class ConversationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
+
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="New conversation", max_length=120)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class MemoryCreate(BaseModel):
@@ -906,10 +914,14 @@ def create_app(config_path="config.toml", provider_name=None):
         import uuid
         worker_token = uuid.uuid4().hex
         workspace = None
+        authoritative_workspace_id = None
+        authoritative_project_id = None
         if isinstance(workspace_id, str) and workspace_id.strip():
             try:
                 binding = workspace_registry.resolve_executable_workspace(store, workspace_id)
                 workspace = binding["path"] if isinstance(binding, dict) else binding.path
+                authoritative_workspace_id = binding.get("workspace_id") if isinstance(binding, dict) else getattr(binding, "workspace_id", None)
+                authoritative_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
             except Exception as exc:
                 _finalize_agent_run(run_id, "failed", f"Workspace validation failed: {exc}", plan_id)
                 with agent_registry_guard:
@@ -922,6 +934,30 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_stop_events.pop(run_id, None)
                 agent_futures.pop(run_id, None)
             return
+
+        run_record = store.get_agent_run(run_id)
+        run_metadata = {}
+        if run_record is not None:
+            try:
+                run_metadata = __import__("json").loads(run_record["metadata_json"] or "{}")
+            except Exception:
+                run_metadata = {}
+        metadata_workspace_id = run_metadata.get("workspace_id")
+        metadata_project_id = run_metadata.get("project_id")
+        if (metadata_workspace_id != authoritative_workspace_id
+                or metadata_project_id != authoritative_project_id):
+            _finalize_agent_run(
+                run_id, "failed",
+                "Agent run metadata scope does not match the resolved workspace binding",
+                plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+
+        conversation_project_id = authoritative_project_id
+        conversation_workspace_id = authoritative_workspace_id
+
         with lab_db.lock:
             claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
         if not claimed:
@@ -962,15 +998,6 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
-            run_record = store.get_agent_run(run_id)
-            run_metadata = {}
-            if run_record is not None:
-                try:
-                    run_metadata = __import__("json").loads(run_record["metadata_json"] or "{}")
-                except Exception:
-                    run_metadata = {}
-            conversation_project_id = run_metadata.get("project_id")
-            conversation_workspace_id = run_metadata.get("workspace_id")
             conversation_id = assistant.new_conversation(
                 "Agent: " + request_text[:80],
                 project_id=conversation_project_id,
@@ -1120,8 +1147,8 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"decided": True, "approved": payload.approved}
 
     @app.get("/api/v1/conversations")
-    def conversations(limit: int = 30, q: str | None = None):
-        rows = store.list_conversations(min(max(limit, 1), 100), query=q)
+    def conversations(limit: int = 30, q: str | None = None, project_id: str | None = None, workspace_id: str | None = None):
+        rows = store.list_conversations(min(max(limit, 1), 100), query=q, project_id=project_id, workspace_id=workspace_id)
         return [
             {
                 "id": row["id"],
@@ -1133,11 +1160,17 @@ def create_app(config_path="config.toml", provider_name=None):
         ]
 
     @app.post("/api/v1/conversations", status_code=201)
-    def create_conversation():
-        return {"id": assistant.new_conversation(), "title": "New conversation"}
+    def create_conversation(payload: ConversationCreate | None = None, project_id: str | None = None, workspace_id: str | None = None):
+        data = payload or ConversationCreate()
+        selected_project = project_id if project_id is not None else data.project_id
+        selected_workspace = workspace_id if workspace_id is not None else data.workspace_id
+        conversation_id = assistant.new_conversation(data.title or "New conversation", project_id=selected_project, workspace_id=selected_workspace)
+        return {"id": conversation_id, "title": (data.title or "New conversation")[:120]}
 
     @app.patch("/api/v1/conversations/{conversation_id}")
-    def rename_conversation(conversation_id: str, payload: ConversationUpdate):
+    def rename_conversation(conversation_id: str, payload: ConversationUpdate, project_id: str | None = None, workspace_id: str | None = None):
+        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
         try:
             updated = store.rename_conversation(conversation_id, payload.title)
         except ValueError as exc:
@@ -1147,8 +1180,8 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"id": conversation_id, "title": payload.title.strip()}
 
     @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
-    def delete_conversation(conversation_id: str):
-        if store.get_conversation(conversation_id) is None:
+    def delete_conversation(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         # The reservation check and deletion must be atomic with respect to chat
         # registration. Queued turns are reserved before executor submission.
@@ -1161,8 +1194,8 @@ def create_app(config_path="config.toml", provider_name=None):
         return None
 
     @app.get("/api/v1/conversations/{conversation_id}/messages")
-    def messages(conversation_id: str):
-        if store.get_conversation(conversation_id) is None:
+    def messages(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        if store.get_conversation(conversation_id, project_id=project_id, workspace_id=workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             {
@@ -1170,7 +1203,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 "content": row["content"],
                 "created_at": row["created_at"],
             }
-            for row in store.get_messages(conversation_id, 500)
+            for row in store.get_messages(conversation_id, 500, project_id=project_id, workspace_id=workspace_id)
             if row["role"] in {"user", "assistant"}
         ]
 
@@ -1182,12 +1215,17 @@ def create_app(config_path="config.toml", provider_name=None):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
 
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         conversation_id = payload.conversation_id
         if conversation_id is None:
             # Create and reserve in the same critical section too, so even a
             # second local client cannot delete the new conversation in between.
             with locks_guard:
-                conversation_id = assistant.new_conversation()
+                conversation_id = assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
                 reservation = {"lock": threading.Lock(), "users": 1}
                 conversation_locks[conversation_id] = reservation
         else:
@@ -1195,7 +1233,7 @@ def create_app(config_path="config.toml", provider_name=None):
             # delete can therefore happen either before this check or after the
             # reservation is released, never in the middle.
             with locks_guard:
-                if store.get_conversation(conversation_id) is None:
+                if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
                     raise HTTPException(status_code=404, detail="Conversation not found")
                 reservation = conversation_locks.get(conversation_id)
                 if reservation is None:
@@ -1232,6 +1270,8 @@ def create_app(config_path="config.toml", provider_name=None):
                             on_token=lambda token: publish(
                                 {"event": "token", "data": token}
                             ),
+                            project_id=validated_project_id,
+                            workspace_id=validated_workspace_id,
                         )
                     publish({
                         "event": "complete",
@@ -1319,4 +1359,5 @@ def create_app(config_path="config.toml", provider_name=None):
         assistant.close()
         lab_db.close()
 
+    app.state.run_agent = run_agent
     return app

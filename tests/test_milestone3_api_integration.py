@@ -1,0 +1,271 @@
+import asyncio
+import json as _json
+import tempfile
+import unittest
+from pathlib import Path
+
+from evo_core.api import create_app
+from evo_core.platform_registry import initialize_platform_registry
+from evo_core.project_checkouts import register_project, register_checkout
+from evo_core.ai_configurations import create_configuration
+from evo_core.workspaces import create_workspace
+
+
+def make_config(root):
+    config = root / "config.toml"
+    config.write_text(
+        '[server]\nbase_url="http://127.0.0.1:18997"\nmodel="test-model"\n'
+        f'[experiment]\ndatabase="{root / "evo.sqlite3"}"\n'
+        f'[workspace]\nroot="{root}"\nallowed_commands=[["python","-c"]]\n',
+        encoding="utf-8",
+    )
+    return config
+
+
+def asgi_request(app, method, path, body=None):
+    if "?" in path:
+        path_part, query_part = path.split("?", 1)
+    else:
+        path_part, query_part = path, ""
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+        "method": method, "scheme": "http", "path": path_part, "raw_path": path_part.encode(),
+        "query_string": query_part.encode(), "root_path": "", "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345), "server": ("127.0.0.1", 8000), "state": {},
+    }
+    payload = b"" if body is None else _json.dumps(body).encode()
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": payload, "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+    status = messages[0]["status"]
+    raw = b"".join(m.get("body", b"") for m in messages if m.get("type") == "http.response.body")
+    try:
+        data = _json.loads(raw)
+    except Exception:
+        data = raw
+    return status, data
+
+
+class ConversationApiScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        class _P:
+            def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                if on_token:
+                    on_token("stub reply")
+                return {"content": "stub reply", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                        "prompt_tokens": 10, "completion_tokens": 2, "finish_reason": "stop"}
+        self.app.state.assistant.provider = _P()
+        self.store = self.app.state.store
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+        self.other = register_project(self.store, "Other")
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_project_conversation_creation_listing_history(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "proj", "project_id": self.project["project_id"],
+                                     "workspace_id": self.workspace["workspace_id"]})
+        self.assertEqual(status, 201)
+        cid = body["id"]
+        # listing with scope sees it
+        status, rows = asgi_request(self.app, "GET", f"/api/v1/conversations?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+        self.assertIn(cid, [r["id"] for r in rows])
+        # history accessible with scope
+        status, msgs = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+        self.assertEqual(status, 200)
+
+    def test_cross_project_chat_and_history_rejected(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "proj", "project_id": self.project["project_id"]})
+        cid = body["id"]
+        # cross-project history rejected
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.other['project_id']}")
+        self.assertEqual(status, 404)
+        # cross-project chat rejected
+        status, data = asgi_request(self.app, "POST", "/api/v1/chat",
+                                    {"message": "hello", "conversation_id": cid, "project_id": self.other["project_id"]})
+        self.assertEqual(status, 404)
+
+    def test_workspace_conversation_access_without_workspace_rejected(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "ws", "project_id": self.project["project_id"],
+                                     "workspace_id": self.workspace["workspace_id"]})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}")
+        self.assertEqual(status, 404)
+
+    def test_cross_workspace_conversation_access_rejected(self):
+        other_dir = self.root / "other-checkout"
+        other_dir.mkdir()
+        other_checkout = register_checkout(self.store, self.project["project_id"], other_dir)
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg2")
+        other_workspace = create_workspace(self.store, "OtherWS", self.project["project_id"],
+                                          cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                          checkout_id=other_checkout["checkout_id"])
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "ws", "project_id": self.project["project_id"],
+                                     "workspace_id": self.workspace["workspace_id"]})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}&workspace_id={other_workspace['workspace_id']}")
+        self.assertEqual(status, 404)
+
+    def test_global_conversation_behavior_unchanged(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations", {"title": "global"})
+        cid = body["id"]
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages")
+        self.assertEqual(status, 200)
+        # global conversation not visible with project scope
+        status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}")
+        self.assertEqual(status, 200)
+
+    def test_project_chat_matching_scope(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "proj", "project_id": self.project["project_id"]})
+        cid = body["id"]
+        result = self.app.state.assistant.turn(cid, "hello", project_id=self.project["project_id"])
+        self.assertIn("content", result)
+
+    def test_conversation_ownership_not_mutated(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
+                                    {"title": "proj", "project_id": self.project["project_id"]})
+        cid = body["id"]
+        row = self.store.db.execute("SELECT project_id FROM conversations WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(row["project_id"], self.project["project_id"])
+        # request with no scope does not mutate
+        asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages")
+        row2 = self.store.db.execute("SELECT project_id FROM conversations WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(row2["project_id"], self.project["project_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class RunMetadataValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.app.state.assistant.provider.chat = lambda messages, **kwargs: {
+            "content": "done", "tool_calls": [], "finish_reason": "stop",
+            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+            "prompt_tokens": 10, "completion_tokens": 2,
+        }
+        self.store = self.app.state.store
+        from evo_core.platform_registry import initialize_platform_registry
+        from evo_core.project_checkouts import register_project, register_checkout
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+        import json
+        self._json = json
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def _run(self, metadata):
+        run_id = self.store.start_agent_run("coding", metadata)
+        from evo_core import background_agent
+        background_agent.create(self.app.state.lab_db.connection, run_id)
+        created = {"called": False}
+        orig_new = self.app.state.assistant.new_conversation
+        def fake_new(*a, **k):
+            created["called"] = True
+            return orig_new(*a, **k)
+        self.app.state.assistant.new_conversation = fake_new
+        import threading
+        self.app.state.run_agent(run_id, "request", self.workspace["workspace_id"], threading.Event())
+        self.app.state.assistant.new_conversation = orig_new
+        return run_id, created
+
+    def test_metadata_project_mismatch_rejects(self):
+        metadata = {"workspace_id": self.workspace["workspace_id"], "project_id": "wrong-project", "request": "r"}
+        run_id, created = self._run(metadata)
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+        md = self._json.loads(run["metadata_json"])
+        self.assertNotIn("conversation_id", md)
+
+    def test_metadata_workspace_mismatch_rejects(self):
+        metadata = {"workspace_id": "wrong-workspace", "project_id": self.project["project_id"], "request": "r"}
+        run_id, created = self._run(metadata)
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+
+    def test_missing_metadata_scope_rejects(self):
+        metadata = {"request": "r"}
+        run_id, created = self._run(metadata)
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+
+    def test_valid_metadata_passes(self):
+        metadata = {"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}
+        run_id, created = self._run(metadata)
+        run = self.store.get_agent_run(run_id)
+        # validation passes; execution may fail later due to no approval etc but conversation created
+        self.assertTrue(created["called"])
+
+    def test_valid_approved_plan_metadata_passes(self):
+        from evo_core.orchestration import initialize, create_plan, approve_plan
+        initialize(self.app.state.lab_db.connection)
+        plan = create_plan(self.app.state.lab_db.connection, "request", self.workspace["workspace_id"],
+                           str(self.directory), {"title": "t", "summary": "s",
+                           "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                           project_id=self.project["project_id"], store=self.store)
+        approve_plan(self.app.state.lab_db.connection, plan["id"])
+        metadata = {"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}
+        run_id = self.store.start_agent_run("orchestrated", metadata)
+        from evo_core import background_agent
+        background_agent.create(self.app.state.lab_db.connection, run_id)
+        from evo_core.orchestration import attach_run
+        attach_run(self.app.state.lab_db.connection, plan["id"], run_id)
+        created = {"called": False}
+        orig_new = self.app.state.assistant.new_conversation
+        def fake_new(*a, **k):
+            created["called"] = True
+            return orig_new(*a, **k)
+        self.app.state.assistant.new_conversation = fake_new
+        import threading
+        self.app.state.run_agent(run_id, "request", self.workspace["workspace_id"], threading.Event(), plan["id"])
+        self.app.state.assistant.new_conversation = orig_new
+        self.assertTrue(created["called"])
