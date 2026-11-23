@@ -88,6 +88,7 @@ export default function App() {
   const scopeKey = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
   const activeScopeKeyRef = useRef(scopeKey);
   const conversationListRequestRef = useRef(0);
+  const conversationOpenRequestRef = useRef(0);
 
   const scopeParams = useCallback((projectId = scopeProjectId, workspaceId = scopeWorkspaceId) => {
     const params = new URLSearchParams();
@@ -106,6 +107,7 @@ export default function App() {
     const nextKey = `${projectId || "global"}:${workspaceId || ""}`;
     if (nextKey === activeScopeKeyRef.current) return;
     activeScopeKeyRef.current = nextKey;
+    conversationOpenRequestRef.current += 1;
     setScopeProjectId(projectId);
     setScopeWorkspaceId(workspaceId);
     activeRef.current = null;
@@ -129,6 +131,7 @@ export default function App() {
   }, [search, scopeProjectId, scopeWorkspaceId, scopeParams]);
 
   const openConversation = useCallback(async (id: string) => {
+    const requestId = ++conversationOpenRequestRef.current;
     const requestedScope = `${scopeProjectId || "global"}:${scopeWorkspaceId || ""}`;
     setLoadingMessages(true);
     setError("");
@@ -136,14 +139,18 @@ export default function App() {
       const params = scopeParams();
       const suffix = params.toString() ? `?${params.toString()}` : "";
       const rows = await request<Message[]>(`/conversations/${encodeURIComponent(id)}/messages${suffix}`);
-      if (activeScopeKeyRef.current !== requestedScope) return;
+      if (requestId !== conversationOpenRequestRef.current || activeScopeKeyRef.current !== requestedScope) return;
       activeRef.current = id;
       setActive(id);
       setMessages(rows);
     } catch (e) {
-      if (activeScopeKeyRef.current === requestedScope) setError(e instanceof Error ? e.message : String(e));
+      if (requestId === conversationOpenRequestRef.current && activeScopeKeyRef.current === requestedScope) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
-      if (activeScopeKeyRef.current === requestedScope) setLoadingMessages(false);
+      if (requestId === conversationOpenRequestRef.current && activeScopeKeyRef.current === requestedScope) {
+        setLoadingMessages(false);
+      }
     }
   }, [scopeProjectId, scopeWorkspaceId, scopeParams]);
 
