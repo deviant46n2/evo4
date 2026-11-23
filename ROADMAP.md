@@ -93,6 +93,73 @@ A phase is complete only when the required evidence is recorded, independently r
 - Tests prove that context, files, commands, and execution authority cannot leak across project boundaries.
 - Project deletion is explicitly deferred and is not required to pass this phase.
 
+### Phase 2 implementation plan (proposed, not implemented)
+
+Phase 2 objective: make project, workspace, instruction, and context boundaries explicit and enforceable without fragmenting existing capabilities.
+
+Required architectural invariants:
+- A project is an independent Evo-managed identity, not merely a folder path.
+- A workspace is a filesystem execution boundary and must remain associated with one project.
+- Global context and project context are distinct scopes.
+- Project-specific instructions and memory cannot silently override global safety or authority constraints.
+- Project-specific data cannot leak into unrelated projects through retrieval, search, tool execution, or context assembly.
+- Uncertain project selection must not silently cause work in the wrong project.
+- Trusted Evo-managed project metadata/instructions are distinct from repository-provided files, which remain untrusted input.
+
+Current verified implementation:
+- Project Provisioning v1 creates a dedicated folder, starter files, Git repository, project, and checkout. Source: `src/evo_core/project_provisioning.py`, `src/evo_core/project_checkouts.py`, `desktop/src/ProjectsWorkspace.tsx`.
+- Registry v1 stores configurations, projects, checkouts, and workspaces. Source: `src/evo_core/platform_registry.py`, `src/evo_core/workspaces.py`.
+- The registered-workspace execution boundary requires an active `workspace_id` and re-resolves it before `CodingAgent` construction. Source: `src/evo_core/api.py`, `src/evo_core/workspaces.py`.
+- Conversations and messages have no `project_id`. Source: `src/evo_core/store.py` conversations/messages schema.
+- Memories, lessons, research, and tasks have no project/workspace scope. Source: `src/evo_core/store.py` schema and `src/evo_core/assistant.py`.
+- Coding-agent context is assembled globally; retrieved context is isolated as untrusted data but not project-scoped. Source: `src/evo_core/assistant.py`.
+
+Proposed milestones:
+1. Scope and authority contract.
+   - Define minimum global/project/task scope fields and ownership rules.
+   - Likely files: `src/evo_core/store.py`, `src/evo_core/orchestration.py`, architecture docs.
+   - Tests: schema migration tests and scope-filter unit tests.
+   - Acceptance: a documented, migration-safe scope contract exists; no silent cross-scope access.
+2. Project-scoped conversation association.
+   - Add optional project/workspace association to conversations without breaking existing conversations.
+   - Likely files: `src/evo_core/store.py`, `src/evo_core/api.py`, `desktop/src/Workspaces.tsx` or Projects UI.
+   - Tests: conversation create/open/list with and without project scope.
+   - Acceptance: existing conversations remain valid; project association is explicit and inspectable.
+3. Project-scoped memory and retrieval.
+   - Add scope to memory, lessons, and research; filter retrieval by active scope.
+   - Likely files: `src/evo_core/store.py`, `src/evo_core/assistant.py`, memory APIs/UI.
+   - Tests: retrieval isolation and global availability where intended.
+   - Acceptance: project-specific records do not leak into unrelated project context.
+4. Project-scoped instructions and configuration.
+   - Distinguish trusted Evo-managed project instructions from repository files.
+   - Bind runtime policy to Registry configuration where appropriate.
+   - Likely files: `src/evo_core/workspaces.py`, `src/evo_core/coding_agent.py`, configuration APIs.
+   - Tests: instruction precedence and command-policy enforcement.
+   - Acceptance: repository files remain untrusted; trusted project policy cannot grant unauthorized capabilities.
+5. Explicit project selection and switching UX.
+   - Make active project explicit and inspectable; no silent switching.
+   - Likely files: `desktop/src/ProjectsWorkspace.tsx`, `desktop/src/Workspaces.tsx`, `desktop/src/App.tsx`.
+   - Tests: frontend build plus backend API tests; no dedicated frontend test framework currently exists.
+   - Acceptance: uncertain project identity prevents implicit scope changes.
+6. Isolation verification.
+   - Add tests proving context, files, commands, and execution authority cannot leak across project boundaries.
+   - Likely files: tests only, using existing temporary database/workspace fixtures.
+   - Acceptance: cross-project retrieval and execution tests pass.
+
+Out of scope for Phase 2:
+- Project deletion or recursive cleanup.
+- Automatic project selection or switching.
+- Cross-project context consultation.
+- Configuration-to-provider runtime binding beyond explicit validation.
+- Cooperative multi-agent orchestration.
+- New frontend frameworks or a wholesale UI redesign.
+
+Risks and unresolved decisions:
+- Whether project scope should be nullable for legacy global conversations.
+- Whether global memory should be readable in every project by default.
+- Whether project instructions should be editable through Evo or only repository files.
+- Whether project-scoped command policy should override global allowed commands or intersect with them.
+
 **Phase 3 — Participant contracts and runtime binding**
 - At least two distinct participant implementations can be registered and invoked through common, versioned contracts without hardcoding provider names as roles.
 - AI Configuration revisions are resolved into actual runtime adapters; tests prove that different revisions produce the expected distinct model/provider/policy behavior.

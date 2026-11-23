@@ -85,3 +85,10 @@ Operational constraints:
 2. Evaluate each critique against the vision, architecture, implementation evidence, and freeze boundary.
 3. Revise the documents and reconcile contradictions.
 4. Project Provisioning v1 has been implemented under explicit user authorization; broader redesign implementation still requires authorization.
+
+## Phase 2 planning status
+
+- Phase 2 planning documentation has been added to `ROADMAP.md`.
+- Current verified implementation: Project Provisioning v1, Registry v1, registered-workspace execution boundary, global conversations/messages, global memory/lessons/research, and coding-agent context isolation for untrusted retrieved text.
+- Current verified gaps: conversations, messages, memories, lessons, research, tasks, and command policy are not project-scoped; project lifecycle deletion/provisioning framework completion remains pending; automatic project selection is not authorized.
+- No Phase 2 implementation has been started.
