@@ -18,18 +18,10 @@ def _like_pattern(term):
 
 
 def _conversation_visible(row_project_id, row_workspace_id, request_project_id, request_workspace_id):
-    """Apply the complete conversation visibility contract."""
-    if request_project_id is None:
-        return row_project_id is None and row_workspace_id is None
-    if row_project_id is not None and row_project_id != request_project_id:
-        return False
-    if request_workspace_id is None:
-        return row_workspace_id is None
-    if row_project_id is None:
-        return row_workspace_id is None
-    if row_project_id == request_project_id:
-        return row_workspace_id is None or row_workspace_id == request_workspace_id
-    return False
+    """Compatibility alias for the shared record visibility contract."""
+    from .scope_validation import scope_is_visible
+    return scope_is_visible(row_project_id, row_workspace_id, request_project_id, request_workspace_id)
+
 
 
 class EvoStore:
@@ -324,14 +316,8 @@ class EvoStore:
         raw_query = (query or "").strip()
         if not raw_query:
             return []
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        project_id = project_id.strip() if isinstance(project_id, str) else project_id
-        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         stop = {"a","an","and","are","as","at","be","been","by","can","could","did","do","does",
                 "for","from","had","has","have","how","i","in","into","is","it","its","me","my",
                 "of","on","or","our","please","should","that","the","their","them","there","this",
@@ -444,35 +430,44 @@ class EvoStore:
             return self.db.execute("SELECT * FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT ?",
                                     (max(1,limit),)).fetchall()
 
-    def archive_memory(self, memory_id):
+    def archive_memory(self, memory_id, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope, scope_is_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         with self.lock:
-            cur = self.db.execute("UPDATE memories SET status='archived',updated_at=? WHERE id=?",
+            row = self.db.execute("SELECT project_id,workspace_id FROM memories WHERE id=? AND status='active'",
+                                  (memory_id,)).fetchone()
+            if row is None or not scope_is_visible(row["project_id"], row["workspace_id"], project_id, workspace_id):
+                return False
+            cur = self.db.execute("UPDATE memories SET status='archived',updated_at=? WHERE id=? AND status='active'",
                                   (utc_now(), memory_id))
             self.db.commit()
             return cur.rowcount == 1
 
     def supersede_memory(self, memory_id, content, category=None, tags=None,
-                         source="user", confidence=1.0, reason=""):
+                         source="user", confidence=1.0, reason="", project_id=None, workspace_id=None):
         content=(content or "").strip()
         if not content:
             raise ValueError("Replacement memory content cannot be empty")
         if not 0 <= float(confidence) <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        from .scope_validation import validate_scope, scope_is_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         new_id,relation_id,now=str(uuid.uuid4()),str(uuid.uuid4()),utc_now()
         with self.lock:
             try:
                 old=self.db.execute("SELECT * FROM memories WHERE id=? AND status='active'",
                                     (memory_id,)).fetchone()
-                if not old:
+                if (not old or not scope_is_visible(old["project_id"], old["workspace_id"], project_id, workspace_id)):
                     raise ValueError("Active memory not found")
                 metadata={"supersedes_memory_id":memory_id}
                 if reason.strip():
                     metadata["supersession_reason"]=reason.strip()
                 self.db.execute(
-                    """INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json)
-                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    """INSERT INTO memories(id,content,category,tags_json,source,confidence,created_at,updated_at,metadata_json,project_id,workspace_id)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                     (new_id,content,category or old["category"],json.dumps(tags or []),source,
-                     float(confidence),now,now,json.dumps(metadata,ensure_ascii=False)))
+                     float(confidence),now,now,json.dumps(metadata,ensure_ascii=False),
+                     old["project_id"],old["workspace_id"]))
                 if self.fts_available:
                     self.db.execute("INSERT INTO memories_fts(memory_id,content,category,tags) VALUES(?,?,?,?)",
                                     (new_id,content,category or old["category"]," ".join(tags or [])))
@@ -488,18 +483,25 @@ class EvoStore:
                 raise
         return new_id
 
-    def relate_memories(self, source_id, target_id, relation_type, evidence=""):
+
+
+    def relate_memories(self, source_id, target_id, relation_type, evidence="", project_id=None, workspace_id=None):
         if relation_type not in {"contradicts","supports"}:
             raise ValueError("relation_type must be contradicts or supports")
         if source_id==target_id:
             raise ValueError("A memory cannot be related to itself")
+        from .scope_validation import validate_scope, scope_is_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         relation_id,now=str(uuid.uuid4()),utc_now()
         with self.lock:
             try:
-                found=self.db.execute(
-                    "SELECT COUNT(*) FROM memories WHERE id IN (?,?)",(source_id,target_id)).fetchone()[0]
-                if found!=2:
+                records=self.db.execute(
+                    "SELECT id,project_id,workspace_id FROM memories WHERE id IN (?,?)",(source_id,target_id)).fetchall()
+                if len(records)!=2:
                     raise ValueError("Both memory IDs must exist")
+                if any(not scope_is_visible(row["project_id"], row["workspace_id"], project_id, workspace_id)
+                       for row in records):
+                    raise ValueError("Memory relations cannot cross the requested scope boundary")
                 self.db.execute(
                     """INSERT INTO memory_relations(id,source_memory_id,target_memory_id,relation_type,evidence,created_at)
                        VALUES(?,?,?,?,?,?)""",
@@ -510,18 +512,14 @@ class EvoStore:
                 raise
         return relation_id
 
+
+
     def get_memory_relations(self, memory_ids, project_id=None, workspace_id=None):
         ids=list(dict.fromkeys(memory_ids or []))
         if not ids:
             return []
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        project_id = project_id.strip() if isinstance(project_id, str) else project_id
-        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         placeholders=",".join("?" for _ in ids)
         scope = []
         scope_params = []
@@ -562,14 +560,8 @@ class EvoStore:
                                "CASE WHEN t.content LIKE ? ESCAPE '!' THEN 2 ELSE 0 END + "
                                "CASE WHEN r.evidence LIKE ? ESCAPE '!' THEN 1 ELSE 0 END)")
             score_params.extend((pattern,pattern,pattern))
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        project_id = project_id.strip() if isinstance(project_id, str) else project_id
-        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         scope = []
         scope_params = []
         if project_id is None:
@@ -604,22 +596,37 @@ class EvoStore:
             self.db.commit()
         return tid
 
-    def list_tasks(self, status=None, limit=100):
+    def list_tasks(self, status=None, limit=100, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
+        if project_id is None:
+            scope_sql, scope_params = "(project_id IS NULL AND workspace_id IS NULL)", []
+        elif workspace_id is None:
+            scope_sql, scope_params = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL))", [project_id]
+        else:
+            scope_sql, scope_params = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?))", [project_id, project_id, workspace_id]
         with self.lock:
             if status:
-                return self.db.execute("SELECT * FROM tasks WHERE status=? ORDER BY priority,created_at LIMIT ?",
-                                        (status,max(1,limit))).fetchall()
-            return self.db.execute("SELECT * FROM tasks ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,priority,created_at LIMIT ?",
-                                   (max(1,limit),)).fetchall()
+                return self.db.execute("SELECT * FROM tasks WHERE status=? AND " + scope_sql + " ORDER BY priority,created_at LIMIT ?",
+                                        [status] + scope_params + [max(1,limit)]).fetchall()
+            return self.db.execute("SELECT * FROM tasks WHERE " + scope_sql + " ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,priority,created_at LIMIT ?",
+                                   scope_params + [max(1,limit)]).fetchall()
 
-    def update_task_status(self, task_id, status):
+    def update_task_status(self, task_id, status, project_id=None, workspace_id=None):
         if status not in {"open","in_progress","blocked","done","cancelled"}:
             raise ValueError("Invalid task status")
+        from .scope_validation import validate_scope, scope_is_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         with self.lock:
+            row = self.db.execute("SELECT project_id,workspace_id FROM tasks WHERE id=?", (task_id,)).fetchone()
+            if row is None or not scope_is_visible(row["project_id"], row["workspace_id"], project_id, workspace_id):
+                return False
             cur = self.db.execute("UPDATE tasks SET status=?,updated_at=? WHERE id=?",
                                   (status,utc_now(),task_id))
             self.db.commit()
             return cur.rowcount == 1
+
+
 
     def propose_memory(self, content, category="general", source="conversation", conversation_id=None, confidence=0.5,
                        project_id=None, workspace_id=None):
@@ -735,10 +742,20 @@ class EvoStore:
             self.db.commit()
         return lesson_id
 
-    def list_lessons(self, limit=50):
+    def list_lessons(self, limit=50, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
+        if project_id is None:
+            scope_sql, scope_params = "project_id IS NULL AND workspace_id IS NULL", []
+        elif workspace_id is None:
+            scope_sql, scope_params = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL))", [project_id]
+        else:
+            scope_sql, scope_params = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?))", [project_id, project_id, workspace_id]
         with self.lock:
-            return self.db.execute("SELECT * FROM lessons WHERE status='active' ORDER BY created_at DESC LIMIT ?",
-                                   (max(1,limit),)).fetchall()
+            return self.db.execute("SELECT * FROM lessons WHERE status='active' AND " + scope_sql + " ORDER BY created_at DESC LIMIT ?",
+                                   scope_params + [max(1,limit)])
+
+
 
     def search_lessons(self, query, limit=5, category=None, project_id=None, workspace_id=None):
         terms=[term.strip(" \\t\\r\\n.,!?;:\"'()[]{}") for term in query.split()]
@@ -756,14 +773,8 @@ class EvoStore:
             score_parts.append("(CASE WHEN trigger_text LIKE ? ESCAPE '!' THEN 3 ELSE 0 END + "
                                "CASE WHEN lesson LIKE ? ESCAPE '!' THEN 2 ELSE 0 END)")
             score_params.extend((pattern,pattern))
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        project_id = project_id.strip() if isinstance(project_id, str) else project_id
-        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         sql=f"SELECT *,({' + '.join(score_parts)}) AS relevance FROM lessons WHERE status='active' AND ({' OR '.join(clauses)})"
         params=score_params+where_params
         if category:
@@ -805,14 +816,8 @@ class EvoStore:
         terms = [term for term in terms if len(term)>1][:12]
         if not terms:
             return []
-        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
-            raise ValueError("project_id must be None or a non-empty string")
-        if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
-            raise ValueError("workspace_id must be None or a non-empty string")
-        if workspace_id is not None and project_id is None:
-            raise ValueError("workspace_id requires project_id")
-        project_id = project_id.strip() if isinstance(project_id, str) else project_id
-        workspace_id = workspace_id.strip() if isinstance(workspace_id, str) else workspace_id
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         clauses=[]
         where_params=[]
         score_parts=[]
@@ -945,18 +950,26 @@ class EvoStore:
         lesson_id=None
         with self.lock:
             try:
-                run=self.db.execute("SELECT id FROM agent_runs WHERE id=?", (run_id,)).fetchone()
+                run=self.db.execute("SELECT id,metadata_json FROM agent_runs WHERE id=?", (run_id,)).fetchone()
                 if not run:
                     raise ValueError(f"Unknown agent run: {run_id}")
+                run_metadata=json.loads(run["metadata_json"] or "{}")
+                if not isinstance(run_metadata,dict):
+                    raise ValueError("Agent run scope metadata must be an object")
+                run_project_id=run_metadata.get("project_id")
+                run_workspace_id=run_metadata.get("workspace_id")
+                if run_workspace_id is not None and run_project_id is None:
+                    raise ValueError("Agent run scope metadata has a workspace without a project")
+                from .scope_validation import validate_scope
+                run_project_id,run_workspace_id=validate_scope(self,run_project_id,run_workspace_id)
                 if lesson:
                     lesson_id=str(uuid.uuid4())
-                    # The lesson text is explicitly supplied by the user; do not
-                    # fabricate different confidence scores from the run outcome.
                     confidence=1.0
                     self.db.execute(
-                        """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at)
-                           VALUES(?,?,?,?,?,?,?)""",
-                        (lesson_id,trigger_text.strip(),lesson,category,"user-run-feedback",confidence,now))
+                        """INSERT INTO lessons(id,trigger_text,lesson,category,source,confidence,created_at,project_id,workspace_id)
+                           VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (lesson_id,trigger_text.strip(),lesson,category,"user-run-feedback",confidence,now,
+                         run_project_id,run_workspace_id))
                 self.db.execute(
                     """INSERT INTO run_feedback(id,run_id,outcome,feedback,lesson_id,created_at)
                        VALUES(?,?,?,?,?,?)""",
@@ -966,6 +979,8 @@ class EvoStore:
                 self.db.rollback()
                 raise
         return {"feedback_id":feedback_id,"lesson_id":lesson_id}
+
+
 
     def agent_run_summary(self):
         with self.lock:
