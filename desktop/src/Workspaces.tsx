@@ -55,7 +55,7 @@ type ProjectSummary = {project_id:string;name:string;status:string};
 type ConfigurationSummary = {configuration_id:string;name:string;status:string};
 type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_status:string};
 
-export function MemoryWorkspace() {
+export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [query, setQuery] = useState("");
@@ -72,17 +72,30 @@ export function MemoryWorkspace() {
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const scopeParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    if (workspaceId) params.set("workspace_id", workspaceId);
+    return params;
+  }, [projectId, workspaceId]);
+  const scopeSuffix = useCallback(() => {
+    const params = scopeParams();
+    return params.toString() ? "?" + params.toString() : "";
+  }, [scopeParams]);
   const refresh = useCallback(async () => {
     try {
       const params = new URLSearchParams({ status, limit: "200" });
       if (query.trim()) params.set("q", query.trim());
+      scopeParams().forEach((value, key) => params.set(key, value));
+      const candidateParams = new URLSearchParams({ limit: "200" });
+      scopeParams().forEach((value, key) => candidateParams.set(key, value));
       const [memoryRows, candidateRows] = await Promise.all([
         api<Memory[]>("/memories?" + params.toString()),
-        api<Candidate[]>("/memory-candidates?limit=200"),
+        api<Candidate[]>("/memory-candidates?" + candidateParams.toString()),
       ]);
       setItems(memoryRows); setCandidates(candidateRows); setError("");
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, [query, status]);
+  }, [query, status, scopeParams]);
   useEffect(() => {
     void refresh();
     const changed=()=>void refresh();
@@ -95,6 +108,7 @@ export function MemoryWorkspace() {
     setRecallBusy(true); setError(""); setRecallPreview(null);
     try {
       const params = new URLSearchParams({ q: recallQuery.trim(), limit: "8" });
+      scopeParams().forEach((value, key) => params.set(key, value));
       setRecallPreview(await api<RecallPreview>("/memories/search?" + params.toString()));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setRecallBusy(false); }
@@ -102,7 +116,7 @@ export function MemoryWorkspace() {
   async function scanForDuplicates() {
     if (reviewBusy) return;
     setReviewBusy(true); setError(""); setReviewResults(null);
-    try { setReviewResults(await api<MemoryReview>("/memories/review?limit=30")); }
+    try { setReviewResults(await api<MemoryReview>("/memories/review?limit=30" + scopeSuffix())); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setReviewBusy(false); }
   }
@@ -111,24 +125,26 @@ export function MemoryWorkspace() {
     if (!content.trim()) return;
     setBusy(true);
     try {
-      await api("/memories", json({ content: content.trim(), category, source: "user", confidence: 1 }));
+      await api("/memories", json({ content: content.trim(), category, source: "user", confidence: 1,
+        ...(projectId ? { project_id: projectId } : {}),
+        ...(workspaceId ? { workspace_id: workspaceId } : {}) }));
       setContent(""); await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
   async function archive(id: string) {
-    try { await api("/memories/" + encodeURIComponent(id) + "/archive", { method: "POST" }); await refresh(); }
+    try { await api("/memories/" + encodeURIComponent(id) + "/archive" + scopeSuffix(), { method: "POST" }); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   async function supersede(id: string) {
     if (!replacement.trim()) return;
     try {
-      await api("/memories/" + encodeURIComponent(id) + "/supersede", json({ content: replacement.trim(), reason: reason.trim() }));
+      await api("/memories/" + encodeURIComponent(id) + "/supersede" + scopeSuffix(), json({ content: replacement.trim(), reason: reason.trim() }));
       setReplacing(null); setReplacement(""); setReason(""); await refresh();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   async function review(id: string, approved: boolean) {
-    try { await api("/memory-candidates/" + encodeURIComponent(id) + "/review", json({ approved })); await refresh(); }
+    try { await api("/memory-candidates/" + encodeURIComponent(id) + "/review" + scopeSuffix(), json({ approved })); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
   return <div className="workspace-page">
