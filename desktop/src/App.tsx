@@ -437,7 +437,7 @@ export default function App() {
       <header className="topbar">
         <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{view === "chat" ? "Chat" : view === "agents" ? "Agents" : view === "memory" ? "Memory" : view === "hardware" ? "Hardware" : view === "projects" ? "Projects" : view === "configurations" ? "Configurations" : view === "workspaces" ? "Workspaces" : "Experiments"}</strong></div>
         <div className="topbar-right">
-          {view === "chat" && <div className="scope-controls" aria-label="Conversation scope">
+          <div className="scope-controls" aria-label="Active project and workspace scope">
             <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#91a2b5", fontSize: 10 }}>
               <span>Scope</span>
               <select aria-label="Select project scope" value={scopeProjectId || ""} disabled={busy || scopeLoading}
@@ -456,7 +456,7 @@ export default function App() {
                 {workspaces.map(workspace => <option key={workspace.workspace_id} value={workspace.workspace_id}>{workspace.name}</option>)}
               </select>
             </label>}
-          </div>}
+          </div>
           <span className="privacy-label"><span/> LOCAL API</span><div className="model-pill">{health?.model || "Model unavailable"}</div><div className="build-pill" title={`Frontend build: ${FRONTEND_BUILD_TIME || "unknown"} (${FRONTEND_BUILD_COMMIT || "unknown"})\nBackend started: ${health?.backend_started_at || health?.build?.backend_started_at || "unknown"}\nBackend revision: ${health?.backend_revision || health?.build?.backend_revision || "unknown"}${(health?.backend_dirty ?? health?.build?.backend_dirty) ? " (dirty)" : ""}`}>{import.meta.env.DEV ? "FE DEV SERVER" : `FE ${formatBuildTime(FRONTEND_BUILD_TIME)}`} <span className="build-separator">/</span> {health ? (health.backend_revision || health.build?.backend_revision || "BE unknown") : "BE unavailable"}</div></div>
       </header>
       {view === "chat" ? <section className="chat-area">
@@ -482,7 +482,7 @@ export default function App() {
           </div>
           <div className="composer-footer"><span>Enter to send <b>·</b> Shift + Enter for a new line</span><span>Generation cannot yet be stopped from the desktop client</span></div>
         </div>
-      </section> : view === "agents" ? <AgentsWorkspace/> : view === "memory" ? <MemoryWorkspace/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace/> : view === "configurations" ? <ConfigurationsWorkspace/> : view === "workspaces" ? <WorkspaceRegistryWorkspace/> : <ExperimentsWorkspace/>}
+      </section> : view === "agents" ? <AgentsWorkspace/> : view === "memory" ? <MemoryWorkspace projectId={scopeProjectId} workspaceId={scopeWorkspaceId}/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace/> : view === "configurations" ? <ConfigurationsWorkspace/> : view === "workspaces" ? <WorkspaceRegistryWorkspace/> : <ExperimentsWorkspace/>}
     </main>
   </div>;
 }
