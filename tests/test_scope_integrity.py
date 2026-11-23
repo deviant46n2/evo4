@@ -116,8 +116,9 @@ class AgentPlanScopeTests(unittest.TestCase):
             approve_plan(self.app.state.lab_db.connection, plan["id"])
         before = len(self.store.list_agent_runs(limit=1000))
         status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
-        self.assertEqual(status, 409)
-        self.assertIn("does not match", body["detail"])
+        # The plan is owned by another project and is therefore invisible in
+        # this scope. Visibility is checked before execution-binding mismatch.
+        self.assertEqual(status, 404)
         after = len(self.store.list_agent_runs(limit=1000))
         self.assertEqual(before, after)
         with self.app.state.lab_db.lock:
