@@ -350,20 +350,148 @@ class ScopePersistenceTests(unittest.TestCase):
             finally:
                 store.db.close()
 
-    def test_create_plan_rejects_invalid_scope_with_store(self):
+    def _plan_payload(self):
+        return {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]}
+
+    def test_create_plan_accepts_valid_registered_scope(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             store = EvoStore(root / "evo.sqlite3")
             initialize(store.db)
             try:
+                project, workspace = self._fixtures(store, root)
+                before = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                plan = create_plan(
+                    store.db,
+                    "request",
+                    workspace["workspace_id"],
+                    "/workspace",
+                    self._plan_payload(),
+                    project_id=project["project_id"],
+                    store=store,
+                )
+                self.assertEqual(plan["project_id"], project["project_id"])
+                self.assertEqual(plan["workspace_id"], workspace["workspace_id"])
+                after = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                self.assertEqual(after, before + 1)
+                loaded = get_plan(store.db, plan["id"])
+                self.assertEqual(loaded["project_id"], project["project_id"])
+                self.assertEqual(loaded["workspace_id"], workspace["workspace_id"])
+            finally:
+                store.db.close()
+
+    def test_create_plan_rejects_unknown_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                project, workspace = self._fixtures(store, root)
+                before = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
                 with self.assertRaises(ValueError):
-                    create_plan(store.db, "request", "workspace", "/workspace",
-                                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
-                                project_id="missing", store=store)
+                    create_plan(
+                        store.db,
+                        "request",
+                        workspace["workspace_id"],
+                        "/workspace",
+                        self._plan_payload(),
+                        project_id="missing-project",
+                        store=store,
+                    )
+                after = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_create_plan_rejects_unknown_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                project, workspace = self._fixtures(store, root)
+                before = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
                 with self.assertRaises(ValueError):
-                    create_plan(store.db, "request", "workspace", "/workspace",
-                                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
-                                project_id="project", workspace_id=None, store=store)
+                    create_plan(
+                        store.db,
+                        "request",
+                        "missing-workspace",
+                        "/workspace",
+                        self._plan_payload(),
+                        project_id=project["project_id"],
+                        store=store,
+                    )
+                after = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_create_plan_rejects_workspace_from_different_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                project, workspace = self._fixtures(store, root)
+                other_project = register_project(store, "Other")
+                other_dir = root / "other-checkout"
+                other_dir.mkdir()
+                other_checkout = register_checkout(store, other_project["project_id"], other_dir)
+                from evo_core.ai_configurations import create_configuration
+                from evo_core.workspaces import create_workspace
+                cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg2")
+                other_workspace = create_workspace(
+                    store, "OtherWorkspace", other_project["project_id"],
+                    cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                    checkout_id=other_checkout["checkout_id"],
+                )
+                before = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    create_plan(
+                        store.db,
+                        "request",
+                        other_workspace["workspace_id"],
+                        "/workspace",
+                        self._plan_payload(),
+                        project_id=project["project_id"],
+                        store=store,
+                    )
+                after = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_create_plan_rejects_workspace_without_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                project, workspace = self._fixtures(store, root)
+                before = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                with self.assertRaises(ValueError):
+                    create_plan(
+                        store.db,
+                        "request",
+                        workspace["workspace_id"],
+                        "/workspace",
+                        self._plan_payload(),
+                        store=store,
+                    )
+                after = store.db.execute("SELECT COUNT(*) FROM agent_plans").fetchone()[0]
+                self.assertEqual(before, after)
+            finally:
+                store.db.close()
+
+    def test_create_plan_legacy_global_path_remains_supported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = EvoStore(Path(temp) / "evo.sqlite3")
+            initialize(store.db)
+            try:
+                plan = create_plan(store.db, "legacy", None, "/workspace", self._plan_payload())
+                loaded = get_plan(store.db, plan["id"])
+                self.assertIsNone(loaded["project_id"])
+                self.assertIsNone(loaded["workspace_id"])
             finally:
                 store.db.close()
 
