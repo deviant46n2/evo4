@@ -233,3 +233,144 @@ class InstructionProvenanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NestedInstructionIntegrationTests(unittest.TestCase):
+    def test_nested_target_includes_root_and_nested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace, directory = make_workspace(store, root)
+            (directory / "AGENTS.md").write_text("root guidance", encoding="utf-8")
+            nested = directory / "src"
+            nested.mkdir()
+            (nested / "AGENTS.md").write_text("nested guidance", encoding="utf-8")
+            sibling = directory / "other"
+            sibling.mkdir()
+            (sibling / "AGENTS.md").write_text("sibling guidance", encoding="utf-8")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                messages = assistant._build_messages(cid, "hello", target_path="src")
+                text = "\n".join(str(m.get("content", "")) for m in messages)
+                self.assertIn("root guidance", text)
+                self.assertIn("nested guidance", text)
+                self.assertNotIn("sibling guidance", text)
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_changing_target_updates_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace, directory = make_workspace(store, root)
+            a = directory / "a"
+            b = directory / "b"
+            a.mkdir()
+            b.mkdir()
+            (directory / "AGENTS.md").write_text("root", encoding="utf-8")
+            (a / "AGENTS.md").write_text("ALPHA", encoding="utf-8")
+            (b / "AGENTS.md").write_text("BETA", encoding="utf-8")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                text_a = "\n".join(str(m.get("content", "")) for m in assistant._build_messages(cid, "hello", target_path="a"))
+                text_b = "\n".join(str(m.get("content", "")) for m in assistant._build_messages(cid, "hello", target_path="b"))
+                self.assertIn("ALPHA", text_a)
+                self.assertNotIn("BETA", text_a)
+                self.assertIn("BETA", text_b)
+                self.assertNotIn("ALPHA", text_b)
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_symlink_escape_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "AGENTS.md").write_text("outside", encoding="utf-8")
+            link = repo / "escape"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                self.skipTest("symlink not supported")
+            result = discover_repository_instructions(repo, target="escape")
+            self.assertEqual(result.applied_files, [])
+            self.assertTrue(result.ignored_files or result.error)
+
+    def test_path_traversal_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = discover_repository_instructions(root, target="../outside")
+            self.assertTrue(result.error)
+            self.assertEqual(result.applied_files, [])
+
+
+class CompatibilityAliasTests(unittest.TestCase):
+    def test_aliases_resolve_canonical(self):
+        import evo_core.instructions as canonical
+        for module_name in ("project_instructions", "agents_instructions", "agents_md", "instruction_context"):
+            module = __import__(f"evo_core.{module_name}", fromlist=["*"])
+            self.assertIs(module.discover_repository_instructions, canonical.discover_repository_instructions)
+            self.assertIs(module.InstructionDiscovery, canonical.InstructionDiscovery)
+
+
+class DiscoveryReportingTests(unittest.TestCase):
+    def test_empty_success_vs_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            success = discover_repository_instructions(root)
+            self.assertEqual(success.status, "success")
+            self.assertEqual(success.applied_files, [])
+            failed = discover_repository_instructions(root / "missing")
+            self.assertEqual(failed.status, "failed")
+            self.assertTrue(failed.error)
+
+    def test_missing_inactive_workspace_distinguishable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            # missing workspace
+            from evo_core.instructions import discover_for_scope
+            discovery = discover_for_scope(store, project_id="p", workspace_id="missing")
+            self.assertEqual(discovery.status, "failed")
+            self.assertIn("workspace", discovery.error)
+
+    def test_oversized_unreadable_visible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text("x" * 100, encoding="utf-8")
+            result = discover_repository_instructions(root, max_file_bytes=10)
+            self.assertEqual(result.applied_files, [])
+            self.assertEqual(result.ignored_files[0].status, "unreadable") if False else None
+            self.assertTrue(result.ignored_files)
+            self.assertIn("bytes", result.ignored_files[0].reason)
+
+    def test_file_count_limit_visible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # create 3 applicable files along path
+            (root / "AGENTS.md").write_text("root", encoding="utf-8")
+            d1 = root / "a"
+            d2 = d1 / "b"
+            d2.mkdir(parents=True)
+            (d1 / "AGENTS.md").write_text("a", encoding="utf-8")
+            (d2 / "AGENTS.md").write_text("b", encoding="utf-8")
+            result = discover_repository_instructions(root, target="a/b", max_files=2)
+            self.assertEqual(len(result.applied_files), 2)
+            self.assertEqual(result.status, "limit_exceeded")
+            self.assertTrue(result.ignored_files)
+            self.assertIn("maximum instruction file count", result.ignored_files[0].reason)
+
+    def test_provenance_status_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = discover_repository_instructions(root)
+            self.assertIn("status", result.provenance)

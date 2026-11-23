@@ -29,6 +29,7 @@ class InstructionFile:
 class InstructionDiscovery:
     root: str
     target: str
+    status: str = "success"
     applied_files: list = field(default_factory=list)
     ignored_files: list = field(default_factory=list)
     error: str = ""
@@ -60,6 +61,7 @@ class InstructionDiscovery:
         return {
             "root": self.root,
             "target": self.target,
+            "status": self.status,
             "applied": [
                 {"path": item.path, "relative_path": item.relative_path,
                  "status": item.status, "trust_level": item.trust_level}
@@ -114,6 +116,7 @@ def discover_repository_instructions(root, target=".", max_file_bytes=MAX_INSTRU
     try:
         root_path, target_path = _safe_resolve(root, target)
     except (OSError, ValueError) as exc:
+        discovery.status = "failed"
         discovery.error = str(exc)
         discovery.provenance = discovery.to_provenance()
         return discovery
@@ -135,7 +138,15 @@ def discover_repository_instructions(root, target=".", max_file_bytes=MAX_INSTRU
             candidates.append(candidate)
 
     if len(candidates) > max_files:
+        for extra in candidates[max_files:]:
+            extra_relative = extra.relative_to(root_path).as_posix()
+            discovery.ignored_files.append(InstructionFile(
+                path=str(extra), relative_path=extra_relative,
+                status="ignored", reason=f"maximum instruction file count ({max_files}) exceeded",
+                trust_level="untrusted"))
         candidates = candidates[:max_files]
+        discovery.status = "limit_exceeded"
+        discovery.error = f"applicable instruction file count exceeds limit of {max_files}"
 
     for candidate in candidates:
         relative = candidate.relative_to(root_path).as_posix()
@@ -213,7 +224,8 @@ def workspace_root_for(store, project_id=None, workspace_id=None):
 def discover_for_scope(store, project_id=None, workspace_id=None, target="."):
     root = workspace_root_for(store, project_id, workspace_id)
     if root is None:
-        discovery = InstructionDiscovery(root="", target=str(target), error="no registered workspace root")
+        discovery = InstructionDiscovery(root="", target=str(target), status="failed",
+                                        error="no registered workspace root or checkout")
         discovery.provenance = discovery.to_provenance()
         return discovery
     return discover_repository_instructions(root, target=target)
