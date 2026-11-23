@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS workload_executions (
  id TEXT PRIMARY KEY,
  job_id TEXT NOT NULL UNIQUE,
  argv_json TEXT NOT NULL,
+ policy_json TEXT NOT NULL DEFAULT '[]',
  workspace TEXT NOT NULL,
  status TEXT NOT NULL,
  timeout_seconds INTEGER NOT NULL,
@@ -48,6 +49,11 @@ def _now():
 
 def initialize_execution(connection):
     connection.executescript(SCHEMA)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions)")}
+    if "policy_json" not in columns:
+        connection.execute(
+            "ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'"
+        )
     connection.commit()
 
 def command_allowed(argv, allowed_commands):
@@ -63,6 +69,10 @@ def _decode(row):
         item["argv"] = json.loads(item.pop("argv_json"))
     except (ValueError, TypeError):
         item["argv"] = []
+    try:
+        item["allowed_commands"] = json.loads(item.pop("policy_json"))
+    except (ValueError, TypeError, KeyError):
+        item["allowed_commands"] = []
     return item
 
 def list_executions(connection, limit=50):
@@ -86,13 +96,15 @@ def register_execution(connection, job_id, argv, allowed_commands, workspace, ti
         raise ValueError("Only a reserved job can be executed")
     if connection.execute("SELECT 1 FROM workload_executions WHERE job_id=?", (job_id,)).fetchone():
         raise ValueError("This workload already has an execution record")
+    policy_snapshot = [list(prefix) for prefix in allowed_commands if prefix]
     execution_id = uuid.uuid4().hex
     created = _now()
     connection.execute(
         """INSERT INTO workload_executions
-        (id,job_id,argv_json,workspace,status,timeout_seconds,created_at)
-        VALUES (?,?,?,?,?,?,?)""",
-        (execution_id, job_id, json.dumps(list(argv)), str(workspace), "queued", timeout, created))
+        (id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+        VALUES (?,?,?,?,?,?,?,?)""",
+        (execution_id, job_id, json.dumps(list(argv)), json.dumps(policy_snapshot),
+         str(workspace), "queued", timeout, created))
     connection.commit()
     try:
         start_job(connection, job_id)
@@ -176,6 +188,10 @@ def run_execution(connection, lock, execution_id):
                         pass
         return
     try:
+        # Recheck the persisted policy snapshot at the actual process boundary.
+        # Legacy records without a snapshot decode to an empty policy and fail closed.
+        if not command_allowed(record["argv"], record.get("allowed_commands", [])):
+            raise ValueError("Command is not permitted by the execution policy snapshot")
         process = subprocess.Popen(
             record["argv"], cwd=record["workspace"], shell=False,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
