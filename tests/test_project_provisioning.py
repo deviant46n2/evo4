@@ -150,3 +150,115 @@ class ProjectProvisioningTests(unittest.TestCase):
         self.assertIsNone(result["workspace"])
         self.assertFalse(result["workspace_bound"])
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0], 0)
+
+
+class ProjectProvisioningRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.store = EvoStore(self.root / "evo.sqlite3")
+        initialize_platform_registry(self.store)
+        self.parent = self.root / "projects"
+        self.parent.mkdir()
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def _provision(self):
+        return provision_project(self.store, "Demo", str(self.parent))
+
+    def test_recovery_completes_valid_state(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "completed")
+
+    def test_recovery_is_idempotent(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='files_written' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        first = recover_provisioning_operation(self.store, op_id)
+        second = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(second["status"], "completed")
+
+    def test_recovery_requires_directory(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        target = Path(result["canonical_path"])
+        # Remove the directory after registration.
+        import shutil
+        shutil.rmtree(target)
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("missing", recovered["error"])
+
+    def test_recovery_rejects_symlink_replacement(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        target = Path(result["canonical_path"])
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        target.rename(self.root / "original")
+        target.symlink_to(replacement)
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        try:
+            recovered = recover_provisioning_operation(self.store, op_id)
+            self.assertEqual(recovered["status"], "recovery_required")
+        finally:
+            if target.is_symlink():
+                target.unlink()
+            if (self.root / "original").exists():
+                (self.root / "original").rename(target)
+
+    def test_recovery_rejects_mismatched_checkout_path(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_checkouts SET canonical_path=? WHERE checkout_id=?",
+                                  ("/tmp/elsewhere", result["checkout"]["checkout_id"]))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("does not match", recovered["error"])
+
+    def test_recovery_rejects_missing_workspace(self):
+        config_result = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        result = provision_project(
+            self.store,
+            "Demo",
+            str(self.parent),
+            configuration_id=config_result["configuration"]["configuration_id"],
+            configuration_revision_id=config_result["revision"]["revision_id"],
+        )
+        op_id = result["operation_id"]
+        # Remove workspace record
+        with self.store.lock:
+            self.store.db.execute("DELETE FROM workspaces WHERE workspace_id=?", (result["workspace"]["workspace_id"],))
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        recovered = recover_provisioning_operation(self.store, op_id)
+        self.assertEqual(recovered["status"], "recovery_required")
+        self.assertIn("workspace binding is missing", recovered["error"])
+
+    def test_recovery_propagates_database_errors(self):
+        result = self._provision()
+        op_id = result["operation_id"]
+        with self.store.lock:
+            self.store.db.execute("UPDATE project_provisioning_operations SET status='registry_created' WHERE operation_id=?", (op_id,))
+            self.store.db.commit()
+        with patch("evo_core.project_provisioning._project_row", side_effect=RuntimeError("db boom")):
+            with self.assertRaises(RuntimeError):
+                recover_provisioning_operation(self.store, op_id)

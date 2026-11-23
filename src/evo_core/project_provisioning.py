@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from .project_checkouts import (
+    CheckoutNotFoundError,
     CheckoutPathConflictError,
     CheckoutPathError,
     ProjectArchivedError,
@@ -16,6 +17,7 @@ from .project_checkouts import (
     ProjectNotFoundError,
     ProjectValidationError,
     _canonical_directory,
+    _checkout_row,
     _paths_overlap,
     _project_row,
     _text,
@@ -473,6 +475,33 @@ def provision_project(
                     pass
 
 
+def _verify_recovered_directory(canonical_path, manifest):
+    if not isinstance(canonical_path, str) or not canonical_path.strip():
+        return False
+    path = Path(canonical_path)
+    parent = path.parent
+    identity = (manifest or {}).get("directory")
+    if not isinstance(identity, dict):
+        return False
+    try:
+        parent_fd = os.open(str(parent), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        try:
+            current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+    finally:
+        try:
+            os.close(parent_fd)
+        except OSError:
+            pass
+    if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
+        return False
+    return current.st_dev == identity.get("dev") and current.st_ino == identity.get("ino")
+
+
 def recover_provisioning_operation(store, operation_id):
     operation = _get_operation(store, operation_id)
     status = operation["status"]
@@ -487,10 +516,17 @@ def recover_provisioning_operation(store, operation_id):
     project_id = operation.get("project_id")
     checkout_id = operation.get("checkout_id")
     workspace_id = operation.get("workspace_id")
+    manifest = None
+    if operation.get("ownership_manifest"):
+        try:
+            import json as _json
+            manifest = _json.loads(operation["ownership_manifest"])
+        except (TypeError, ValueError):
+            manifest = None
 
     # If the journal lacks IDs, a unique checkout at the exact canonical path
     # may be a discovery candidate. This is only a candidate until its project
-    # relationship and all other state are verified.
+    # relationship and all other relevant state are verified.
     if canonical_path and (project_id is None or checkout_id is None):
         db = _store_db(store)
         with store.lock:
@@ -507,6 +543,7 @@ def recover_provisioning_operation(store, operation_id):
     project_exists = False
     checkout_exists = False
     checkout_matches_project = False
+    checkout_path_matches = False
     if project_id:
         try:
             _project_row(_store_db(store), project_id)
@@ -518,45 +555,54 @@ def recover_provisioning_operation(store, operation_id):
             checkout = _checkout_row(_store_db(store), checkout_id)
             checkout_exists = True
             checkout_matches_project = bool(project_id) and checkout["project_id"] == project_id
+            checkout_path_matches = bool(canonical_path) and checkout["canonical_path"] == canonical_path
         except CheckoutNotFoundError:
             checkout_exists = False
     workspace_exists = False
+    workspace_matches = False
     if workspace_id:
         try:
             from .workspaces import _workspace_row
             workspace = _workspace_row(_store_db(store), workspace_id)
-            workspace_exists = (
+            workspace_exists = True
+            workspace_matches = (
                 workspace["project_id"] == project_id
-                and workspace["checkout_id"] == checkout_id
+                and (checkout_id is None or workspace["checkout_id"] == checkout_id)
             )
         except WorkspaceNotFoundError:
             workspace_exists = False
 
-    path_exists = bool(canonical_path) and Path(canonical_path).exists()
+    directory_verified = _verify_recovered_directory(canonical_path, manifest)
 
-    if project_exists and checkout_exists and checkout_matches_project:
-        if workspace_id is not None and not workspace_exists:
-            _write_operation(store, operation_id, status="recovery_required",
-                             error="project and checkout are registered, but the requested workspace binding is missing",
-                             project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
-            return _get_operation(store, operation_id)
+    if (directory_verified and project_exists and checkout_exists
+            and checkout_matches_project and checkout_path_matches):
+        if workspace_id is not None:
+            if not (workspace_exists and workspace_matches):
+                _write_operation(store, operation_id, status="recovery_required",
+                                 error="project and checkout are registered, but the requested workspace binding is missing or mismatched",
+                                 project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
+                return _get_operation(store, operation_id)
         _write_operation(store, operation_id, status="completed",
                          project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
         return _get_operation(store, operation_id)
 
     details = []
+    if canonical_path and not Path(canonical_path).exists():
+        details.append("canonical directory is missing")
+    elif canonical_path and not directory_verified:
+        details.append("canonical directory identity could not be verified")
     if project_id and not project_exists:
         details.append("project record is missing")
     if checkout_id and not checkout_exists:
         details.append("checkout record is missing")
     if project_exists and checkout_exists and not checkout_matches_project:
         details.append("checkout does not belong to the recorded project")
+    if project_exists and checkout_exists and not checkout_path_matches:
+        details.append("checkout canonical path does not match the operation")
     if workspace_id and not workspace_exists:
         details.append("workspace binding is missing")
-    if path_exists and not (project_exists and checkout_exists):
-        details.append("filesystem directory exists but Registry ownership is not proven")
-    if not path_exists and (project_exists or checkout_exists):
-        details.append("Registry record exists but the canonical directory is missing")
+    if workspace_id and workspace_exists and not workspace_matches:
+        details.append("workspace binding does not match the project or checkout")
     if not details:
         details.append("provisioning state is incomplete")
     _write_operation(store, operation_id, status="recovery_required",
