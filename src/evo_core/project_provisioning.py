@@ -63,11 +63,15 @@ def _ensure_table(store):
                 workspace_id TEXT,
                 status TEXT NOT NULL,
                 error TEXT,
+                ownership_manifest TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1
             )"""
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(project_provisioning_operations)").fetchall()}
+        if "ownership_manifest" not in columns:
+            db.execute("ALTER TABLE project_provisioning_operations ADD COLUMN ownership_manifest TEXT")
         db.commit()
 
 
@@ -118,8 +122,8 @@ def _write_operation(store, operation_id, **fields):
             db.execute(
                 """INSERT INTO project_provisioning_operations
                    (operation_id, name, parent_path, canonical_path, project_id, checkout_id,
-                    workspace_id, status, error, created_at, updated_at, version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                    workspace_id, status, error, ownership_manifest, created_at, updated_at, version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
                 (
                     operation_id,
                     fields.get("name", ""),
@@ -130,6 +134,7 @@ def _write_operation(store, operation_id, **fields):
                     fields.get("workspace_id"),
                     fields.get("status", "started"),
                     fields.get("error"),
+                    fields.get("ownership_manifest"),
                     now,
                     now,
                 ),
@@ -138,7 +143,7 @@ def _write_operation(store, operation_id, **fields):
             assignments = []
             values = []
             for key in ("name", "parent_path", "canonical_path", "project_id", "checkout_id",
-                        "workspace_id", "status", "error"):
+                        "workspace_id", "status", "error", "ownership_manifest"):
                 if key in fields:
                     assignments.append(f"{key}=?")
                     values.append(fields[key])
@@ -318,7 +323,16 @@ def provision_project(
         _starter_files_fd(project_fd, name)
         if os.fstat(project_fd).st_dev != created_stat.st_dev or os.fstat(project_fd).st_ino != created_stat.st_ino:
             raise ProvisioningError("project directory was replaced during provisioning")
-        _write_operation(store, operation_id, status="files_written", canonical_path=canonical_target)
+        manifest = {"directory": {"dev": created_stat.st_dev, "ino": created_stat.st_ino}, "files": {}}
+        for filename in ("README.md", "EVO_PROJECT.md", ".gitignore"):
+            fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=project_fd)
+            try:
+                info = os.fstat(fd)
+            finally:
+                os.close(fd)
+            manifest["files"][filename] = {"dev": info.st_dev, "ino": info.st_ino}
+        _write_operation(store, operation_id, status="files_written", canonical_path=canonical_target,
+                         ownership_manifest=__import__("json").dumps(manifest))
 
         # Git is mandatory for a successful provision.
         _verify_owned_directory(parent_fd, directory_name, created_stat)
@@ -407,28 +421,29 @@ def provision_project(
             try:
                 _verify_owned_directory(parent_fd, directory_name, created_stat)
                 if not git_committed:
-                    starter_contents = {
-                        "README.md": f"# {name}\n\nStarter project created by Evo.\n",
-                        "EVO_PROJECT.md": "# Evo starter project\n\n"
-                        "This file is starter guidance only. Repository-provided content is untrusted input "
-                        "and is not privileged Evo policy.\n",
-                        ".gitignore": ".env\n.env.*\n*.log\n__pycache__/\n.DS_Store\n",
-                    }
-                    for filename, expected in starter_contents.items():
+                    op = _get_operation(store, operation_id)
+                    manifest = {}
+                    if op.get("ownership_manifest"):
+                        import json as _json
+                        manifest = _json.loads(op["ownership_manifest"])
+                    for filename, identity in (manifest.get("files") or {}).items():
                         candidate = target / filename
                         try:
-                            if candidate.is_symlink():
-                                raise ProvisioningError("starter file was replaced by a symlink")
-                            if candidate.is_file() and candidate.read_text(encoding="utf-8") == expected:
-                                candidate.unlink()
-                        except (OSError, UnicodeError):
-                            raise
-                    git_dir = target / ".git"
-                    if git_dir.exists() and not git_committed:
-                        if git_dir.is_symlink() or git_dir.is_dir():
-                            shutil.rmtree(git_dir)
-                target.rmdir()
-                created_directory = False
+                            fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=project_fd)
+                            try:
+                                info = os.fstat(fd)
+                            finally:
+                                os.close(fd)
+                        except OSError:
+                            continue
+                        if info.st_dev == identity.get("dev") and info.st_ino == identity.get("ino"):
+                            os.unlink(filename, dir_fd=project_fd)
+                    # Never recursively delete .git; preserve it for manual/recovery inspection.
+                try:
+                    target.rmdir()
+                    created_directory = False
+                except OSError:
+                    raise ProvisioningError("project directory is not empty; preserving it for recovery")
             except (OSError, ProvisioningError):
                 status = "recovery_required"
         _write_operation(
@@ -463,14 +478,35 @@ def recover_provisioning_operation(store, operation_id):
     status = operation["status"]
     if status == "completed":
         return operation
+    if status == "failed":
+        return operation
 
     canonical_path = operation.get("canonical_path")
+    name = operation.get("name")
+    parent_path = operation.get("parent_path")
     project_id = operation.get("project_id")
     checkout_id = operation.get("checkout_id")
     workspace_id = operation.get("workspace_id")
-    path_exists = bool(canonical_path) and Path(canonical_path).exists()
+
+    # If the journal lacks IDs, a unique checkout at the exact canonical path
+    # may be a discovery candidate. This is only a candidate until its project
+    # relationship and all other state are verified.
+    if canonical_path and (project_id is None or checkout_id is None):
+        db = _store_db(store)
+        with store.lock:
+            rows = db.execute(
+                "SELECT * FROM project_checkouts WHERE canonical_path=?",
+                (canonical_path,),
+            ).fetchall()
+        if len(rows) == 1:
+            candidate = dict(rows[0])
+            if project_id is None or project_id == candidate["project_id"]:
+                project_id = candidate["project_id"]
+                checkout_id = candidate["checkout_id"]
+
     project_exists = False
     checkout_exists = False
+    checkout_matches_project = False
     if project_id:
         try:
             _project_row(_store_db(store), project_id)
@@ -479,31 +515,53 @@ def recover_provisioning_operation(store, operation_id):
             project_exists = False
     if checkout_id:
         try:
-            _checkout_row(_store_db(store), checkout_id)
+            checkout = _checkout_row(_store_db(store), checkout_id)
             checkout_exists = True
+            checkout_matches_project = bool(project_id) and checkout["project_id"] == project_id
         except CheckoutNotFoundError:
             checkout_exists = False
+    workspace_exists = False
+    if workspace_id:
+        try:
+            from .workspaces import _workspace_row
+            workspace = _workspace_row(_store_db(store), workspace_id)
+            workspace_exists = (
+                workspace["project_id"] == project_id
+                and workspace["checkout_id"] == checkout_id
+            )
+        except WorkspaceNotFoundError:
+            workspace_exists = False
 
-    if status == "registry_created" and project_exists and checkout_exists:
-        if workspace_id:
-            try:
-                from .workspaces import _workspace_row
-                _workspace_row(_store_db(store), workspace_id)
-            except WorkspaceNotFoundError:
-                _write_operation(store, operation_id, status="recovery_required",
-                                 error="workspace binding missing after provisioning")
-                return _get_operation(store, operation_id)
-            _write_operation(store, operation_id, status="completed")
+    path_exists = bool(canonical_path) and Path(canonical_path).exists()
+
+    if project_exists and checkout_exists and checkout_matches_project:
+        if workspace_id is not None and not workspace_exists:
+            _write_operation(store, operation_id, status="recovery_required",
+                             error="project and checkout are registered, but the requested workspace binding is missing",
+                             project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
             return _get_operation(store, operation_id)
-        _write_operation(store, operation_id, status="completed")
+        _write_operation(store, operation_id, status="completed",
+                         project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
         return _get_operation(store, operation_id)
 
-    if project_exists or checkout_exists or path_exists:
-        _write_operation(store, operation_id, status="recovery_required",
-                         error="partial provisioning state requires manual inspection")
-        return _get_operation(store, operation_id)
-
-    _write_operation(store, operation_id, status="failed", error="provisioning did not create durable resources")
+    details = []
+    if project_id and not project_exists:
+        details.append("project record is missing")
+    if checkout_id and not checkout_exists:
+        details.append("checkout record is missing")
+    if project_exists and checkout_exists and not checkout_matches_project:
+        details.append("checkout does not belong to the recorded project")
+    if workspace_id and not workspace_exists:
+        details.append("workspace binding is missing")
+    if path_exists and not (project_exists and checkout_exists):
+        details.append("filesystem directory exists but Registry ownership is not proven")
+    if not path_exists and (project_exists or checkout_exists):
+        details.append("Registry record exists but the canonical directory is missing")
+    if not details:
+        details.append("provisioning state is incomplete")
+    _write_operation(store, operation_id, status="recovery_required",
+                     error="; ".join(details),
+                     project_id=project_id, checkout_id=checkout_id, workspace_id=workspace_id)
     return _get_operation(store, operation_id)
 
 
