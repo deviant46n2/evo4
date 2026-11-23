@@ -120,6 +120,20 @@ class ManagedExecutionTests(unittest.TestCase):
         self.assertEqual(len(list_executions(self.db)), 1)
         self.assertEqual(record["status"], "queued")
 
+    def test_execution_rechecks_persisted_policy_at_launch(self):
+        job = self.reserve("policy recheck")
+        record = self.register(job, [sys.executable, "-c", "print('should-not-run')"])
+        self.db.execute(
+            "UPDATE workload_executions SET policy_json='[]' WHERE id=?", (record["id"],)
+        )
+        self.db.commit()
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            run_execution(self.db, self.lock, record["id"])
+        popen.assert_not_called()
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("execution policy snapshot", result["error"])
+
     def test_restart_recovery_marks_interrupted_without_signalling_pid(self):
         job = self.reserve("restart")
         record = self.register(job, [sys.executable, "-c", "import time; time.sleep(10)"])
