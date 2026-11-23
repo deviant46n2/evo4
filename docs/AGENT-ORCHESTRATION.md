@@ -44,7 +44,7 @@ Cancellation is cooperative at provider/tool safe boundaries and between steps. 
 
 ## Important limitations
 
-- Step completion currently means the coding-agent loop returned a completed result for that step. The verification instruction is included in the step prompt and stored for audit, but it is **not** an independent verification oracle.
+- Step completion currently means the coding-agent loop returned a completed result for that step. The verification instruction is included in the step prompt and stored for audit, but the instruction text itself is **not** an independent verification oracle. When a step defines explicit `verification_commands`, the worker separately executes each command through the existing approval callback and records its result; denied, failed, or unrun commands prevent the step from completing. These command results provide deterministic evidence for the checks they directly exercise, but do not prove overall correctness or replace independent review.
 - The model may propose a poor or incomplete plan. The user must inspect it before approval.
 - A plan may need multiple per-action approvals; approving the plan does not approve file writes or commands.
 - There is no automatic retry, pause/resume, redirect, checkpointed recovery, or durable approval restoration.
