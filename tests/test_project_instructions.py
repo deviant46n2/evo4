@@ -374,3 +374,111 @@ class DiscoveryReportingTests(unittest.TestCase):
             root = Path(tmp)
             result = discover_repository_instructions(root)
             self.assertIn("status", result.provenance)
+
+
+class CodingAgentNestedInstructionTests(unittest.TestCase):
+    def _make_workspace(self, root):
+        (root / "AGENTS.md").write_text("ROOT GUIDANCE", encoding="utf-8")
+        src = root / "src"
+        src.mkdir()
+        (src / "AGENTS.md").write_text("SRC GUIDANCE", encoding="utf-8")
+        other = root / "other"
+        other.mkdir()
+        (other / "AGENTS.md").write_text("SIBLING GUIDANCE", encoding="utf-8")
+        (src / "file.txt").write_text("hello", encoding="utf-8")
+
+    def test_nested_instruction_sequence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_workspace(root)
+            from evo_core.coding_agent import CodingAgent
+            store = make_store(tmp)
+            # minimal global conversation, no project scope needed for workspace instructions
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+
+            class FakeProvider:
+                def __init__(self):
+                    self.calls = []
+                    self.step = 0
+                def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                    self.calls.append([dict(m) for m in messages])
+                    if self.step == 0:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [{"id": "call1", "type": "function",
+                                "function": {"name": "list_files", "arguments": {"path": "src"}}}],
+                                "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                                "prompt_tokens": 1, "completion_tokens": 1}
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            cid = assistant.new_conversation("global")
+            result = agent.run(cid, "inspect src", lambda name, args: True)
+            self.assertEqual(result["status"], "completed")
+            second_call_messages = assistant.provider.calls[1]
+            # find assistant tool-call and tool result
+            assistant_idx = next(i for i, m in enumerate(second_call_messages) if m.get("role") == "assistant" and m.get("tool_calls"))
+            tool_idx = next(i for i in range(assistant_idx + 1, len(second_call_messages)) if second_call_messages[i].get("role") == "tool")
+            # no instruction user message between assistant tool call and tool result
+            between = second_call_messages[assistant_idx + 1:tool_idx]
+            self.assertFalse(any("Repository instruction files" in str(m.get("content", "")) for m in between))
+            # instructions appear after tool result
+            after_tool = second_call_messages[tool_idx + 1:]
+            instruction_msgs = [m for m in after_tool if "Repository instruction files" in str(m.get("content", ""))]
+            self.assertTrue(instruction_msgs)
+            combined = "\n".join(str(m.get("content", "")) for m in instruction_msgs)
+            self.assertIn("SRC GUIDANCE", combined)
+            self.assertIn("ROOT GUIDANCE", combined)
+            self.assertNotIn("SIBLING GUIDANCE", combined)
+            assistant.close()
+            store.close()
+
+    def test_no_duplicate_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_workspace(root)
+            from evo_core.coding_agent import CodingAgent
+            store = make_store(tmp)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+
+            class FakeProvider:
+                def __init__(self):
+                    self.calls = []
+                    self.step = 0
+                def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                    self.calls.append([dict(m) for m in messages])
+                    if self.step == 0:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [
+                            {"id": "c1", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}},
+                            {"id": "c2", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}}],
+                            "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+                    if self.step == 1:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [{"id": "c3", "type": "function",
+                                "function": {"name": "list_files", "arguments": {"path": "src"}}}],
+                                "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                                "prompt_tokens": 1, "completion_tokens": 1}
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            cid = assistant.new_conversation("global")
+            agent.run(cid, "inspect src", lambda name, args: True)
+            second = "\n".join(str(m.get("content", "")) for m in assistant.provider.calls[1])
+            third = "\n".join(str(m.get("content", "")) for m in assistant.provider.calls[2])
+            self.assertEqual(second.count("SRC GUIDANCE"), 1)
+            self.assertEqual(third.count("SRC GUIDANCE"), 1)
+            assistant.close()
+            store.close()
