@@ -85,6 +85,15 @@ export function ProjectsWorkspace() {
   const [selectedCheckout, setSelectedCheckout] = useState<Checkout | null>(null);
 
   const [projectMode, setProjectMode] = useState<"view" | "create" | "edit">("view");
+  const [provisionMode, setProvisionMode] = useState(false);
+  const [provisionName, setProvisionName] = useState("");
+  const [provisionDescription, setProvisionDescription] = useState("");
+  const [parentPath, setParentPath] = useState("");
+  const [provisionConfigId, setProvisionConfigId] = useState("");
+  const [provisionRevisionId, setProvisionRevisionId] = useState("");
+  const [provisionConfigurations, setProvisionConfigurations] = useState<Array<{configuration_id:string;name:string;status:string;current_revision_id:string}>>([]);
+  const [provisionRevisions, setProvisionRevisions] = useState<Array<{revision_id:string;revision_number:number;change_summary:string}>>([]);
+  const [provisioning, setProvisioning] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [gitRemote, setGitRemote] = useState("");
@@ -228,6 +237,83 @@ export function ProjectsWorkspace() {
     setProjectMode("edit");
     setError("");
     setNotice("");
+  }
+
+  useEffect(() => {
+    if (!provisionMode) return;
+    let alive = true;
+    api<{items: Array<{configuration_id:string;name:string;status:string;current_revision_id:string}>}>("/configurations?status=active")
+      .then(result => { if (alive) setProvisionConfigurations(result.items); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [provisionMode]);
+
+  useEffect(() => {
+    if (!provisionMode || !provisionConfigId) {
+      setProvisionRevisions([]);
+      setProvisionRevisionId("");
+      return;
+    }
+    let alive = true;
+    api<{items: Array<{revision_id:string;revision_number:number;change_summary:string}>}>(`/configurations/${encodeURIComponent(provisionConfigId)}/revisions`)
+      .then(result => {
+        if (!alive) return;
+        setProvisionRevisions(result.items);
+        const configuration = provisionConfigurations.find(item => item.configuration_id === provisionConfigId);
+        const current = configuration?.current_revision_id;
+        if (current && result.items.some(item => item.revision_id === current)) {
+          setProvisionRevisionId(current);
+        } else if (result.items.length > 0) {
+          setProvisionRevisionId(result.items[0].revision_id);
+        } else {
+          setProvisionRevisionId("");
+        }
+      })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [provisionMode, provisionConfigId, provisionConfigurations]);
+
+  async function submitProvision(event: FormEvent) {
+    event.preventDefault();
+    if (provisioning) return;
+    if (!provisionName.trim() || !parentPath.trim()) {
+      setError("Project name and parent directory are required.");
+      return;
+    }
+    setProvisioning(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<{operation_id:string;status:string;canonical_path:string;project:Project;checkout:any;workspace:any;workspace_bound:boolean}>(
+        "/projects/provision",
+        json("POST", {
+          name: provisionName.trim(),
+          parent_path: parentPath.trim(),
+          description: provisionDescription,
+          configuration_id: provisionConfigId || null,
+          configuration_revision_id: provisionRevisionId || null,
+        }),
+      );
+      setProvisionMode(false);
+      setProvisionName("");
+      setProvisionDescription("");
+      setParentPath("");
+      setProvisionConfigId("");
+      setProvisionRevisionId("");
+      setProvisionRevisions([]);
+      setNotice(`Project provisioned at ${result.canonical_path}. ${result.workspace_bound ? "Bound to a workspace." : "Not bound to a workspace."}`);
+      const items = await api<{items:Project[];total:number}>("/projects?status=" + filter);
+      setProjects(items.items);
+      if (result.project) {
+        const token = ++generation.current;
+        setSelectedId(result.project.project_id);
+        await loadDetail(result.project.project_id, token);
+      }
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setProvisioning(false);
+    }
   }
 
   async function submitProject(event: FormEvent) {
@@ -456,7 +542,7 @@ export function ProjectsWorkspace() {
           <h1>Projects and checkouts</h1>
           <p>Organize projects and register existing working directories for Evo to reference.</p>
         </div>
-        <button className="quiet-button" onClick={beginCreateProject}>＋ New project</button>
+        <button className="quiet-button" onClick={() => { setProvisionMode(true); setProvisionName(""); setProvisionDescription(""); setParentPath(""); setProvisionConfigId(""); setProvisionRevisionId(""); setProvisionRevisions([]); setError(""); setNotice(""); }}>＋ Provision project</button>
       </div>
 
       {error && <div className="workspace-error" role="alert">{error}</div>}
@@ -493,7 +579,48 @@ export function ProjectsWorkspace() {
         </aside>
 
         <section className="configuration-detail">
-          {projectMode === "create" || projectMode === "edit" ? (
+          {provisionMode ? (
+            <form className="configuration-editor" onSubmit={submitProvision}>
+              <div className="panel-toolbar">
+                <div>
+                  <h2>Provision project</h2>
+                  <p>Create a dedicated directory, initialize Git, and register the project and checkout.</p>
+                </div>
+              </div>
+              <label>
+                Project name
+                <input value={provisionName} onChange={e => setProvisionName(e.target.value)} maxLength={200} required />
+              </label>
+              <label>
+                Parent directory
+                <input value={parentPath} onChange={e => setParentPath(e.target.value)} maxLength={4096} placeholder="/path/to/parent" required />
+              </label>
+              <label>
+                Description
+                <textarea value={provisionDescription} onChange={e => setProvisionDescription(e.target.value)} maxLength={4000} rows={3} />
+              </label>
+              <label>
+                AI configuration (optional)
+                <select value={provisionConfigId} onChange={e => setProvisionConfigId(e.target.value)}>
+                  <option value="">No configuration; leave unbound</option>
+                  {provisionConfigurations.map(item => <option key={item.configuration_id} value={item.configuration_id}>{item.name}</option>)}
+                </select>
+              </label>
+              {provisionConfigId && (
+                <label>
+                  Exact configuration revision
+                  <select value={provisionRevisionId} onChange={e => setProvisionRevisionId(e.target.value)} disabled={provisionRevisions.length === 0}>
+                    <option value="">Select a revision…</option>
+                    {provisionRevisions.map(item => <option key={item.revision_id} value={item.revision_id}>Revision {item.revision_number}{item.change_summary ? ` · ${item.change_summary}` : ""}</option>)}
+                  </select>
+                </label>
+              )}
+              <div className="inline-actions">
+                <button className="quiet-button" type="submit" disabled={provisioning}>{provisioning ? "Provisioning…" : "Provision project"}</button>
+                <button className="quiet-button" type="button" disabled={provisioning} onClick={() => setProvisionMode(false)}>Cancel</button>
+              </div>
+            </form>
+          ) : projectMode === "create" || projectMode === "edit" ? (
             <form className="configuration-editor" onSubmit={submitProject}>
               <div className="panel-toolbar">
                 <div>

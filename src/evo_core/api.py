@@ -165,6 +165,8 @@ def create_app(config_path="config.toml", provider_name=None):
     app.include_router(build_project_checkout_router(store))
     from .workspaces_api import build_workspace_router
     app.include_router(build_workspace_router(store))
+    from .project_provisioning_api import build_project_provisioning_router
+    app.include_router(build_project_provisioning_router(store))
     app.state.config = config
     app.state.store = store
     app.state.lab_db = lab_db

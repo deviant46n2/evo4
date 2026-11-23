@@ -259,6 +259,29 @@ def reactivate_project(store, project_id, *, expected_version):
     return _set_project_status(store, project_id, expected_version, "active")
 
 
+def list_all_checkouts(store):
+    def operation(db):
+        rows = db.execute("SELECT * FROM project_checkouts ORDER BY created_at, checkout_id").fetchall()
+        return [dict(row) for row in rows]
+    return _read(store, operation)
+
+
+def _paths_overlap(left, right):
+    left_path = Path(left)
+    right_path = Path(right)
+    try:
+        left_path.relative_to(right_path)
+        return True
+    except ValueError:
+        pass
+    try:
+        right_path.relative_to(left_path)
+        return True
+    except ValueError:
+        pass
+    return False
+
+
 def register_checkout(
     store,
     project_id,
@@ -277,6 +300,9 @@ def register_checkout(
         project = _project_row(db, project_id)
         if project["status"] != "active":
             raise ProjectArchivedError("cannot register a checkout to an archived project")
+        for row in db.execute("SELECT canonical_path FROM project_checkouts").fetchall():
+            if _paths_overlap(canonical_path, row["canonical_path"]):
+                raise CheckoutPathConflictError("checkout path overlaps an already registered checkout")
         try:
             db.execute(
                 """INSERT INTO project_checkouts

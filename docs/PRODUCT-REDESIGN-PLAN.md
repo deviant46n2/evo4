@@ -204,4 +204,4 @@ The former product-only phase outline is retired to avoid a competing phase hier
 
 The redesign is complete when the chat-first experience, project lifecycle, agent activity, memory experience, configuration visualization, and reliability requirements are implemented, integrated, tested, and independently accepted, while preserving Evo's platform identity and existing safety boundaries.
 
-No redesign implementation is authorized by this plan alone. Implementation requires user authorization and completion of the active stabilization freeze.
+Project Provisioning v1 has been implemented on this branch under explicit user authorization. Broader redesign implementation still requires user authorization; the stabilization freeze for that authorized milestone is lifted.
