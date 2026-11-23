@@ -12,25 +12,11 @@ The repository contains two independently usable applications:
 - **Evo Lab** (`evo-exp`): reproducible inference experiments, deterministic evaluation, and hardware telemetry. The lab is a permanent subsystem, not disposable scaffolding.
 
 
-## Central identity
+## Platform capabilities and ambitions
 
-Evo4 exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a model-agnostic platform for cooperative intelligence; its personal assistant and coding-agent experiences are configurations built on that platform, not its fundamental identity.
+Evo should provide the environment to connect and manage different models, providers, and agent frameworks; experiment with memory, context, retrieval, and orchestration; evaluate individual and cooperative approaches; preserve reusable capabilities; and adopt new models without redesigning the platform around each release.
 
-The ambition is to pursue increasingly capable, potentially superintelligent AI systems through software development: memory, context management, orchestration, tools, agent collaboration, evaluation, and controlled self-improvement.
-
-We are not pursuing foundation-model training, custom neural-network engineering, or a general-purpose AI research laboratory.
-
-Evo4 should provide the environment in which we can:
-
-- Connect and manage different models, providers, and agent frameworks.
-- Experiment with memory, context, retrieval, and orchestration.
-- Evaluate and compare different approaches.
-- Develop multi-agent collaboration.
-- Optimize use of available hardware and external resources.
-- Preserve successful experiments and reusable capabilities.
-- Take advantage of new models and technologies without redesigning Evo4 around each release.
-
-The personal assistant and coding-agent experience are configurations built on this platform, not the fundamental reason the platform exists.
+The long-term ambition is to support increasingly capable software-engineering systems through memory, context management, orchestration, tools, collaboration, evaluation, and controlled self-improvement. This is a research and product direction, not a claim about current autonomy or capability.
 
 ## Development philosophy
 
