@@ -111,7 +111,7 @@ The endpoint is security-sensitive configuration because it determines where pro
 - Permit loopback HTTP for local inference by default. Require HTTPS for non-loopback origins.
 - Non-loopback origins must match an exact operator-configured origin allowlist; no wildcard host patterns. The allowlist is separate from the component definition and is controlled by the operator.
 - Reject URL user-info, embedded credentials, fragments, unexpected query strings, unsupported schemes, and malformed ports. Normalize and compare scheme/host/port as an origin.
-- Validate resolved destination addresses against the configured endpoint policy; reject loopback, link-local, metadata-service, and private-network destinations unless the exact destination is explicitly operator-approved. Revalidate redirects and DNS resolution so a permitted hostname cannot redirect or resolve into a prohibited destination.
+- Validate resolved destination addresses against the configured endpoint policy. Permit loopback destinations only for the fixed local-inference policy; reject link-local and metadata-service destinations. Private-network destinations require exact operator approval. Revalidate redirects and DNS resolution so a permitted hostname cannot redirect or resolve into a prohibited destination.
 - The exact-origin allowlist is operator-owned application configuration, for example `[security] allowed_provider_origins = ["https://api.example.com"]`. Local loopback origins may be allowed by the adapter's fixed local policy; other origins require an exact operator entry.
 - Redirects to a different origin are rejected. Same-origin redirects, if supported, must be bounded and revalidated.
 - Do not forward authorization headers across origins. Do not permit arbitrary headers, proxy overrides, or caller-controlled redirect behavior through component settings.
@@ -144,7 +144,7 @@ A participant instance captures adapter identity/version, capabilities, endpoint
 
 Capabilities describe interface support, not trust or authorization. Registration does not grant permission to execute.
 
-## 7. Invocation envelope and outcomes
+## 6. Invocation envelope and outcomes
 
 A bounded invocation envelope must identify:
 
@@ -172,7 +172,7 @@ The initial normalized terminal outcome set should distinguish at least:
 
 Partial output is retained only as partial evidence and never converted into success. Error details are bounded and redacted.
 
-## 6. Caller authority and deployment trust boundary
+## 7. Caller authority and deployment trust boundary
 
 The current Evo API is a local, single-user application boundary. It restricts request hostnames to loopback and limits browser origins, but it does not authenticate individual users or provide a multi-user principal/role system. P3 must not invent an authenticated `user_id` or claim that loopback host validation is strong authentication.
 
