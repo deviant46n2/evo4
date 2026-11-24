@@ -66,6 +66,21 @@ P3.1 should authorize only these initial types:
 
 The existing coding-agent runtime is not automatically a third executable component. It may be considered later if its tool-use and approval semantics can be represented without recursive provider dispatch or bypassing existing controls.
 
+### 2.4 Existing schema-1 migration and workspace rebind
+
+Making schema 1 non-executable has an operational consequence: any existing workspace pinned to a schema-1 revision will stop being eligible for Registry-backed execution until deliberately migrated. Do not silently auto-upgrade it at load or dispatch time.
+
+The migration path must be explicit and reviewable:
+
+1. A migration preview reads the exact schema-1 revision and proposes a schema-2 definition using only known, lossless mappings. Unknown or ambiguous fields are reported; never guessed or dropped silently.
+2. The user reviews the proposed schema-2 definition and mapping report.
+3. Approval creates a new immutable schema-2 revision. The original schema-1 revision remains unchanged and readable.
+4. The workspace remains pinned to the original revision until the user explicitly rebinds it to the new revision.
+5. Workspace rebind requires an expected workspace version, verifies the new revision belongs to the workspace's same active configuration, and records previous revision, new revision, actor/source, timestamp, and reason in an append-only binding history.
+6. Rebind is atomic. Concurrent stale updates fail rather than overwrite another user's change. Existing in-flight invocations retain their captured immutable binding snapshot; new invocations use the new binding.
+
+If the existing schema-1 shape cannot be mapped unambiguously, require manual reconstruction of the schema-2 definition. No automatic schema-1 execution bridge is included in this proposal.
+
 ## 3. Secret-reference contract
 
 - Initial supported reference form: `env:VARIABLE_NAME`.
@@ -85,6 +100,7 @@ The endpoint is security-sensitive configuration because it determines where pro
 - Non-loopback origins must match an exact operator-configured origin allowlist; no wildcard host patterns. The allowlist is separate from the component definition and is controlled by the operator.
 - Reject URL user-info, embedded credentials, fragments, unexpected query strings, unsupported schemes, and malformed ports. Normalize and compare scheme/host/port as an origin.
 - Validate resolved destination addresses against the configured endpoint policy; reject loopback, link-local, metadata-service, and private-network destinations unless the exact destination is explicitly operator-approved. Revalidate redirects and DNS resolution so a permitted hostname cannot redirect or resolve into a prohibited destination.
+- The exact-origin allowlist is operator-owned application configuration, for example `[security] allowed_provider_origins = ["https://api.example.com"]`. Local loopback origins may be allowed by the adapter's fixed local policy; other origins require an exact operator entry.
 - Redirects to a different origin are rejected. Same-origin redirects, if supported, must be bounded and revalidated.
 - Do not forward authorization headers across origins. Do not permit arbitrary headers, proxy overrides, or caller-controlled redirect behavior through component settings.
 - Tests must cover disallowed scheme/origin, embedded credentials, redirects, private/link-local targets, and secret non-disclosure.
@@ -190,6 +206,10 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 ## 10. Required P3.1/P3.2 tests
 
 - Schema-1 definitions remain readable/editable but cannot execute by default.
+- Migration preview is lossless and explicit; unknown schema-1 shapes are reported as requiring manual migration.
+- Migration creates a new immutable schema-2 revision without changing the original schema-1 revision.
+- A workspace remains pinned to schema 1 until explicit version-checked rebind; binding history records old/new revision and reason.
+- Concurrent rebind attempts with stale expected versions fail safely; in-flight invocations retain their captured binding.
 - Schema-2 valid model and verifier components validate.
 - Unknown component, component version, adapter, adapter version, or setting is rejected.
 - Secret references reject malformed, missing, empty, and non-allowlisted variables; resolved values are redacted from all observable surfaces.
@@ -208,7 +228,7 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 
 Approval is requested for these architectural constraints, not for implementation:
 
-1. Schema 1 remains readable but non-executable by default; schema 2 is required for runnable typed components.
+1. Schema 1 remains readable but non-executable by default; schema 2 is required for runnable typed components. Existing schema-1 workspaces require an explicit migration preview, new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 2. The initial secret resolver supports allowlisted environment-variable references only.
 3. Registry-bound runtime binding has no global TOML fallback; legacy TOML behavior remains separate for non-Registry callers.
 4. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
