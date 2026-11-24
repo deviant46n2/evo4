@@ -98,6 +98,39 @@ class CodingAgent:
             return "\n\nVerification signal: NOT RUN. Files were changed, but no recognized test runner completed after the latest change."
         return ""
 
+    def _enforce_context_budget(self, messages):
+        window = max(4096, int(getattr(self.assistant.config, "context_window_tokens", 49152)))
+        requested_output = max(1, int(self.assistant.config.max_tokens))
+        output_reserve = min(requested_output, max(1, window - 512))
+        input_tokens = max(0, window - output_reserve - 512)
+        budget_chars = input_tokens * 3
+        total = sum(len(str(message.get("content", ""))) for message in messages)
+        if total <= budget_chars:
+            return
+        expendable = [
+            index for index, message in enumerate(messages)
+            if index > 0 and message.get("role") == "user"
+            and str(message.get("content", "")).startswith("UNTRUSTED RETRIEVED CONTEXT")
+        ]
+        if expendable:
+            marker = "[Context notice: untrusted retrieved context omitted to fit the configured context budget.]\n"
+            first = expendable[0]
+            if len(marker) <= budget_chars:
+                messages[first] = {"role": "user", "content": marker}
+            else:
+                del messages[first]
+            for index in sorted(expendable[1:], reverse=True):
+                # Adjust indices after the first deletion.
+                adjusted = index if index < first else index - 1
+                if adjusted < len(messages):
+                    del messages[adjusted]
+            total = sum(len(str(message.get("content", ""))) for message in messages)
+            if total <= budget_chars:
+                return
+        raise ValueError(
+            "The system instructions, tool protocol, and current request exceed the configured context budget."
+        )
+
     def run(self, conversation_id, request, approval, on_token=None, run_id=None,
             stop_event=None, on_progress=None, finalize_run=True,
             project_id=None, workspace_id=None,
@@ -118,11 +151,25 @@ class CodingAgent:
             requested_target = "."
 
         store = self.assistant.store
+        allowed = getattr(self.workspace, "allowed_commands", ()) or ()
+        if allowed:
+            command_notice = (
+                "\n\nConfigured command prefixes: "
+                + ", ".join(" ".join(str(part) for part in prefix) for prefix in allowed)
+                + ". Choose verification commands beginning with one of these prefixes. "
+                "Prefer the project's existing test runner. Never invent a command outside "
+                "this allowlist. If no suitable command is available, report that verification "
+                "is blocked and do not claim tests passed."
+            )
+        else:
+            command_notice = (
+                "\n\nNo command prefixes are configured. Do not claim a command ran or "
+                "tests passed."
+            )
+        trusted_suffix = CODING_POLICY + command_notice
         messages = self.assistant._build_messages(
             conversation_id, request, project_id=project_id, workspace_id=workspace_id,
-            instruction_target=requested_target)
-        messages[0]["content"] += CODING_POLICY
-
+            instruction_target=requested_target, trusted_system_suffix=trusted_suffix)
         included_instruction_paths = set()
         discovery = getattr(self.assistant, "last_instruction_discovery", None)
         if discovery is not None:
@@ -145,21 +192,6 @@ class CodingAgent:
             for item in new_files:
                 pending_instruction_files.append(item)
                 self._included_instruction_paths.add(item.relative_path)
-        allowed = getattr(self.workspace, "allowed_commands", ()) or ()
-        if allowed:
-            messages[0]["content"] += (
-                "\n\nConfigured command prefixes: "
-                + ", ".join(" ".join(str(part) for part in prefix) for prefix in allowed)
-                + ". Choose verification commands beginning with one of these prefixes. "
-                "Prefer the project's existing test runner. Never invent a command outside "
-                "this allowlist. If no suitable command is available, report that verification "
-                "is blocked and do not claim tests passed."
-            )
-        else:
-            messages[0]["content"] += (
-                "\n\nNo command prefixes are configured. Do not claim a command ran or "
-                "tests passed."
-            )
         store.add_message(conversation_id, "user", request, project_id=project_id, workspace_id=workspace_id)
 
         run_metadata = {
@@ -219,6 +251,7 @@ class CodingAgent:
                 while True:
                     provider_attempts += 1
                     try:
+                        self._enforce_context_budget(messages)
                         result = self.assistant.provider.chat(
                             messages,
                             max_tokens=self.assistant.config.max_tokens,

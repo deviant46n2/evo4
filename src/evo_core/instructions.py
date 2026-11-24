@@ -13,6 +13,7 @@ import json
 TRUSTED_GLOBAL_AUTHORITY = "trusted Evo global policy and user authorization"
 MAX_INSTRUCTION_FILE_BYTES = 256_000
 MAX_INSTRUCTION_FILES = 32
+MAX_INSTRUCTION_TOTAL_BYTES = 128_000
 
 
 @dataclass
@@ -106,7 +107,8 @@ def _ancestor_directories(root, base):
 
 
 def discover_repository_instructions(root, target=".", max_file_bytes=MAX_INSTRUCTION_FILE_BYTES,
-                                    max_files=MAX_INSTRUCTION_FILES):
+                                    max_files=MAX_INSTRUCTION_FILES,
+                                    max_total_bytes=MAX_INSTRUCTION_TOTAL_BYTES):
     """Discover applicable ``AGENTS.md`` files beneath *root*.
 
     Only files on the path from *root* to *target* are considered.  Sibling or
@@ -148,6 +150,7 @@ def discover_repository_instructions(root, target=".", max_file_bytes=MAX_INSTRU
         discovery.status = "limit_exceeded"
         discovery.error = f"applicable instruction file count exceeds limit of {max_files}"
 
+    total_bytes = 0
     for candidate in candidates:
         relative = candidate.relative_to(root_path).as_posix()
         try:
@@ -164,6 +167,15 @@ def discover_repository_instructions(root, target=".", max_file_bytes=MAX_INSTRU
                 path=str(candidate), relative_path=relative,
                 status="unreadable", reason=str(exc), trust_level="untrusted"))
             continue
+        if total_bytes + len(content.encode("utf-8")) > max_total_bytes:
+            discovery.ignored_files.append(InstructionFile(
+                path=str(candidate), relative_path=relative,
+                status="ignored", reason=f"aggregate instruction size exceeds limit of {max_total_bytes} bytes",
+                trust_level="untrusted"))
+            discovery.status = "limit_exceeded"
+            discovery.error = f"aggregate instruction size exceeds limit of {max_total_bytes} bytes"
+            continue
+        total_bytes += len(content.encode("utf-8"))
         discovery.applied_files.append(InstructionFile(
             path=str(candidate), relative_path=relative,
             content=content, status="applied", trust_level="untrusted"))
