@@ -214,6 +214,7 @@ For the local-first deployment, do not invent token/cost estimates when the endp
 - Never let configuration or participant output expand global command policy, filesystem access, network access, secrets access, or approval authority.
 - Keep credentials in approved secret handling; redact them from errors, events, and telemetry. The initial resolver accepts only environment-variable references whose names are explicitly allowlisted in operator-owned configuration; absent allowlist means deny.
 - Provider endpoint origins are security-sensitive: allow loopback HTTP for local inference; require HTTPS and exact operator allowlisting for non-loopback origins. Reject embedded credentials, prohibited resolved destinations, and cross-origin redirects; revalidate same-origin redirects and never forward authorization across origins.
+- Provider compliance approval is separate from endpoint allowlisting and health. The operator must approve each exact origin, adapter/interface, and intended use with review provenance; unknown, restricted, suspended, or stale approval blocks dispatch. Loopback addressing alone does not prove data stays local.
 - Enforce timeouts, bounded input/output sizes, cancellation checks, and finite retries.
 - Unknown adapter, availability, compliance, resource capacity, or authorization fails closed for execution.
 - Do not silently substitute another provider, model, adapter, configuration revision, or permission set.
@@ -234,6 +235,7 @@ The following order minimizes speculative framework work.
 - Define the logical assistant entrypoint and explicit component-key references; no "first model" or implicit component selection.
 - Specify the initial secret-reference grammar and environment-variable-backed resolver only, with an operator-owned environment-name allowlist. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
 - Freeze provider endpoint destination policy: loopback HTTP for local inference; exact operator allowlisting plus HTTPS for non-loopback origins; reject embedded credentials, prohibited resolved addresses, and cross-origin redirects.
+- Define operator-owned compliance approvals per exact origin, adapter/interface, and use, with review provenance separate from endpoint allowlisting.
 - Define explicit schema-1 migration preview and version-checked workspace rebind; preserve old immutable revisions and never auto-migrate.
 - Define bounded/cooperative cancellation semantics consistent with the current provider transport; do not promise interruption of an in-flight blocking request unless implemented and tested.
 - Reconcile the Phase 2 roadmap status and acceptance evidence before Phase 3 runtime implementation proceeds.
