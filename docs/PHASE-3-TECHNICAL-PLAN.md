@@ -196,9 +196,9 @@ Before dispatch:
 6. Reject or defer if a required estimate, telemetry field, quota, or compliance status is unknown.
 7. Record the decision and reason before invoking the adapter.
 
-Resource estimates are not guarantees or OS isolation. The existing hardware admission endpoint is advisory and does not reserve capacity. Phase 3 must either introduce a small atomic reservation/lease suitable for one bounded dispatch or explicitly serialize and constrain initial dispatch so concurrent requests cannot each consume the same reported headroom. Do not claim safe admission by merely calling the existing advisory endpoint.
+Resource estimates are not guarantees or OS isolation. The existing hardware admission endpoint is advisory and does not reserve capacity. For the first runtime, prefer one global single-flight provider dispatch across Evo instances rather than pretending to have a predictive scheduler. Acquire a durable lease with SQLite `BEGIN IMMEDIATE` in the Registry database transaction boundary, revalidating the workspace/project/configuration and pinned revision in the same transaction. A process-local semaphore is insufficient for multi-process correctness. Bound the lease by the provider deadline or renew it, release it on all terminal paths, and recover abandoned leases conservatively without allowing overlapping live invocations.
 
-For the local-first deployment, do not invent token/cost estimates when the endpoint does not report usage. Track configured maximums and actual usage when returned; label unavailable measurements as unknown. Provider quotas must be configured explicitly and enforced conservatively. The first version need not implement sophisticated forecasting or dynamic model loading.
+For the local-first deployment, do not invent token/cost estimates when the endpoint does not report usage. Track configured maximums and actual usage when returned; label unavailable measurements as unknown. Remote-provider request/token budgets must be operator-configured and enforced conservatively; if quota is unknown and no conservative local limit is configured, fail closed. The first version need not implement sophisticated forecasting or dynamic model loading.
 
 ## 7. Security, isolation, and failure requirements
 
@@ -206,7 +206,8 @@ For the local-first deployment, do not invent token/cost estimates when the endp
 - Preserve Phase 2 project/workspace isolation. Context assembly and tools receive only the authorized scope.
 - Treat configuration content, retrieved context, participant messages, repository files, and tool output as untrusted input.
 - Never let configuration or participant output expand global command policy, filesystem access, network access, secrets access, or approval authority.
-- Keep credentials in approved secret handling; redact them from errors, events, and telemetry.
+- Keep credentials in approved secret handling; redact them from errors, events, and telemetry. The initial resolver accepts only environment-variable references whose names are explicitly allowlisted in operator-owned configuration; absent allowlist means deny.
+- Provider endpoint origins are security-sensitive: allow loopback HTTP for local inference; require HTTPS and exact operator allowlisting for non-loopback origins. Reject embedded credentials, prohibited resolved destinations, and cross-origin redirects; revalidate same-origin redirects and never forward authorization across origins.
 - Enforce timeouts, bounded input/output sizes, cancellation checks, and finite retries.
 - Unknown adapter, availability, compliance, resource capacity, or authorization fails closed for execution.
 - Do not silently substitute another provider, model, adapter, configuration revision, or permission set.
@@ -223,7 +224,9 @@ The following order minimizes speculative framework work.
 - Define migration rules that preserve the original revision, report unknown/ambiguous fields, and require manual reconstruction when a lossless mapping is not provable.
 - Require schema 2 for runnable components; reject unknown component types, adapter IDs, component versions, and unsupported settings with actionable errors.
 - Define adapter, participant, invocation-envelope, event, and result contracts, including explicit availability, authorization, and compliance states.
-- Specify the initial secret-reference grammar and environment-variable-backed resolver only. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
+- Specify the initial secret-reference grammar and environment-variable-backed resolver only, with an operator-owned environment-name allowlist. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
+- Freeze provider endpoint destination policy: loopback HTTP for local inference; exact operator allowlisting plus HTTPS for non-loopback origins; reject embedded credentials, prohibited resolved addresses, and cross-origin redirects.
+- Define explicit schema-1 migration preview and version-checked workspace rebind; preserve old immutable revisions and never auto-migrate.
 - Define bounded/cooperative cancellation semantics consistent with the current provider transport; do not promise interruption of an in-flight blocking request unless implemented and tested.
 - Reconcile the Phase 2 roadmap status and acceptance evidence before Phase 3 runtime implementation proceeds.
 
