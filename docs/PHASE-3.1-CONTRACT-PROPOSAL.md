@@ -245,13 +245,15 @@ Approval is requested for these architectural constraints, not for implementatio
 
 1. Schema 1 remains readable but non-executable by default; schema 2 is required for runnable typed components. Existing schema-1 workspaces require an explicit migration preview, new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 2. The initial secret resolver supports allowlisted environment-variable references only.
-3. The schema-2 assistant-runtime component binds model selection, persona guidance, generation parameters, context/memory/history budgets, and the logical assistant entrypoint to the same immutable revision. Operator safety policy remains code-owned.
-4. The schema-2 command-policy component preserves the operator global command ceiling and can only narrow it.
-5. Provider destinations require loopback HTTP or exact operator-allowlisted HTTPS origins, with redirect and resolved-address validation.
 3. Registry-bound runtime binding has no global TOML fallback; legacy TOML behavior remains separate for non-Registry callers.
-4. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
-5. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
-6. Cancellation is described as cooperative/bounded until transport-level cancellation is actually implemented and tested.
-7. Participant identity uses stable integration identity plus immutable revision-specific participant instance identity.
+4. The schema-2 assistant-runtime component binds model selection, persona guidance, generation parameters, context/memory/history budgets, and the logical assistant entrypoint to the same immutable revision. Operator safety policy remains code-owned.
+5. The schema-2 command-policy component preserves the operator global command ceiling and can only narrow it.
+6. Provider destinations require loopback HTTP or exact operator-allowlisted HTTPS origins, with redirect and resolved-address validation.
+7. Unknown endpoint availability denies dispatch until a supported bounded probe establishes availability.
+8. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
+9. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
+10. Cancellation is described as cooperative/bounded until transport-level cancellation is actually implemented and tested.
+11. Initial provider admission uses a durable global single-flight lease; this is deliberately conservative, not a predictive resource scheduler.
+12. Participant identity uses stable integration identity plus immutable revision-specific participant instance identity.
 
 No application code, migrations, API behavior, or services should change until the user explicitly approves the contract and authorizes implementation.
