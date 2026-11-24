@@ -263,7 +263,17 @@ class EvoAssistant:
         ]
         explicit = re.match(r"^remember that\s+(.+)$",user_text.strip(),re.IGNORECASE)
         if explicit and len(explicit.group(1).strip()) >= 8:
-            return self.store.add_memory(explicit.group(1).strip(),category="explicit",source="explicit-user",confidence=1.0)
+            conversation = self.store.get_conversation_record(conversation_id)
+            if conversation is None:
+                return None
+            try:
+                project_id, workspace_id = self.store.validate_scope(
+                    conversation["project_id"], conversation["workspace_id"])
+            except ValueError:
+                return None
+            return self.store.add_memory(
+                explicit.group(1).strip(), category="explicit", source="explicit-user",
+                confidence=1.0, project_id=project_id, workspace_id=workspace_id)
         for pattern,category,confidence in patterns:
             match = re.match(pattern,user_text.strip(),re.IGNORECASE)
             if match:
@@ -277,14 +287,29 @@ class EvoAssistant:
             raise ValueError("Message cannot be empty")
         # Build context before persisting this turn so the current user message is not duplicated.
         messages = self._build_messages(conversation_id, user_text, project_id=project_id, workspace_id=workspace_id)
-        self.store.add_message(conversation_id,"user",user_text)
+        conversation = self.store.get_conversation_record(conversation_id)
+        conversation_project = conversation["project_id"] if conversation is not None else None
+        conversation_workspace = conversation["workspace_id"] if conversation is not None else None
+        if conversation is not None:
+            if project_id is not None and project_id != conversation_project:
+                raise ValueError("project_id does not match the conversation scope")
+            if workspace_id is not None and workspace_id != conversation_workspace:
+                raise ValueError("workspace_id does not match the conversation scope")
+            if conversation_project is not None:
+                project_id, workspace_id = conversation_project, conversation_workspace
+            else:
+                project_id, workspace_id = None, None
+        else:
+            project_id, workspace_id = None, None
+        self.store.add_message(conversation_id,"user",user_text,project_id=project_id,workspace_id=workspace_id)
         self._capture_memory_candidate(conversation_id,user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,
                                     temperature=self.config.temperature,on_token=on_token)
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
             "elapsed_seconds":result["elapsed_seconds"],"ttft_seconds":result["ttft_seconds"],
             "prompt_tokens":result["prompt_tokens"],"completion_tokens":result["completion_tokens"],
-            "finish_reason":result.get("finish_reason"),"truncated":bool(result.get("truncated",False))})
+            "finish_reason":result.get("finish_reason"),"truncated":bool(result.get("truncated",False))},
+            project_id=project_id,workspace_id=workspace_id)
         return result
 
     def close(self):

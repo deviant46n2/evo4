@@ -172,11 +172,11 @@ class EvoStore:
             scope_sql = "(c.project_id IS NULL AND c.workspace_id IS NULL)"
             scope_params = []
         elif request_workspace is None:
-            scope_sql = "((c.project_id IS NULL AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id IS NULL))"
+            scope_sql = "(c.project_id = ? AND c.workspace_id IS NULL)"
             scope_params = [request_project]
         else:
-            scope_sql = "((c.project_id IS NULL AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id IS NULL) OR (c.project_id = ? AND c.workspace_id = ?))"
-            scope_params = [request_project, request_project, request_workspace]
+            scope_sql = "(c.project_id = ? AND (c.workspace_id IS NULL OR c.workspace_id = ?))"
+            scope_params = [request_project, request_workspace]
         with self.lock:
             if query and query.strip():
                 pattern = _like_pattern(query.strip())
@@ -207,8 +207,9 @@ class EvoStore:
             row = self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             if row is None:
                 return None
-            if not _conversation_visible(row["project_id"], row["workspace_id"],
-                                        request_project, request_workspace):
+            from .scope_validation import owned_scope_visible
+            if not owned_scope_visible(row["project_id"], row["workspace_id"],
+                                     request_project, request_workspace):
                 return None
             return row
 
@@ -216,20 +217,34 @@ class EvoStore:
         with self.lock:
             return self.db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
 
-    def rename_conversation(self, conversation_id, title):
+    def rename_conversation(self, conversation_id, title, project_id=None, workspace_id=None):
         title = (title or "").strip()
         if not title:
             raise ValueError("Conversation title cannot be empty")
         if len(title) > 120:
             raise ValueError("Conversation title cannot exceed 120 characters")
+        from .scope_validation import validate_scope, owned_scope_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         with self.lock:
+            row = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?",
+                                  (conversation_id,)).fetchone()
+            if row is None or not owned_scope_visible(row["project_id"], row["workspace_id"],
+                                                     project_id, workspace_id):
+                return False
             cur = self.db.execute("UPDATE conversations SET title=?,updated_at=? WHERE id=?",
                                   (title, utc_now(), conversation_id))
             self.db.commit()
             return cur.rowcount == 1
 
-    def delete_conversation(self, conversation_id):
+    def delete_conversation(self, conversation_id, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope, owned_scope_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         with self.lock:
+            row = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?",
+                                  (conversation_id,)).fetchone()
+            if row is None or not owned_scope_visible(row["project_id"], row["workspace_id"],
+                                                     project_id, workspace_id):
+                return False
             cur = self.db.execute("DELETE FROM conversations WHERE id=?", (conversation_id,))
             self.db.commit()
             return cur.rowcount == 1
@@ -248,10 +263,18 @@ class EvoStore:
         from .scope_validation import validate_scope
         return validate_scope(self, project_id, workspace_id)
 
-    def add_message(self, conversation_id, role, content, metadata=None):
+    def add_message(self, conversation_id, role, content, metadata=None, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope, owned_scope_visible
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         now = utc_now()
         with self.lock:
             try:
+                conversation = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?",
+                                               (conversation_id,)).fetchone()
+                if conversation is None or not owned_scope_visible(conversation["project_id"],
+                                                                 conversation["workspace_id"],
+                                                                 project_id, workspace_id):
+                    raise ValueError("Conversation not found in the requested scope")
                 cur = self.db.execute("INSERT INTO messages(conversation_id,role,content,created_at,metadata_json) VALUES(?,?,?,?,?)",
                                       (conversation_id, role, content, now, json.dumps(metadata or {}, ensure_ascii=False)))
                 if role == "user":
@@ -282,8 +305,9 @@ class EvoStore:
             conversation = self.db.execute("SELECT project_id, workspace_id FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             if conversation is None:
                 return []
-            if not _conversation_visible(conversation["project_id"], conversation["workspace_id"],
-                                        request_project, request_workspace):
+            from .scope_validation import owned_scope_visible
+            if not owned_scope_visible(conversation["project_id"], conversation["workspace_id"],
+                                     request_project, request_workspace):
                 return []
             rows = self.db.execute("SELECT role,content,created_at FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT ?",
                                    (conversation_id, max(1, limit))).fetchall()
@@ -425,10 +449,22 @@ class EvoStore:
                     raise
             return selected
 
-    def list_memories(self, limit=50):
+    def list_memories(self, limit=50, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
+        if project_id is None:
+            scope_sql = "(project_id IS NULL AND workspace_id IS NULL)"
+            scope_params = []
+        elif workspace_id is None:
+            scope_sql = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id = ? AND workspace_id IS NULL))"
+            scope_params = [project_id]
+        else:
+            scope_sql = "((project_id IS NULL AND workspace_id IS NULL) OR (project_id = ? AND workspace_id IS NULL) OR (project_id = ? AND workspace_id = ?))"
+            scope_params = [project_id, project_id, workspace_id]
         with self.lock:
-            return self.db.execute("SELECT * FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT ?",
-                                    (max(1,limit),)).fetchall()
+            params = scope_params + [max(1, int(limit))]
+            sql = "SELECT * FROM memories WHERE status='active' AND " + scope_sql + " ORDER BY updated_at DESC LIMIT ?"
+            return self.db.execute(sql, params).fetchall()
 
     def archive_memory(self, memory_id, project_id=None, workspace_id=None):
         from .scope_validation import validate_scope, scope_is_visible
@@ -689,8 +725,9 @@ class EvoStore:
                                   (candidate_id,)).fetchone()
             if not row:
                 return None
-            if not _conversation_visible(row["project_id"], row["workspace_id"],
-                                        request_project, request_workspace):
+            from .scope_validation import scope_is_visible
+            if not scope_is_visible(row["project_id"], row["workspace_id"],
+                                    request_project, request_workspace):
                 return None
             memory_id = None
             try:
@@ -909,15 +946,27 @@ class EvoStore:
         with self.lock:
             return self.db.execute("SELECT * FROM agent_runs WHERE id=?", (run_id,)).fetchone()
 
-    def list_agent_runs(self, limit=30, status=None):
+    def list_agent_runs(self, limit=30, status=None, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
+        if project_id is None:
+            scope_sql = "(metadata_json IS NULL OR (json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
+            scope_params = []
+        elif workspace_id is None:
+            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
+            scope_params = [project_id]
+        else:
+            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
+            scope_params = [project_id, workspace_id]
         with self.lock:
+            params = []
+            sql = "SELECT * FROM agent_runs WHERE " + scope_sql
             if status:
-                return self.db.execute(
-                    "SELECT * FROM agent_runs WHERE status=? ORDER BY started_at DESC LIMIT ?",
-                    (status,max(1,min(int(limit),500)))).fetchall()
-            return self.db.execute(
-                "SELECT * FROM agent_runs ORDER BY started_at DESC LIMIT ?",
-                (max(1,min(int(limit),500)),)).fetchall()
+                sql += " AND status=?"
+                params.append(status)
+            sql += " ORDER BY started_at DESC LIMIT ?"
+            params = scope_params + params + [max(1, min(int(limit), 500))]
+            return self.db.execute(sql, params).fetchall()
 
     def get_run_events(self, run_id, limit=100):
         with self.lock:
@@ -970,21 +1019,43 @@ class EvoStore:
 
 
 
-    def agent_run_summary(self):
+    def agent_run_summary(self, project_id=None, workspace_id=None):
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(self, project_id, workspace_id)
+        if project_id is None:
+            scope_sql = "(metadata_json IS NULL OR (json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
+            scope_params = []
+        elif workspace_id is None:
+            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
+            scope_params = [project_id]
+        else:
+            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
+            scope_params = [project_id, workspace_id]
         with self.lock:
             runs=self.db.execute(
-                "SELECT id,status,metadata_json FROM agent_runs WHERE kind='coding'").fetchall()
-            feedback=self.db.execute(
-                """SELECT f.outcome,COUNT(*) AS count FROM run_feedback f
-                   JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding' GROUP BY f.outcome""").fetchall()
-            reviewed=self.db.execute(
-                """SELECT COUNT(DISTINCT f.run_id) FROM run_feedback f
-                   JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding'""").fetchone()[0]
-            lesson_count=self.db.execute(
-                """SELECT COUNT(*) FROM lessons l
-                   JOIN run_feedback f ON f.lesson_id=l.id
-                   JOIN agent_runs r ON r.id=f.run_id
-                   WHERE l.source='user-run-feedback' AND l.status='active' AND r.kind='coding'""").fetchone()[0]
+                "SELECT id,status,metadata_json FROM agent_runs WHERE kind='coding' AND " + scope_sql,
+                scope_params).fetchall()
+            visible_ids=[row["id"] for row in runs]
+            if visible_ids:
+                placeholders=",".join("?" for _ in visible_ids)
+                feedback=self.db.execute(
+                    """SELECT f.outcome,COUNT(*) AS count FROM run_feedback f
+                       JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding' AND r.id IN (""" + placeholders + """) GROUP BY f.outcome""",
+                    visible_ids).fetchall()
+                reviewed=self.db.execute(
+                    """SELECT COUNT(DISTINCT f.run_id) FROM run_feedback f
+                       JOIN agent_runs r ON r.id=f.run_id WHERE r.kind='coding' AND r.id IN (""" + placeholders + """)""",
+                    visible_ids).fetchone()[0]
+                lesson_count=self.db.execute(
+                    """SELECT COUNT(*) FROM lessons l
+                       JOIN run_feedback f ON f.lesson_id=l.id
+                       JOIN agent_runs r ON r.id=f.run_id
+                       WHERE l.source='user-run-feedback' AND l.status='active' AND r.kind='coding' AND r.id IN (""" + placeholders + """)""",
+                    visible_ids).fetchone()[0]
+            else:
+                feedback=[]
+                reviewed=0
+                lesson_count=0
         statuses={}
         verification={}
         tool_calls=[]

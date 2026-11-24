@@ -160,7 +160,7 @@ class CodingAgent:
                 "\n\nNo command prefixes are configured. Do not claim a command ran or "
                 "tests passed."
             )
-        store.add_message(conversation_id, "user", request)
+        store.add_message(conversation_id, "user", request, project_id=project_id, workspace_id=workspace_id)
 
         run_metadata = {
             "workspace": str(self.workspace.root),
@@ -279,6 +279,7 @@ class CodingAgent:
                                     "provider_response_attempts": provider_attempts,
                                     "malformed_tool_call_retries": malformed_tool_call_retries,
                                 },
+                                project_id=project_id, workspace_id=workspace_id,
                             )
                             if finalize_run:
                                 store.finish_agent_run(
@@ -438,6 +439,7 @@ class CodingAgent:
                             "agent_run_id": run_id,
                             "verification": verification["status"],
                         },
+                        project_id=project_id, workspace_id=workspace_id,
                     )
 
                     if finalize_run:
@@ -647,6 +649,7 @@ class CodingAgent:
                     "truncated": True,
                     "verification": verification["status"],
                 },
+                project_id=project_id, workspace_id=workspace_id,
             )
 
             if finalize_run:

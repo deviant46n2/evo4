@@ -170,7 +170,7 @@ class RetrievalIsolationTests(unittest.TestCase):
             store = make_store(tmp)
             project, other, workspace, other_workspace = make_fixtures(store, root)
             cid = store.create_conversation("proj", project_id=project["project_id"])
-            store.add_message(cid, "user", "hello")
+            store.add_message(cid, "user", "hello", project_id=project["project_id"])
             self.assertIsNone(store.get_conversation(cid, project_id=other["project_id"]))
             self.assertEqual(store.get_messages(cid, 10, project_id=other["project_id"]), [])
             store.close()
@@ -426,3 +426,110 @@ class RemainingScopeClosureStoreTests(unittest.TestCase):
             self.store.list_memory_candidates(project_id="missing-project")
         with self.assertRaises(ValueError):
             self.store.search_memories("anything", project_id="missing-project")
+
+
+class ExplicitMemoryCaptureScopeTests(unittest.TestCase):
+    def _make_workspace(self, store, root, name="Project"):
+        initialize_platform_registry(store)
+        project = register_project(store, name)
+        directory = root / (name.lower() + "-checkout")
+        directory.mkdir()
+        checkout = register_checkout(store, project["project_id"], directory)
+        cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg")
+        workspace = create_workspace(store, "Workspace", project["project_id"],
+                                    cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                    checkout_id=checkout["checkout_id"])
+        return project, workspace
+
+    def test_explicit_remember_retains_conversation_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                mid = assistant._capture_memory_candidate(cid, "remember that scoped memory capture must retain project scope")
+                self.assertIsInstance(mid, str)
+                row = store.db.execute("SELECT project_id, workspace_id FROM memories WHERE id=?", (mid,)).fetchone()
+                self.assertEqual(row["project_id"], project["project_id"])
+                self.assertEqual(row["workspace_id"], workspace["workspace_id"])
+                # not retrievable from another project
+                other = register_project(store, "Other")
+                self.assertNotIn(mid, [r["id"] for r in store.search_memories("scoped memory", project_id=other["project_id"])])
+                # not global
+                self.assertNotIn(mid, [r["id"] for r in store.search_memories("scoped memory")])
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_explicit_remember_global_conversation_stays_global(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("global")
+                mid = assistant._capture_memory_candidate(cid, "remember that global memory capture stays global")
+                self.assertIsInstance(mid, str)
+                row = store.db.execute("SELECT project_id, workspace_id FROM memories WHERE id=?", (mid,)).fetchone()
+                self.assertIsNone(row["project_id"])
+                self.assertIsNone(row["workspace_id"])
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_explicit_remember_missing_or_invalid_conversation_does_not_write_global(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                before = len(store.db.execute("SELECT id FROM memories").fetchall())
+                self.assertIsNone(assistant._capture_memory_candidate("missing-conversation", "remember that this must not be stored"))
+                # invalid conversation scope cannot be represented by a real conversation; ensure no new memory
+                after = len(store.db.execute("SELECT id FROM memories").fetchall())
+                self.assertEqual(before, after)
+            finally:
+                assistant.close()
+                store.close()
+
+
+class OwnedScopeFilteringTests(unittest.TestCase):
+    def test_agent_runs_filter_before_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            from evo_core.platform_registry import initialize_platform_registry
+            from evo_core.project_checkouts import register_project, register_checkout
+            from evo_core.ai_configurations import create_configuration
+            from evo_core.workspaces import create_workspace
+            initialize_platform_registry(store)
+            project = register_project(store, "Project")
+            directory = root / "checkout"
+            directory.mkdir()
+            checkout = register_checkout(store, project["project_id"], directory)
+            cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg")
+            workspace = create_workspace(store, "Workspace", project["project_id"],
+                                        cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                        checkout_id=checkout["checkout_id"])
+            # Enough global runs to exceed the requested limit.
+            for _ in range(5):
+                store.start_agent_run("coding", {})
+            scoped_run = store.start_agent_run("coding", {"project_id": project["project_id"], "workspace_id": workspace["workspace_id"]})
+            rows = store.list_agent_runs(limit=1, project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+            self.assertEqual([r["id"] for r in rows], [scoped_run])
+
+    def test_global_conversation_not_visible_in_project_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            from evo_core.platform_registry import initialize_platform_registry
+            from evo_core.project_checkouts import register_project
+            initialize_platform_registry(store)
+            project = register_project(store, "Project")
+            cid = store.create_conversation("global")
+            self.assertIsNone(store.get_conversation(cid, project_id=project["project_id"]))
+            self.assertEqual(store.get_messages(cid, 10, project_id=project["project_id"]), [])

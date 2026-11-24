@@ -772,7 +772,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     def _run_visible_in_scope(row, project_id, workspace_id):
-        from .scope_validation import scope_is_visible
+        from .scope_validation import owned_scope_visible
         try:
             metadata = json.loads(row["metadata_json"] or "{}")
         except (TypeError, json.JSONDecodeError):
@@ -787,16 +787,16 @@ def create_app(config_path="config.toml", provider_name=None):
             record_project, record_workspace = store.validate_scope(record_project, record_workspace)
         except ValueError:
             return False
-        return scope_is_visible(record_project, record_workspace, project_id, workspace_id)
+        return owned_scope_visible(record_project, record_workspace, project_id, workspace_id)
 
     def _plan_visible_in_scope(plan, project_id, workspace_id):
-        from .scope_validation import scope_is_visible
+        from .scope_validation import owned_scope_visible
         try:
             record_project, record_workspace = store.validate_scope(
                 plan.get("project_id"), plan.get("workspace_id"))
         except ValueError:
             return False
-        return scope_is_visible(record_project, record_workspace, project_id, workspace_id)
+        return owned_scope_visible(record_project, record_workspace, project_id, workspace_id)
 
     def serialize_run(row):
         try:
@@ -813,9 +813,8 @@ def create_app(config_path="config.toml", provider_name=None):
     def agent_runs(limit: int = 50, status: str | None = None,
                    project_id: str | None = None, workspace_id: str | None = None):
         project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
-        rows = store.list_agent_runs(500, status)
-        visible = [row for row in rows if _run_visible_in_scope(row, project_id, workspace_id)]
-        return [serialize_run(row) for row in visible[:min(max(limit, 1), 100)]]
+        rows = store.list_agent_runs(min(max(limit, 1), 100), status, project_id=project_id, workspace_id=workspace_id)
+        return [serialize_run(row) for row in rows]
 
     @app.get("/api/v1/agents/{run_id:uuid}")
     def agent_run(run_id: UUID, project_id: str | None = None, workspace_id: str | None = None):
@@ -864,14 +863,19 @@ def create_app(config_path="config.toml", provider_name=None):
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
+        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
+        try:
+            effective_allowed_commands = effective_project_command_prefixes(config.allowed_commands, revision)
+        except CommandPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             proposal = orchestration.propose_with_model(
                 assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
-                allowed_commands=config.allowed_commands)
+                allowed_commands=effective_allowed_commands)
             with lab_db.lock:
                 plan = orchestration.create_plan(
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
-                    allowed_commands=config.allowed_commands,
+                    allowed_commands=effective_allowed_commands,
                     project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
                     store=store)
             return plan
@@ -940,6 +944,11 @@ def create_app(config_path="config.toml", provider_name=None):
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
         if plan_project_id != binding_project_id:
             raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
+        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
+        try:
+            effective_project_command_prefixes(config.allowed_commands, revision)
+        except CommandPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
             if plan is None:
@@ -1180,6 +1189,12 @@ def create_app(config_path="config.toml", provider_name=None):
                         for command in commands:
                             if stop_event.is_set() or shutting_down.is_set():
                                 break
+                            from evo_experiments.execution import command_allowed
+                            if not command_allowed(command, effective_allowed_commands):
+                                with lab_db.lock:
+                                    orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "failed", None, "", "Verification command is not allowed by the effective project command policy.")
+                                verification_status = "failed"
+                                continue
                             approved = approval("run_command", {"argv": command, "timeout_seconds": 120})
                             if not approved:
                                 with lab_db.lock:
@@ -1331,7 +1346,7 @@ def create_app(config_path="config.toml", provider_name=None):
         if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         try:
-            updated = store.rename_conversation(conversation_id, payload.title)
+            updated = store.rename_conversation(conversation_id, payload.title, project_id=validated_project_id, workspace_id=validated_workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if not updated:
@@ -1352,7 +1367,7 @@ def create_app(config_path="config.toml", provider_name=None):
             entry = conversation_locks.get(conversation_id)
             if entry and entry["users"]:
                 raise HTTPException(status_code=409, detail="Conversation is currently active")
-            if not store.delete_conversation(conversation_id):
+            if not store.delete_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
         return None
 

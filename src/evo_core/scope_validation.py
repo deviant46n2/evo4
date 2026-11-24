@@ -61,3 +61,22 @@ def scope_is_visible(record_project_id, record_workspace_id, request_project_id,
     return record_project_id == request_project_id and (
         record_workspace_id is None or record_workspace_id == request_workspace_id
     )
+
+def owned_scope_visible(record_project_id, record_workspace_id, request_project_id, request_workspace_id):
+    """Ownership visibility for conversations, runs, and plans.
+
+    Global records are not inherited into project scopes. Project-wide records
+    remain visible when a workspace is selected.
+    """
+    if request_project_id is None:
+        return record_project_id is None and record_workspace_id is None
+    if record_project_id != request_project_id:
+        return False
+    if request_workspace_id is None:
+        return record_workspace_id is None
+    return record_workspace_id is None or record_workspace_id == request_workspace_id
+
+
+def reference_scope_visible(record_project_id, record_workspace_id, request_project_id, request_workspace_id):
+    """Reference/context visibility, allowing global records in project scopes."""
+    return scope_is_visible(record_project_id, record_workspace_id, request_project_id, request_workspace_id)

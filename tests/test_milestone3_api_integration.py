@@ -139,9 +139,9 @@ class ConversationApiScopeTests(unittest.TestCase):
         cid = body["id"]
         status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages")
         self.assertEqual(status, 200)
-        # global conversation not visible with project scope
+        # global conversation is not visible with project scope
         status, data = asgi_request(self.app, "GET", f"/api/v1/conversations/{cid}/messages?project_id={self.project['project_id']}")
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 404)
 
     def test_project_chat_matching_scope(self):
         status, body = asgi_request(self.app, "POST", "/api/v1/conversations",
@@ -635,7 +635,7 @@ class AgentScopeApiTests(unittest.TestCase):
             self.app, "GET",
             f"/api/v1/agents?limit=100&project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
         self.assertEqual(status, 200)
-        self.assertIn(global_run, {row["id"] for row in rows})
+        self.assertNotIn(global_run, {row["id"] for row in rows})
         self.assertIn(scoped_run, {row["id"] for row in rows})
         status, data = asgi_request(
             self.app, "GET",
