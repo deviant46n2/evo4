@@ -749,6 +749,9 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 202)
             run_id = body["run_id"]
             self.assertTrue(claim_entered.wait(timeout=5), "worker never reached the delayed claim")
+            with self.app.state.lab_db.lock:
+                queued_task = background_agent.get(self.app.state.lab_db.connection, run_id)
+            self.assertEqual(queued_task["status"], "queued")
             status, cancel = asgi_request(self.app, "POST",
                                           f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             self.assertEqual(status, 200)
@@ -898,6 +901,9 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             self.assertEqual(status, 202)
             run_id = body["run_id"]
             self.assertTrue(claim_entered.wait(timeout=5), "worker never reached the delayed claim")
+            with self.app.state.lab_db.lock:
+                queued_task = background_agent.get(self.app.state.lab_db.connection, run_id)
+            self.assertEqual(queued_task["status"], "queued")
             first = asgi_request(self.app, "POST",
                                  f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             second = asgi_request(self.app, "POST",
