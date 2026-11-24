@@ -64,20 +64,40 @@ The unified roadmap/architecture reconciliation remains in progress. Gemini's in
 
 ## Working collaboration protocol
 
-The user communicates the desired outcome or objective. GPT-6 investigates the repository, existing architecture, and relevant constraints. GPT-6 determines the implementation strategy and assigns ownership. The assigned participant implements: GPT-6 authors code directly when appropriate; Kilo implements when its local access or comparative advantage makes that preferable. Kilo performs local integration, testing, builds, and runtime checks when required. The non-implementing participant independently challenges and reviews the work where practical. GPT-6 retrieves and examines the exact resulting commit, diff, and evidence. GPT-6 resolves technical disagreements and makes the final engineering acceptance decision. GPT-6 identifies and advances the next useful task without requiring the user to manage routine engineering coordination.
+The user is the Vision Officer and ultimate authority. GPT-6 is the default technical lead, primary author, and implementation owner. Kilo is the local execution, verification, and independent-review partner. This is an explicit operating rule, not a per-task choice between two interchangeable implementers.
 
-Operational constraints:
-- Git is the current collaboration bridge.
-- Kilo receives complete, copy-paste-ready prompts for local tasks.
-- Kilo stages only files belonging to the assigned task.
-- Kilo commits and pushes to the existing branch when requested by the established workflow.
-- Never discard, overwrite, reset, stash, or clean unrelated modifications or pre-existing untracked files.
-- GPT-6 must not claim to have executed local tests or runtime checks that it has not actually run.
-- The user should not have to manage routine agent assignment, technical sequencing, or repeated incomplete handoffs.
+### GPT-6 authorship and ownership
+
+- GPT-6 directly investigates the repository and authors application code, tests, architecture, and documentation using available repository tools.
+- GPT-6 makes source changes directly whenever repository access permits, and owns implementation strategy, sequencing, integration, and final technical acceptance.
+- GPT-6 creates task-scoped branches, commits, and pull requests as appropriate. It must inspect the current branch and HEAD before each new engineering handoff.
+- GPT-6 proactively advances useful work and must not ask the user to relay implementation tasks GPT-6 can perform itself.
+- Kilo is not the default implementation delegate. Local machine access alone is not a reason to transfer authorship.
+
+### Kilo's role
+
+Kilo is used when a task genuinely requires the user's local filesystem, development environment, hardware, running application, local build/test execution, or an independent challenge that GPT-6 cannot adequately perform directly. Kilo's normal responsibilities are:
+- Run explicitly requested local tests, builds, integration checks, and runtime verification.
+- Return exact commands, branch/commit identity, outcomes, logs, and other requested evidence.
+- Independently challenge designs and changes, identify concrete defects, and propose alternatives supported by evidence.
+- Report environment-specific constraints that cannot be observed through repository inspection.
+
+Kilo does not routinely author or modify application source, tests, architecture, or documentation as a substitute for GPT-6. Any exception requires the user's explicit direction. GPT-6 evaluates Kilo's findings, makes any needed source corrections, and retains final acceptance responsibility.
+
+When Kilo is needed, GPT-6 provides a complete, copy-paste-ready prompt that defines the exact task, branch/commit, scope, commands or review questions, evidence to return, and prohibitions. The user should not have to construct or relay an incomplete handoff.
+
+### Safety and evidence
+
+- Git is the current source-of-truth and collaboration bridge.
+- Use isolated, task-scoped branches; preserve unrelated modifications and pre-existing untracked files.
+- Never blindly stage all files or discard, overwrite, reset, stash, or clean unrelated work. Never use destructive commands such as `git reset --hard` or `git clean -fd`.
+- Do not deploy or modify the running Evo instance during an ordinary development pass.
+- Every code-changing pass must run relevant automated checks and rebuild affected runnable artifacts. Documentation-only changes do not require unnecessary rebuilds.
+- Kilo supplies local execution evidence; GPT-6 must not claim to have run commands it did not observe.
+- Never weaken tests to obtain a green result. Report failures and limitations accurately.
+- Kilo should challenge GPT-6's work, not rubber-stamp it. GPT-6 must assess substantive objections against source and evidence.
 - Escalate to the Vision Officer for genuine product-direction decisions, consequential risk or permission tradeoffs, and changes to agreed objectives—not routine engineering details.
-- This current human-mediated collaboration is not Evo4's future internal multi-agent orchestration architecture.
-- For especially consequential work—architecture, security boundaries, persistence, migrations, lifecycle, recovery, memory isolation, and orchestration—independent investigation or alternative proposals should be considered before implementation when the expected benefit justifies the cost.
-- After several substantial development milestones, GPT-6 should periodically evaluate defects surviving implementation and review, defects independently found by each participant, rework caused by mistakes, unnecessary handoffs, whether assignments are producing good results, and whether development speed is improving without sacrificing correctness. Adjust the working arrangement based on evidence.
+- This is the current human-mediated collaboration model, not Evo4's future internal orchestration architecture or a permanent dependency on specific model products.
 
 ## Next steps
 
