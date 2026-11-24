@@ -157,3 +157,113 @@ class CodingAgentBudgetTests(unittest.TestCase):
             self.assertNotIn("HUGE " + ("x" * 1000), combined)
             assistant.close()
             store.close()
+
+
+class CumulativeNestedInstructionBudgetTests(unittest.TestCase):
+    def test_per_run_aggregate_byte_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "a"
+            second = root / "b"
+            first.mkdir()
+            second.mkdir()
+            (first / "AGENTS.md").write_text("A" * 100, encoding="utf-8")
+            (second / "AGENTS.md").write_text("B" * 100, encoding="utf-8")
+            store = EvoStore(Path(tmp) / "evo.sqlite3")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+            # Force a tiny per-run aggregate limit.
+            agent.MAX_RUN_INSTRUCTION_BYTES = 150
+            agent.MAX_RUN_INSTRUCTION_FILES = 10
+
+            class FakeProvider:
+                def __init__(self):
+                    self.calls = []
+                    self.step = 0
+                def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                    self.calls.append([dict(m) for m in messages])
+                    if self.step == 0:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [
+                            {"id": "c1", "type": "function", "function": {"name": "list_files", "arguments": {"path": "a"}}},
+                            {"id": "c2", "type": "function", "function": {"name": "list_files", "arguments": {"path": "b"}}}],
+                            "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            cid = assistant.new_conversation("global")
+            result = agent.run(cid, "inspect", lambda name, args: True)
+            self.assertEqual(result["status"], "completed")
+            # Only one of the two distinct nested files can be added; the other is omitted.
+            self.assertEqual(agent._included_instruction_count, 1)
+            self.assertTrue(agent.omitted_instruction_files)
+            self.assertIn("per-run nested instruction aggregate limit exceeded", agent.omitted_instruction_files[0]["reason"])
+            assistant.close()
+            store.close()
+
+    def test_repeated_instruction_discovery_does_not_double_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src"
+            src.mkdir()
+            (src / "AGENTS.md").write_text("src guidance", encoding="utf-8")
+            store = EvoStore(Path(tmp) / "evo.sqlite3")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+
+            class FakeProvider:
+                def __init__(self):
+                    self.calls = []
+                    self.step = 0
+                def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                    self.calls.append([dict(m) for m in messages])
+                    if self.step == 0:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [
+                            {"id": "c1", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}},
+                            {"id": "c2", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}}],
+                            "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            cid = assistant.new_conversation("global")
+            agent.run(cid, "inspect src", lambda name, args: True)
+            self.assertEqual(agent._included_instruction_count, 1)
+            assistant.close()
+            store.close()
+
+    def test_tool_call_arguments_counted_in_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            assistant, store = ContextBudgetTests._assistant(self, tmp, window=4096)
+            try:
+                huge_args = "x" * 100000
+                messages = [
+                    {"role": "system", "content": "BASE POLICY"},
+                    {"role": "assistant", "content": "", "tool_calls": [
+                        {"id": "call1", "type": "function", "function": {"name": "run_command", "arguments": huge_args}}]},
+                    {"role": "tool", "content": "ok", "tool_call_id": "call1"},
+                    {"role": "user", "content": "CURRENT REQUEST"},
+                ]
+                # CodingAgent owns the budget helper; call it directly.
+                from evo_core.coding_agent import CodingAgent
+                from evo_core.workspace import Workspace
+                root = Path(tmp) / "repo"
+                root.mkdir()
+                agent = CodingAgent(assistant, root, allowed_commands=[])
+                with self.assertRaises(ValueError):
+                    agent._enforce_context_budget(messages)
+            finally:
+                assistant.close()
+                store.close()

@@ -3,6 +3,14 @@ import threading
 from .workspace import Workspace, WorkspaceError, is_test_path
 from .provider import InvalidToolCallError
 
+MAX_RUN_INSTRUCTION_FILES = 16
+MAX_RUN_INSTRUCTION_BYTES = 64_000
+# Compatibility aliases for tests and callers.
+MAX_NESTED_INSTRUCTION_FILES = MAX_RUN_INSTRUCTION_FILES
+MAX_NESTED_INSTRUCTION_BYTES = MAX_RUN_INSTRUCTION_BYTES
+MAX_RUN_NESTED_INSTRUCTION_FILES = MAX_RUN_INSTRUCTION_FILES
+MAX_RUN_NESTED_INSTRUCTION_BYTES = MAX_RUN_INSTRUCTION_BYTES
+
 CODING_POLICY = """
 
 Coding-agent operating rules:
@@ -104,7 +112,29 @@ class CodingAgent:
         output_reserve = min(requested_output, max(1, window - 512))
         input_tokens = max(0, window - output_reserve - 512)
         budget_chars = input_tokens * 3
-        total = sum(len(str(message.get("content", ""))) for message in messages)
+        def _message_size(message):
+            size = len(str(message.get("content", "")))
+            for call in message.get("tool_calls") or []:
+                size += len(str(call.get("id", "")))
+                size += len(str(call.get("type", "")))
+                function = call.get("function") or {}
+                size += len(str(function.get("name", "")))
+                arguments = function.get("arguments", "")
+                if isinstance(arguments, str):
+                    size += len(arguments)
+                else:
+                    try:
+                        size += len(json.dumps(arguments, ensure_ascii=False, sort_keys=True))
+                    except (TypeError, ValueError):
+                        size += len(str(arguments))
+            return size
+
+        tool_schema_reserve = 0
+        try:
+            tool_schema_reserve = len(json.dumps(TOOL_SPECS, ensure_ascii=False))
+        except (TypeError, ValueError):
+            tool_schema_reserve = 0
+        total = sum(_message_size(message) for message in messages) + tool_schema_reserve
         if total <= budget_chars:
             return
         expendable = [
@@ -124,9 +154,14 @@ class CodingAgent:
                 adjusted = index if index < first else index - 1
                 if adjusted < len(messages):
                     del messages[adjusted]
-            total = sum(len(str(message.get("content", ""))) for message in messages)
-            if total <= budget_chars:
-                return
+        tool_schema_reserve = 0
+        try:
+            tool_schema_reserve = len(json.dumps(TOOL_SPECS, ensure_ascii=False))
+        except (TypeError, ValueError):
+            tool_schema_reserve = 0
+        total = sum(_message_size(message) for message in messages) + tool_schema_reserve
+        if total <= budget_chars:
+            return
         raise ValueError(
             "The system instructions, tool protocol, and current request exceed the configured context budget."
         )
@@ -175,6 +210,11 @@ class CodingAgent:
         if discovery is not None:
             included_instruction_paths.update(getattr(discovery, "applied_paths", []))
         self._included_instruction_paths = included_instruction_paths
+        self._included_instruction_bytes = 0
+        self._included_instruction_count = 0
+        self.omitted_instruction_files = []
+        self._omitted_instruction_files = self.omitted_instruction_files
+        self.instruction_omissions = self.omitted_instruction_files
         pending_instruction_files = []
 
         def collect_instructions_for_path(tool_path):
@@ -190,8 +230,23 @@ class CodingAgent:
             if not new_files:
                 return
             for item in new_files:
+                size = len(item.content.encode("utf-8"))
+                max_files = getattr(self, "MAX_RUN_INSTRUCTION_FILES", MAX_RUN_INSTRUCTION_FILES)
+                max_bytes = getattr(self, "MAX_RUN_INSTRUCTION_BYTES", MAX_RUN_INSTRUCTION_BYTES)
+                if (self._included_instruction_count + 1 > max_files
+                        or self._included_instruction_bytes + size > max_bytes):
+                    omission = {
+                        "relative_path": item.relative_path,
+                        "path": item.path,
+                        "reason": "per-run nested instruction aggregate limit exceeded",
+                        "status": "omitted",
+                    }
+                    self.omitted_instruction_files.append(omission)
+                    continue
                 pending_instruction_files.append(item)
                 self._included_instruction_paths.add(item.relative_path)
+                self._included_instruction_count += 1
+                self._included_instruction_bytes += size
         store.add_message(conversation_id, "user", request, project_id=project_id, workspace_id=workspace_id)
 
         run_metadata = {
