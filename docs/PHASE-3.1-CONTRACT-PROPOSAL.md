@@ -24,6 +24,7 @@ The existing TOML-backed assistant remains supported as a separate legacy path f
 - Schema 2 components must declare a recognized component type, component schema version, adapter ID, adapter contract version, and typed settings.
 - Unknown component types, component versions, adapter IDs, adapter versions, settings, or required capabilities are rejected. There is no permissive "best effort" interpretation.
 - Any schema-1 migration must be explicit, produce a new immutable revision, pass schema-2 validation, and preserve the original revision unchanged.
+- Schema 2 has a strict top-level shape: `schema_version`, `components`, `entrypoints`, and optional non-executable `extensions`. Schema 1 retains its existing top-level shape.
 
 ### 2.2 Component envelope
 
@@ -193,7 +194,13 @@ These are independent dimensions and must not be collapsed:
 
 A model-list endpoint is a best-effort discovery signal, not proof that a particular model will accept a completion request. Conversely, an endpoint that does not implement model listing is not automatically unavailable; its availability is unknown unless another supported probe establishes it. For the initial release, unknown availability denies dispatch. An adapter may define a documented, bounded probe that establishes availability; there is no implicit first-request fallback. Unknown availability cannot be overridden by a participant, task, or configuration definition.
 
-A health check does not establish compliance. Capabilities, availability, successful history, or Registry membership do not grant authorization. Unknown or stale required compliance status blocks dispatch.
+A health check does not establish compliance. Capabilities, availability, successful history, endpoint allowlisting, or Registry membership do not grant authorization or compliance approval. Unknown or stale required compliance status blocks dispatch.
+
+For the initial release, compliance approval is operator-owned and separate from the AI Configuration:
+- A local endpoint may be marked `local_only` only by explicit operator configuration; loopback addressing alone does not prove that a service keeps data local.
+- A remote endpoint requires an explicit approval record keyed by exact origin, adapter/interface, and approved use. The record includes status, review timestamp, and non-secret references/versions for the applicable terms and data-handling review.
+- Missing approval defaults to `unknown`; user-authored component definitions cannot approve themselves or expand approved uses.
+- `restricted` and `suspended` block dispatch. Approval of one use (for example, text generation) does not automatically approve other uses or data classes.
 
 ## 9. Cancellation, timeout, and resource admission
 
@@ -246,6 +253,8 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Unavailable endpoint and unknown availability are distinct outcomes.
 - No Registry-bound failure falls back to the global TOML assistant.
 - Endpoint policy rejects disallowed origins, insecure non-loopback HTTP, embedded credentials, cross-origin redirects, and prohibited resolved addresses.
+- Endpoint allowlisting without a matching operator compliance approval does not authorize remote dispatch; unknown, restricted, suspended, or stale approval states fail closed.
+- Loopback endpoint classification does not automatically establish `local_only` compliance status.
 - A configured but unprobeable endpoint remains `unknown`; initial dispatch is denied until a supported bounded probe establishes availability.
 - Concurrent invocations cannot both acquire the initial global single-flight lease; crashed/ownerless leases become abandoned and block new dispatch until safe recovery is explicitly established.
 - Workspace chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution all use the exact same workspace-bound assistant runtime factory.
@@ -262,6 +271,7 @@ Approval is requested for these architectural constraints, not for implementatio
 4. The schema-2 assistant-runtime component binds model selection, persona guidance, generation parameters, context/memory/history budgets, and the logical assistant entrypoint to the same immutable revision. Operator safety policy remains code-owned.
 5. The schema-2 command-policy component preserves the operator global command ceiling and can only narrow it.
 6. Provider destinations require loopback HTTP or exact operator-allowlisted HTTPS origins, with redirect and resolved-address validation.
+7. Provider compliance is separately operator-approved per exact origin, adapter/interface, and use; endpoint allowlisting or a successful health check is not compliance approval.
 7. Unknown endpoint availability denies dispatch until a supported bounded probe establishes availability.
 8. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
 9. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
