@@ -35,14 +35,27 @@ Each executable component uses a common envelope:
   "component_version": 1,
   "adapter": {
     "id": "openai_compatible_chat",
-    "version": 1
+    "contract_version": 1
   },
-  "settings": {},
-  "secret_refs": {}
+  "settings": {
+    "endpoint": "http://127.0.0.1:18997/v1",
+    "model": "configured-model",
+    "timeout_seconds": 120,
+    "max_output_tokens": 2048
+  },
+  "secret_refs": {
+    "api_key": "env:EVO_LOCAL_API_KEY"
+  }
 }
 ```
 
-The exact top-level `components` organization should preserve stable component keys, but keys are identifiers—not executable class names or provider roles. Adapter IDs resolve only through a code-controlled registry. Configuration data cannot import modules, name Python classes, or load arbitrary code.
+The example is illustrative; the schema must define exact required/optional fields and bounds. The top-level `components` object retains stable component keys. A key identifies a component within the configuration; it is not an executable class name or provider role.
+
+- `component_version` versions the typed component's data contract.
+- `adapter.contract_version` selects a supported adapter contract, not an arbitrary installed package version. The adapter implementation/build version is code-owned and recorded at bind time.
+- Configuration may declare required capabilities, but may not assert the capabilities it possesses. The adapter derives provided capabilities from its implementation and validated settings.
+- Adapter IDs resolve only through a code-controlled registry. Configuration data cannot import modules, name Python classes, or load arbitrary code.
+- Unknown fields are rejected except inside explicitly namespaced, versioned extension points. Do not make arbitrary `extensions` executable.
 
 ### 2.3 Initial executable component types
 
@@ -57,13 +70,28 @@ The existing coding-agent runtime is not automatically a third executable compon
 
 - Initial supported reference form: `env:VARIABLE_NAME`.
 - The variable name must match a strict environment-variable identifier grammar.
-- Resolution is performed only at the adapter boundary, never while serializing or displaying a configuration definition.
-- The resolver must enforce an explicit allowlist of environment variable names supplied by application/operator configuration. A configuration cannot read arbitrary process environment variables.
-- Missing, empty, malformed, or non-allowlisted references fail closed before dispatch.
-- Resolved secret values are transient and must never appear in definitions, participant descriptors, invocation envelopes, logs, exception text, events, telemetry, or API responses.
+- The allowlist is operator-owned application configuration, not part of an AI Configuration definition. Proposed TOML shape: `[secrets] allowed_env_vars = ["EVO_LOCAL_API_KEY", "EXAMPLE_CLOUD_API_KEY"]`. The list contains names only, never secret values. An absent/empty allowlist means no Registry secret references are permitted.
+- Resolution is performed only at the adapter boundary, after the exact workspace revision and adapter have been validated, and never while serializing or displaying a definition.
+- The resolver reads only an explicitly allowlisted name. Missing, empty, malformed, or non-allowlisted references fail closed before any network request.
+- Resolved values are transient. They must never appear in definitions, participant descriptors, invocation envelopes, logs, exception text, events, telemetry, API responses, or content hashes. Do not include request headers in diagnostic output.
+- Provider errors must be normalized and redacted before persistence or exposure; do not persist raw HTTP response bodies by default.
 - No arbitrary secret stores, shell expansion, file paths, URL-embedded credentials, or implicit environment lookups are supported in this initial version.
 
-## 4. Adapter and participant contracts
+## 4. Provider endpoint security
+
+The endpoint is security-sensitive configuration because it determines where prompts, retrieved context, and credentials are sent.
+
+- Permit loopback HTTP for local inference by default. Require HTTPS for non-loopback origins.
+- Non-loopback origins must match an exact operator-configured origin allowlist; no wildcard host patterns. The allowlist is separate from the component definition and is controlled by the operator.
+- Reject URL user-info, embedded credentials, fragments, unexpected query strings, unsupported schemes, and malformed ports. Normalize and compare scheme/host/port as an origin.
+- Validate resolved destination addresses against the configured endpoint policy; reject loopback, link-local, metadata-service, and private-network destinations unless the exact destination is explicitly operator-approved. Revalidate redirects and DNS resolution so a permitted hostname cannot redirect or resolve into a prohibited destination.
+- Redirects to a different origin are rejected. Same-origin redirects, if supported, must be bounded and revalidated.
+- Do not forward authorization headers across origins. Do not permit arbitrary headers, proxy overrides, or caller-controlled redirect behavior through component settings.
+- Tests must cover disallowed scheme/origin, embedded credentials, redirects, private/link-local targets, and secret non-disclosure.
+
+This is a provider destination policy, not a claim that endpoint allowlisting makes a remote provider compliant. Provider/interface/use compliance remains a separate approval decision.
+
+## 5. Adapter and participant contracts
 
 ### 4.1 Adapter responsibilities
 
@@ -88,7 +116,7 @@ A participant instance captures adapter identity/version, capabilities, endpoint
 
 Capabilities describe interface support, not trust or authorization. Registration does not grant permission to execute.
 
-## 5. Invocation envelope and outcomes
+## 6. Invocation envelope and outcomes
 
 A bounded invocation envelope must identify:
 
@@ -116,13 +144,15 @@ The initial normalized terminal outcome set should distinguish at least:
 
 Partial output is retained only as partial evidence and never converted into success. Error details are bounded and redacted.
 
-## 6. Availability, authorization, and compliance
+## 7. Availability, authorization, and compliance
 
 These are independent dimensions and must not be collapsed:
 
-- **Availability:** `available`, `unavailable`, `unknown`, `disabled`.
+- **Availability:** `available`, `unavailable`, `unknown`, `disabled`. A configured endpoint is not automatically available; a successful health probe is only a time-bounded observation.
 - **Authorization:** invocation-specific `authorized` or `denied`, with policy reason and provenance.
 - **Compliance:** `approved`, `restricted`, `suspended`, `unknown`, with integration/interface/use review provenance.
+
+A model-list endpoint is a best-effort discovery signal, not proof that a particular model will accept a completion request. Conversely, an endpoint that does not implement model listing is not automatically unavailable; its availability is unknown unless another supported probe establishes it. Unknown availability is not silently treated as available: the dispatch policy must either deny or require a separately recorded, explicit operator authorization for a bounded first probe. That authorization cannot override denied compliance or resource admission.
 
 A health check does not establish compliance. Capabilities, availability, successful history, or Registry membership do not grant authorization. Unknown or stale required compliance status blocks dispatch.
 
@@ -135,22 +165,24 @@ A health check does not establish compliance. Capabilities, availability, succes
 - Unknown required capacity, provider quota, or usage limits fail closed. Unreported token/cost usage is represented as unknown, never fabricated.
 - The initial mechanism is not a general-purpose scheduler and does not claim OS-level resource isolation.
 
-## 8. Runtime binding sequence
+## 9. Runtime binding sequence and revision semantics
 
 P3.2 must implement this exact order:
 
 1. Validate the requested workspace and caller authority.
 2. Resolve the active workspace/project/checkout relationship.
 3. Resolve the active AI Configuration relationship.
-4. Load the exact immutable configuration revision.
+4. Load the exact immutable revision ID pinned by that workspace and verify that it belongs to the referenced configuration.
 5. Validate schema version and typed component contract.
-6. Resolve the component's adapter ID/version through the code-controlled registry.
+6. Resolve the component's adapter ID/contract version through the code-controlled registry.
 7. Resolve allowlisted secret references.
-8. Validate endpoint/model availability and required compliance status.
+8. Apply endpoint destination policy and obtain the required availability/compliance decision.
 9. Construct the immutable participant instance with exact provenance.
-10. Authorize and admit the invocation before calling the adapter.
+10. Atomically revalidate the workspace/configuration state and acquire dispatch admission before invoking the adapter.
 
-Any failure stops the sequence with an actionable error. No fallback to global TOML, another configuration revision, adapter, endpoint, model, or policy is allowed for a Registry-bound workspace.
+**Pinned-revision rule:** advancing a configuration's `current_revision_id` does not make an older immutable revision stale and must not change a workspace's behavior. A workspace continues to use its pinned revision while the workspace, project, and configuration remain active and the pinned revision exists and belongs to that configuration. A missing revision, mismatched configuration/revision pair, archived configuration, archived workspace, or inactive project is invalid. Updating to a newer revision requires an explicit workspace change/rebind operation that records the new pinned revision and version.
+
+No failure may fall back to global TOML, another revision, adapter, endpoint, model, or policy for a Registry-bound workspace.
 
 ## 9. Required P3.1/P3.2 tests
 
@@ -160,7 +192,8 @@ Any failure stops the sequence with an actionable error. No fallback to global T
 - Secret references reject malformed, missing, empty, and non-allowlisted variables; resolved values are redacted from all observable surfaces.
 - Exact immutable workspace revision determines provider/model/settings and effective configuration behavior.
 - Two different revisions produce the corresponding different participant bindings.
-- Archived/stale revision, inactive workspace, mismatched project/workspace, and invalid relationship are rejected.
+- Missing revision, revision/configuration mismatch, archived configuration/workspace, inactive project, and mismatched workspace/project are rejected.
+- Advancing the configuration's current revision does not invalidate a workspace pinned to an older still-existing revision; tests prove the old workspace continues using its pinned revision until explicitly rebound.
 - Unavailable endpoint and unknown availability are distinct outcomes.
 - No Registry-bound failure falls back to the global TOML assistant.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
@@ -172,7 +205,7 @@ Approval is requested for these architectural constraints, not for implementatio
 1. Schema 1 remains readable but non-executable by default; schema 2 is required for runnable typed components.
 2. The initial secret resolver supports allowlisted environment-variable references only.
 3. Registry-bound runtime binding has no global TOML fallback; legacy TOML behavior remains separate for non-Registry callers.
-4. The default second production participant is a bounded deterministic verifier, not a second model.
+4. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
 5. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
 6. Cancellation is described as cooperative/bounded until transport-level cancellation is actually implemented and tested.
 7. Participant identity uses stable integration identity plus immutable revision-specific participant instance identity.
