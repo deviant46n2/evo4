@@ -219,8 +219,9 @@ The following order minimizes speculative framework work.
 
 ### P3.1 — Executable configuration contract (prerequisite)
 - Freeze the minimum typed component schema, adapter ID/version fields, and component contract versions.
-- Keep schema-version 1 definitions readable and editable for compatibility, but treat them as non-executable unless a specific, reviewed migration proves their components satisfy the new executable contract. Do not infer runtime validity from generic JSON acceptance.
-- Require the new schema version for runnable components; reject unknown component types, adapter IDs, component versions, and unsupported settings with actionable errors.
+- Keep schema-version 1 definitions readable and editable for compatibility, but treat them as non-executable by default. Existing schema-1 workspaces require an explicit migration preview, a new immutable schema-2 revision, and a version-checked workspace rebind; never auto-migrate or execute schema 1 through an implicit compatibility bridge.
+- Define migration rules that preserve the original revision, report unknown/ambiguous fields, and require manual reconstruction when a lossless mapping is not provable.
+- Require schema 2 for runnable components; reject unknown component types, adapter IDs, component versions, and unsupported settings with actionable errors.
 - Define adapter, participant, invocation-envelope, event, and result contracts, including explicit availability, authorization, and compliance states.
 - Specify the initial secret-reference grammar and environment-variable-backed resolver only. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
 - Define bounded/cooperative cancellation semantics consistent with the current provider transport; do not promise interruption of an in-flight blocking request unless implemented and tested.
@@ -230,11 +231,13 @@ The following order minimizes speculative framework work.
 
 ### P3.2 — Registry-driven runtime binding (critical path)
 - Make the first runtime slice a concrete factory that takes the resolved workspace binding and exact immutable AI Configuration revision and constructs the participant/provider actually used by the invocation.
-- Binding order is fixed: authorized workspace → active configuration relationship → exact immutable revision → typed component validation → code-controlled adapter registry → resolved secret references → immutable participant instance.
+- Add explicit, version-checked workspace configuration rebind with append-only binding history. Rebind creates no revision and changes no in-flight invocation; it only changes which already-existing immutable revision future invocations resolve.
+- Binding order is fixed: authorized workspace → active configuration relationship → exact workspace-pinned immutable revision → typed component validation → code-controlled adapter registry → resolved secret references → immutable participant instance.
+- A newer configuration current revision does not invalidate an older revision pinned by a workspace. Reject missing/mismatched revisions and inactive/archived relationships, not merely revisions that are no longer current.
 - The selected revision must determine provider, model, supported settings, and applicable configuration policy. Record this provenance in the participant and invocation.
 - Do not fall back to the global TOML provider when a registered workspace binding is missing, invalid, stale, or unsupported. Preserve the existing global TOML assistant path only for callers that do not use a Registry-bound workspace.
 - Resolve endpoint/model availability explicitly; distinguish unavailable from unknown and do not substitute another model.
-- Add deterministic binding tests proving that two revisions with different provider/model/policy settings produce the corresponding distinct runtime behavior, plus invalid component, missing adapter, bad secret, unavailable endpoint, stale revision, and workspace/configuration mismatch tests.
+- Add deterministic binding tests proving that two revisions with different provider/model/policy settings produce the corresponding distinct runtime behavior, plus invalid component, missing adapter, bad secret, unavailable endpoint, missing/mismatched revision, archived relationship, and workspace/configuration mismatch tests. Prove that a workspace pinned to an older still-existing revision continues to use it after a newer revision is created.
 
 **Exit:** an end-to-end test proves that the exact immutable workspace configuration revision—not the global TOML profile—determines the provider/model/policy used by registered-workspace execution. This is the Phase 3 prerequisite; contract scaffolding without this proof does not pass.
 
