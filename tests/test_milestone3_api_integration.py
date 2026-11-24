@@ -675,3 +675,205 @@ class AgentScopeApiTests(unittest.TestCase):
             self.app, "POST",
             f"/api/v1/agents/plans/{plan['id']}/approve?" + scoped_query, {})
         self.assertEqual(status, 200)
+
+
+class ApiCancellationIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+
+        class _Provider:
+            def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                if on_token:
+                    on_token("done")
+                return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                        "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                        "prompt_tokens": 1, "completion_tokens": 1}
+
+        self.app.state.assistant.provider = _Provider()
+        self.store = self.app.state.store
+        from evo_core.platform_registry import initialize_platform_registry
+        from evo_core.project_checkouts import register_project, register_checkout
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        initialize_platform_registry(self.store)
+        self.project = register_project(self.store, "Project")
+        self.directory = self.root / "checkout"
+        self.directory.mkdir()
+        self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
+        cfg = create_configuration(self.store, {"schema_version": 1, "components": {"command_policy": {"allowed_commands": [["python", "-c"]]}}}, name="cfg")
+        self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
+                                         cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                         checkout_id=self.checkout["checkout_id"])
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def _run(self, metadata):
+        import threading
+        run_id = self.store.start_agent_run("coding", metadata)
+        from evo_core import background_agent
+        background_agent.create(self.app.state.lab_db.connection, run_id)
+        return run_id
+
+    def test_queued_cancellation_wins(self):
+        import threading
+        import time
+        from evo_core import background_agent
+        gate = threading.Event()
+        original_claim = background_agent.claim
+
+        def delayed_claim(conn, run_id, token):
+            released = False
+            try:
+                app.state.lab_db.lock.release()
+                released = True
+                gate.wait()
+            finally:
+                if released:
+                    app.state.lab_db.lock.acquire()
+            return original_claim(conn, run_id, token)
+
+        background_agent.claim = delayed_claim
+        try:
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents",
+                                        {"request": "queued cancel", "workspace_id": self.workspace["workspace_id"]})
+            self.assertEqual(status, 202)
+            run_id = body["run_id"]
+            status, cancel = asgi_request(self.app, "POST",
+                                          f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
+            self.assertEqual(status, 200)
+            self.assertTrue(cancel["cancelled"])
+            self.assertEqual(cancel["status"], "cancelled")
+            gate.set()
+            for _ in range(50):
+                status, body = asgi_request(self.app, "GET",
+                                            f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+                if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+                    break
+                time.sleep(0.1)
+            self.assertEqual(body["status"], "cancelled")
+            with self.app.state.lab_db.lock:
+                task = background_agent.get(self.app.state.lab_db.connection, run_id)
+            self.assertEqual(task["status"], "cancelled")
+            run = self.store.get_agent_run(run_id)
+            self.assertEqual(run["status"], "cancelled")
+        finally:
+            background_agent.claim = original_claim
+            gate.set()
+
+    def test_terminal_outcome_wins_cancellation(self):
+        import time
+        status, body = asgi_request(self.app, "POST", "/api/v1/agents",
+                                    {"request": "fast run", "workspace_id": self.workspace["workspace_id"]})
+        self.assertEqual(status, 202)
+        run_id = body["run_id"]
+        for _ in range(100):
+            status, body = asgi_request(self.app, "GET",
+                                        f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+            if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+                break
+            time.sleep(0.1)
+        self.assertEqual(body["status"], "completed")
+        status, cancel = asgi_request(self.app, "POST",
+                                      f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
+        self.assertEqual(status, 200)
+        self.assertFalse(cancel["cancelled"])
+        self.assertEqual(cancel["status"], "completed")
+
+    def test_approval_cancellation(self):
+        import time
+        import evo_core.workspace as wsmod
+        executed = {"count": 0}
+        original_run = wsmod.Workspace.run
+
+        def tracked_run(self, *args, **kwargs):
+            executed["count"] += 1
+            return original_run(self, *args, **kwargs)
+
+        wsmod.Workspace.run = tracked_run
+        try:
+            self.app.state.assistant.provider.chat = lambda messages, **kwargs: (
+                {"content": "", "tool_calls": [{"id": "call1", "type": "function",
+                                                "function": {"name": "run_command",
+                                                             "arguments": {"argv": ["python", "-c", "print('ok')"],
+                                                                          "timeout_seconds": 120}}}],
+                 "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                 "prompt_tokens": 1, "completion_tokens": 1}
+                if not any(m.get("role") == "tool" for m in messages) else
+                {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                 "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                 "prompt_tokens": 1, "completion_tokens": 1}
+            )
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents",
+                                        {"request": "run command", "workspace_id": self.workspace["workspace_id"]})
+            self.assertEqual(status, 202)
+            run_id = body["run_id"]
+            for _ in range(100):
+                status, body = asgi_request(self.app, "GET",
+                                            f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+                if body.get("pending_approval"):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(body.get("pending_approval"))
+            status, cancel = asgi_request(self.app, "POST",
+                                          f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
+            self.assertEqual(status, 200)
+            for _ in range(100):
+                status, body = asgi_request(self.app, "GET",
+                                            f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+                if body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+                    break
+                time.sleep(0.1)
+            self.assertEqual(body["status"], "cancelled")
+            self.assertFalse(body.get("pending_approval"))
+            self.assertEqual(executed["count"], 0)
+        finally:
+            wsmod.Workspace.run = original_run
+
+    def test_repeated_cancellation(self):
+        import threading
+        import time
+        from evo_core import background_agent
+        gate = threading.Event()
+        original_claim = background_agent.claim
+
+        def delayed_claim(conn, run_id, token):
+            released = False
+            try:
+                app.state.lab_db.lock.release()
+                released = True
+                gate.wait()
+            finally:
+                if released:
+                    app.state.lab_db.lock.acquire()
+            return original_claim(conn, run_id, token)
+
+        background_agent.claim = delayed_claim
+        try:
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents",
+                                        {"request": "queued cancel", "workspace_id": self.workspace["workspace_id"]})
+            self.assertEqual(status, 202)
+            run_id = body["run_id"]
+            first = asgi_request(self.app, "POST",
+                                 f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
+            second = asgi_request(self.app, "POST",
+                                  f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
+            self.assertEqual(first[0], 200)
+            self.assertTrue(first[1]["cancelled"])
+            self.assertEqual(first[1]["status"], "cancelled")
+            self.assertEqual(second[0], 200)
+            self.assertFalse(second[1]["cancelled"])
+            self.assertEqual(second[1]["status"], "cancelled")
+            gate.set()
+            with self.app.state.lab_db.lock:
+                events = background_agent.events(self.app.state.lab_db.connection, run_id)
+            self.assertEqual([e["type"] for e in events].count("cancel_requested"), 1)
+        finally:
+            background_agent.claim = original_claim
+            gate.set()

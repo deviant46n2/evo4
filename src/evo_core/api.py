@@ -1250,8 +1250,6 @@ def create_app(config_path="config.toml", provider_name=None):
         run_row = store.get_agent_run(run_id)
         if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
             raise HTTPException(status_code=404, detail="Agent run not found in this scope")
-        # Same lock order as worker finalization prevents a late cancellation
-        # from racing a completed terminal state.
         queued = False
         plan_id = None
         with agent_registry_guard:
@@ -1261,8 +1259,6 @@ def create_app(config_path="config.toml", provider_name=None):
                     raise HTTPException(status_code=404, detail="Background agent task not found")
                 previous_status = task["status"]
                 if not background_agent.request_cancel(lab_db.connection, run_id):
-                    # The task already reached a terminal state. Report that
-                    # outcome; do not claim cancellation won.
                     return {"cancelled": False, "status": task["status"]}
                 queued = previous_status == "queued"
                 if queued:
@@ -1282,9 +1278,13 @@ def create_app(config_path="config.toml", provider_name=None):
                 if item["run_id"] == run_id:
                     item["approved"] = False
                     item["decision"].set()
-        if decision is not None:
-            outcome = decision["outcome"]
+        with lab_db.lock:
+            latest_decision = lifecycle.get_decision(lab_db.connection, run_id)
+        if latest_decision is not None:
+            outcome = latest_decision["outcome"]
             return {"cancelled": outcome == "cancelled", "status": outcome}
+        if queued:
+            return {"cancelled": True, "status": "cancelled"}
         return {"cancelled": True, "status": "cancel_requested"}
 
     @app.get("/api/v1/agents/{run_id}/events")
