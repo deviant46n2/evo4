@@ -144,7 +144,18 @@ A participant instance captures adapter identity/version, capabilities, endpoint
 
 Capabilities describe interface support, not trust or authorization. Registration does not grant permission to execute.
 
-## 6. Invocation envelope and outcomes
+## 6. Caller authority and deployment trust boundary
+
+The current Evo API is a local, single-user application boundary. It restricts request hostnames to loopback and limits browser origins, but it does not authenticate individual users or provide a multi-user principal/role system. P3 must not invent an authenticated `user_id` or claim that loopback host validation is strong authentication.
+
+For the initial deployment:
+- Treat the caller as the local operator only within the existing local-process trust assumption.
+- Preserve the loopback-only API boundary and explicit per-action approval for consequential coding-agent tools.
+- Record the authority source as the local single-user API boundary, not as a verified identity.
+- Do not expose the API on a LAN or public interface as part of Phase 3.
+- Any remote or multi-user deployment is blocked until a separate authentication, session, CSRF, and authorization design is implemented and reviewed.
+
+## 7. Invocation envelope and outcomes
 
 A bounded invocation envelope must identify:
 
@@ -171,17 +182,6 @@ The initial normalized terminal outcome set should distinguish at least:
 - `provider_failed`
 
 Partial output is retained only as partial evidence and never converted into success. Error details are bounded and redacted.
-
-## 7. Caller authority and deployment trust boundary
-
-The current Evo API is a local, single-user application boundary. It restricts request hostnames to loopback and limits browser origins, but it does not authenticate individual users or provide a multi-user principal/role system. P3 must not invent an authenticated `user_id` or claim that loopback host validation is strong authentication.
-
-For the initial deployment:
-- Treat the caller as the local operator only within the existing local-process trust assumption.
-- Preserve the loopback-only API boundary and explicit per-action approval for consequential coding-agent tools.
-- Record the authority source as the local single-user API boundary, not as a verified identity.
-- Do not expose the API on a LAN or public interface as part of Phase 3.
-- Any remote or multi-user deployment is blocked until a separate authentication, session, CSRF, and authorization design is implemented and reviewed.
 
 ## 8. Availability, authorization, and compliance
 
