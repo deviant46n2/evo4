@@ -196,11 +196,24 @@ A model-list endpoint is a best-effort discovery signal, not proof that a partic
 
 A health check does not establish compliance. Capabilities, availability, successful history, endpoint allowlisting, or Registry membership do not grant authorization or compliance approval. Unknown or stale required compliance status blocks dispatch.
 
-For the initial release, compliance approval is operator-owned and separate from the AI Configuration:
+For the initial release, compliance approval is operator-owned and separate from the AI Configuration. A proposed TOML representation is:
+
+```toml
+[[provider_approvals]]
+origin = "https://api.example.com"
+adapter_id = "openai_compatible_chat"
+uses = ["chat_completion"]
+status = "approved"
+reviewed_at = "2026-11-23"
+terms_reference = "provider terms revision reviewed"
+data_handling_reference = "provider data-handling policy reviewed"
+```
+
 - A local endpoint may be marked `local_only` only by explicit operator configuration; loopback addressing alone does not prove that a service keeps data local.
 - A remote endpoint requires an explicit approval record keyed by exact origin, adapter/interface, and approved use. The record includes status, review timestamp, and non-secret references/versions for the applicable terms and data-handling review.
 - Missing approval defaults to `unknown`; user-authored component definitions cannot approve themselves or expand approved uses.
 - `restricted` and `suspended` block dispatch. Approval of one use (for example, text generation) does not automatically approve other uses or data classes.
+- Evo does not automatically determine legal compliance or monitor provider policy changes in this phase. The operator attests to the reviewed terms/data-handling version; a known material change invalidates the approval until re-reviewed.
 
 ## 9. Cancellation, timeout, and resource admission
 
