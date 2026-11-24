@@ -950,13 +950,13 @@ class EvoStore:
         from .scope_validation import validate_scope
         project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         if project_id is None:
-            scope_sql = "(metadata_json IS NULL OR (json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
+            scope_sql = "(metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
             scope_params = []
         elif workspace_id is None:
-            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
+            scope_sql = "(json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
             scope_params = [project_id]
         else:
-            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
+            scope_sql = "(json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
             scope_params = [project_id, workspace_id]
         with self.lock:
             params = []
@@ -1023,13 +1023,13 @@ class EvoStore:
         from .scope_validation import validate_scope
         project_id, workspace_id = validate_scope(self, project_id, workspace_id)
         if project_id is None:
-            scope_sql = "(metadata_json IS NULL OR (json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
+            scope_sql = "(metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') IS NULL AND json_extract(metadata_json, '$.workspace_id') IS NULL))"
             scope_params = []
         elif workspace_id is None:
-            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
+            scope_sql = "(json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND json_extract(metadata_json, '$.workspace_id') IS NULL)"
             scope_params = [project_id]
         else:
-            scope_sql = "(json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
+            scope_sql = "(json_valid(metadata_json) AND json_type(metadata_json, '$') = 'object' AND json_extract(metadata_json, '$.project_id') = ? AND (json_extract(metadata_json, '$.workspace_id') IS NULL OR json_extract(metadata_json, '$.workspace_id') = ?))"
             scope_params = [project_id, workspace_id]
         with self.lock:
             runs=self.db.execute(
@@ -1063,7 +1063,9 @@ class EvoStore:
             statuses[row["status"]]=statuses.get(row["status"],0)+1
             try:
                 metadata=json.loads(row["metadata_json"] or "{}")
-            except json.JSONDecodeError:
+            except (TypeError, ValueError, json.JSONDecodeError):
+                metadata={}
+            if not isinstance(metadata, dict):
                 metadata={}
             state=(metadata.get("verification") or {}).get("status")
             if state:

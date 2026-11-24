@@ -14,25 +14,32 @@ class EvoAssistant:
         project_id, workspace_id = validate_scope(self.store, project_id, workspace_id)
         return self.store.create_conversation(title, project_id=project_id, workspace_id=workspace_id)
 
-    def _build_messages(self, conversation_id, user_text, project_id=None, workspace_id=None,
-                        instruction_target=None, target_path=None, target=None, path=None):
+    def _resolve_conversation_scope(self, conversation_id, project_id=None, workspace_id=None):
         conversation = self.store.get_conversation_record(conversation_id)
         conversation_project = conversation["project_id"] if conversation is not None else None
         conversation_workspace = conversation["workspace_id"] if conversation is not None else None
-        if conversation is not None:
-            if project_id is not None and project_id != conversation_project:
-                raise ValueError("project_id does not match the conversation scope")
-            if workspace_id is not None and workspace_id != conversation_workspace:
+        if conversation is None:
+            if project_id is not None or workspace_id is not None:
+                raise ValueError("Conversation not found in the requested scope")
+            return (None, None)
+        if conversation_project is None:
+            if project_id is not None or workspace_id is not None:
+                raise ValueError("Global conversation does not accept project or workspace scope")
+            return (None, None)
+        if project_id is None or project_id != conversation_project:
+            raise ValueError("project_id does not match the conversation scope")
+        if conversation_workspace is None:
+            if workspace_id is not None:
                 raise ValueError("workspace_id does not match the conversation scope")
-            if conversation_project is not None:
-                project_id, workspace_id = conversation_project, conversation_workspace
-            else:
-                # A global conversation remains global, even if a caller has
-                # another project selected elsewhere.
-                project_id, workspace_id = None, None
-        else:
-            # A missing conversation must not broaden retrieval.
-            project_id, workspace_id = None, None
+            return (conversation_project, None)
+        if workspace_id != conversation_workspace:
+            raise ValueError("workspace_id does not match the conversation scope")
+        return (conversation_project, conversation_workspace)
+
+    def _build_messages(self, conversation_id, user_text, project_id=None, workspace_id=None,
+                        instruction_target=None, target_path=None, target=None, path=None):
+        project_id, workspace_id = self._resolve_conversation_scope(
+            conversation_id, project_id=project_id, workspace_id=workspace_id)
         from .scope_validation import validate_scope
         project_id, workspace_id = validate_scope(self.store, project_id, workspace_id)
 
@@ -286,21 +293,9 @@ class EvoAssistant:
         if not user_text.strip():
             raise ValueError("Message cannot be empty")
         # Build context before persisting this turn so the current user message is not duplicated.
+        project_id, workspace_id = self._resolve_conversation_scope(
+            conversation_id, project_id=project_id, workspace_id=workspace_id)
         messages = self._build_messages(conversation_id, user_text, project_id=project_id, workspace_id=workspace_id)
-        conversation = self.store.get_conversation_record(conversation_id)
-        conversation_project = conversation["project_id"] if conversation is not None else None
-        conversation_workspace = conversation["workspace_id"] if conversation is not None else None
-        if conversation is not None:
-            if project_id is not None and project_id != conversation_project:
-                raise ValueError("project_id does not match the conversation scope")
-            if workspace_id is not None and workspace_id != conversation_workspace:
-                raise ValueError("workspace_id does not match the conversation scope")
-            if conversation_project is not None:
-                project_id, workspace_id = conversation_project, conversation_workspace
-            else:
-                project_id, workspace_id = None, None
-        else:
-            project_id, workspace_id = None, None
         self.store.add_message(conversation_id,"user",user_text,project_id=project_id,workspace_id=workspace_id)
         self._capture_memory_candidate(conversation_id,user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,

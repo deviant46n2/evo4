@@ -215,7 +215,7 @@ class RetrievalIsolationTests(unittest.TestCase):
                         return f(*a, **k)
                     return wrapper
                 setattr(store, name, make(name, orig[name]))
-            assistant._build_messages(cid, "query")
+            assistant._build_messages(cid, "query", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
             for name in calls:
                 self.assertTrue(calls[name], name)
                 self.assertEqual(calls[name][0].get("project_id"), project["project_id"])
@@ -232,7 +232,7 @@ class RetrievalIsolationTests(unittest.TestCase):
             assistant = EvoAssistant(config, store, provider=object())
             cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
             # _build_messages resolves scope from conversation even without caller scope
-            msgs = assistant._build_messages(cid, "query")
+            msgs = assistant._build_messages(cid, "query", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
             self.assertIsInstance(msgs, list)
             assistant.close()
             store.close()
@@ -533,3 +533,145 @@ class OwnedScopeFilteringTests(unittest.TestCase):
             cid = store.create_conversation("global")
             self.assertIsNone(store.get_conversation(cid, project_id=project["project_id"]))
             self.assertEqual(store.get_messages(cid, 10, project_id=project["project_id"]), [])
+
+
+class AssistantExplicitScopeContractTests(unittest.TestCase):
+    def _make_workspace(self, store, root, name="Project"):
+        initialize_platform_registry(store)
+        project = register_project(store, name)
+        directory = root / (name.lower() + "-checkout")
+        directory.mkdir()
+        checkout = register_checkout(store, project["project_id"], directory)
+        cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg")
+        workspace = create_workspace(store, "Workspace", project["project_id"],
+                                    cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                    checkout_id=checkout["checkout_id"])
+        return project, workspace
+
+    def test_unscoped_build_messages_project_conversation_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                with self.assertRaises(ValueError):
+                    assistant._build_messages(cid, "hello")
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_unscoped_turn_project_conversation_rejected_before_persistence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                before = len(store.db.execute("SELECT id FROM messages").fetchall())
+                with self.assertRaises(ValueError):
+                    assistant.turn(cid, "hello")
+                after = len(store.db.execute("SELECT id FROM messages").fetchall())
+                self.assertEqual(before, after)
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_matching_explicit_scope_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                msgs = assistant._build_messages(cid, "hello", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                self.assertIsInstance(msgs, list)
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_mismatched_scope_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = make_store(tmp)
+            project, workspace = self._make_workspace(store, root)
+            other = register_project(store, "Other")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("proj", project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+                with self.assertRaises(ValueError):
+                    assistant._build_messages(cid, "hello", project_id=other["project_id"], workspace_id=workspace["workspace_id"])
+                with self.assertRaises(ValueError):
+                    assistant._build_messages(cid, "hello", project_id=project["project_id"])  # missing workspace
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_global_conversation_rejects_project_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                cid = assistant.new_conversation("global")
+                with self.assertRaises(ValueError):
+                    assistant._build_messages(cid, "hello", project_id="project-a")
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_missing_conversation_does_not_broaden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            try:
+                msgs = assistant._build_messages("missing", "hello")
+                self.assertIsInstance(msgs, list)
+                # no project context retrieved
+                self.assertFalse(any("project-a" in str(m.get("content", "")) for m in msgs))
+            finally:
+                assistant.close()
+                store.close()
+
+
+class MalformedRunMetadataTests(unittest.TestCase):
+    def test_malformed_and_nonobject_metadata_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = make_store(tmp)
+            from evo_core.platform_registry import initialize_platform_registry
+            from evo_core.project_checkouts import register_project, register_checkout
+            from evo_core.ai_configurations import create_configuration
+            from evo_core.workspaces import create_workspace
+            initialize_platform_registry(store)
+            project = register_project(store, "Project")
+            directory = Path(tmp) / "checkout"
+            directory.mkdir()
+            checkout = register_checkout(store, project["project_id"], directory)
+            cfg = create_configuration(store, {"schema_version": 1, "components": {}}, name="cfg")
+            workspace = create_workspace(store, "Workspace", project["project_id"],
+                                        cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
+                                        checkout_id=checkout["checkout_id"])
+            valid_run = store.start_agent_run("coding", {"project_id": project["project_id"], "workspace_id": workspace["workspace_id"]})
+            malformed = store.start_agent_run("coding", {"request": "bad"})
+            nonobject = store.start_agent_run("coding", {"request": "bad"})
+            store.db.execute("UPDATE agent_runs SET metadata_json=? WHERE id=?", ("{not json", malformed))
+            store.db.execute("UPDATE agent_runs SET metadata_json=? WHERE id=?", ('["array"]', nonobject))
+            store.db.commit()
+            # listing must not throw and must exclude invalid rows
+            rows = store.list_agent_runs(limit=100, project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+            self.assertEqual([r["id"] for r in rows], [valid_run])
+            # global scope must not include invalid rows as global
+            global_rows = store.list_agent_runs(limit=100)
+            self.assertNotIn(malformed, [r["id"] for r in global_rows])
+            self.assertNotIn(nonobject, [r["id"] for r in global_rows])
+            summary = store.agent_run_summary(project_id=project["project_id"], workspace_id=workspace["workspace_id"])
+            self.assertEqual(summary["coding_runs"], 1)
+            store.close()
