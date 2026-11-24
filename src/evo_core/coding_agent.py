@@ -160,11 +160,6 @@ class CodingAgent:
                 adjusted = index if index < first else index - 1
                 if adjusted < len(messages):
                     del messages[adjusted]
-        tool_schema_reserve = 0
-        try:
-            tool_schema_reserve = len(json.dumps(TOOL_SPECS, ensure_ascii=False))
-        except (TypeError, ValueError):
-            tool_schema_reserve = 0
         total = sum(_message_size(message) for message in messages) + tool_schema_reserve
         if total <= budget_chars:
             return
