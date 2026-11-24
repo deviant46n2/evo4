@@ -307,7 +307,7 @@ The following order minimizes speculative framework work.
 - [ ] Minimal resource admission and provider budgets are mandatory before dispatch.
 - [ ] Unknown required capacity/quota/compliance fails closed or is surfaced for explicit authorized override where policy permits.
 - [ ] Invocation records preserve exact configuration revision, adapter version, provider/model identity, effective policy, admission decision, usage, and outcome.
-- [ ] Tests cover malformed output, unavailable participants, timeout, cancellation, rate limiting, budget exhaustion, stale revisions, unauthorized scope, and secret redaction.
+- [ ] Tests cover malformed output, unavailable participants, timeout, cancellation, rate limiting, budget exhaustion, missing/mismatched revisions, continued validity of older pinned revisions, unauthorized scope, and secret redaction.
 - [ ] Independent review and required repository validation are recorded.
 
 ## 10. Explicit exclusions
@@ -336,7 +336,7 @@ The following choices constrain P3.1 and should not be reopened without new sour
 3. **Runtime binding:** registered-workspace execution has no global TOML fallback. The global TOML assistant remains a separate legacy path only for non-Registry callers.
 4. **Cancellation:** cancellation is cooperative at safe boundaries and bounded by provider request timeout. Terminal status and partial evidence must be accurate; immediate in-flight cancellation is not promised by the current transport.
 5. **Second participant:** default to a bounded deterministic verifier/tool participant. It is not an independent model. If Phase 4 requires independent model judgment, require two independently addressable model endpoints.
-6. **Admission:** do not use the advisory assess_workload function as a dispatch gate. P3.5 must use an atomic participant reservation/lease (or an explicitly single-flight policy proven to serialize all relevant dispatch) so concurrent calls cannot overcommit shared capacity. Unknown required capacity/quota fails closed.
+6. **Admission:** do not use the advisory assess_workload function as a dispatch gate. P3.5 must use a durable atomic global single-flight lease initially; process-local semaphores are insufficient. Unknown required capacity/quota fails closed. An abandoned lease blocks new dispatch until safe recovery is established; it is not automatically freed merely because a TTL elapsed.
 7. **Participant identity:** use stable integration identity plus immutable revision-specific participant instance identity unless implementation evidence shows that this complicates correctness.
 8. **Pinned revisions:** a workspace remains bound to its exact immutable revision even after a newer configuration revision is created. "Stale" means missing/mismatched revision or inactive/archived relationship—not simply "not current."
 9. **Endpoint security:** loopback HTTP is permitted for local inference; non-loopback origins require HTTPS and exact operator allowlisting. Reject embedded credentials and cross-origin redirects; validate resolved destinations against the same policy.
