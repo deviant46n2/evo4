@@ -251,9 +251,9 @@ The following order minimizes speculative framework work.
 - The selected revision must determine provider/model, generation settings, context/memory/history budgets, persona guidance, and project command policy. Operator-owned global command ceilings and code-owned safety policy remain outside user configuration and cannot be overridden. Record exact provenance in the participant and invocation.
 - Do not fall back to the global TOML provider when a registered workspace binding is missing, invalid, stale, or unsupported. Preserve the existing global TOML assistant path only for callers that do not use a Registry-bound workspace.
 - Resolve endpoint/model availability explicitly; distinguish unavailable from unknown and do not substitute another model.
-- Add deterministic binding tests proving that two revisions with different provider/model/generation/context/policy settings produce the corresponding distinct runtime behavior across workspace chat, plan proposal, and coding-agent execution. Changing global TOML provider/model/generation values must not change Registry-bound behavior except operator ceilings and code-owned safety policy. Also test invalid component/entrypoint/reference, missing adapter, bad secret, unavailable endpoint, missing/mismatched revision, archived relationship, and workspace/configuration mismatch. Prove that a workspace pinned to an older still-existing revision continues to use it after a newer revision is created.
+- Add deterministic binding tests proving that two revisions with different provider/model/generation/context/policy settings produce the corresponding distinct runtime behavior across workspace chat, plan proposal, and coding-agent execution. These tests must use fake/inert adapters and prove runtime construction/routing without making live provider dispatch available before P3.5. Changing global TOML provider/model/generation values must not change Registry-bound behavior except operator ceilings and code-owned safety policy. Also test invalid component/entrypoint/reference, missing adapter, bad secret, unavailable endpoint, missing/mismatched revision, archived relationship, and workspace/configuration mismatch. Prove that a workspace pinned to an older still-existing revision continues to use it after a newer revision is created.
 
-**Exit:** end-to-end tests prove that the exact immutable workspace configuration revision—not global TOML—determines provider/model, assistant generation/context behavior, and project command policy for workspace chat, plan proposal, and coding-agent execution. This is the Phase 3 prerequisite; contract scaffolding or binding only one entrypoint does not pass.
+**Exit:** end-to-end tests with inert/fake adapters prove that the exact immutable workspace configuration revision—not global TOML—determines provider/model, assistant generation/context behavior, and project command policy for workspace chat, plan proposal, and coding-agent execution. No live participant dispatch is enabled by this milestone. This is the Phase 3 prerequisite; contract scaffolding or binding only one entrypoint does not pass.
 
 ### P3.3 — First provider participant
 - Wrap/reuse the existing OpenAI-compatible transport behind the new adapter boundary.
@@ -261,7 +261,7 @@ The following order minimizes speculative framework work.
 - Normalize streaming, usage, errors, timeout, cancellation, and malformed responses.
 - Record adapter/config/provider/model provenance without exposing credentials.
 
-**Exit:** existing chat/provider tests still pass, and the same endpoint can be invoked through a Registry-bound participant with equivalent observable behavior.
+**Exit:** existing chat/provider tests still pass; the adapter can be constructed and contract-tested through a Registry-bound participant with equivalent normalized behavior. Live Registry-bound provider dispatch remains disabled until P3.5 supplies the mandatory authorization, budget, and atomic-admission gate.
 
 ### P3.4 — Second production participant implementation
 - Implement a bounded deterministic verifier/tool participant as the default second production runtime kind, unless source investigation shows a more useful safe runtime.
@@ -270,9 +270,10 @@ The following order minimizes speculative framework work.
 - If the Phase 4 pattern requires independent model judgment, add and test two independently addressable model endpoints as separate participants.
 - If no second production runtime can be integrated safely, report the blocker and seek an explicit Phase 3/4 acceptance revision rather than weakening boundaries.
 
-**Exit:** two genuinely distinct production participant implementations can be bound and invoked through the common contract, with deterministic contract tests and documented contributions. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
+**Exit:** two genuinely distinct production participant implementations can be bound and contract-tested through the common contract, with deterministic tests and documented contributions. Live dispatch of either participant remains gated on P3.5. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
+- This is the first milestone that may enable live participant dispatch. Until its gate is complete, P3.2–P3.4 may construct, inspect, and test participants with inert/fake adapters, but must not expose a live Registry-bound invocation path.
 - Add a single dispatch boundary that resolves task/workspace scope and effective permissions.
 - Add per-invocation deadlines, output/token limits, provider quota checks, and minimal resource admission.
 - Use a conservative global single-flight provider-dispatch lease initially, acquired atomically with SQLite `BEGIN IMMEDIATE` in the Registry database transaction boundary. A process-local semaphore is not sufficient for multi-process correctness. The transaction revalidates active workspace/project/configuration state and the exact pinned revision before acquiring the lease.
