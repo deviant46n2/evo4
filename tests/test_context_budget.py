@@ -372,7 +372,19 @@ class ToolSchemaBudgetTests(unittest.TestCase):
             try:
                 import evo_core.coding_agent as coding_agent
                 original_specs = coding_agent.TOOL_SPECS
-                coding_agent.TOOL_SPECS = [{"name": "x", "description": "y" * 100000}]
+                # Choose a schema whose raw character count is below the budget
+                # but whose conservative byte-based reserve exceeds it. The
+                # expendable context makes the initial request exceed budget, so
+                # the trimming branch runs before the final schema-reserve check.
+                window = 4096
+                output_reserve = min(128, max(1, window - 512))
+                budget_chars = max(0, window - output_reserve - 512) * 3
+                schema_description_length = budget_chars // 2
+                self.assertGreater(schema_description_length, 0)
+                coding_agent.TOOL_SPECS = [{"name": "x", "description": "y" * schema_description_length}]
+                serialized = __import__("json").dumps(coding_agent.TOOL_SPECS, ensure_ascii=False, sort_keys=True)
+                self.assertLess(len(serialized), budget_chars)
+                self.assertGreater(len(serialized.encode("utf-8")) * 3, budget_chars)
                 try:
                     messages = [
                         {"role": "system", "content": "BASE POLICY"},
@@ -381,8 +393,8 @@ class ToolSchemaBudgetTests(unittest.TestCase):
                     ]
                     (Path(tmp) / "repo").mkdir()
                     agent = CodingAgent(assistant, Path(tmp) / "repo", allowed_commands=[])
-                    # The expendable context can be removed, but the conservative
-                    # schema reserve must still make the request exceed budget.
+                    # Trimming the expendable context must not discard the
+                    # conservative schema reserve.
                     with self.assertRaises(ValueError):
                         agent._enforce_context_budget(messages)
                 finally:
