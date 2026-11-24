@@ -362,3 +362,27 @@ class NestedInstructionDeduplicationTests(unittest.TestCase):
             self.assertFalse(assistant.provider.called)
             assistant.close()
             store.close()
+
+
+class ToolSchemaBudgetTests(unittest.TestCase):
+    def test_tool_schema_allowance_is_conservative_and_can_fail_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            assistant, store = ContextBudgetTests._assistant(self, tmp, window=4096)
+            try:
+                import evo_core.coding_agent as coding_agent
+                original_specs = coding_agent.TOOL_SPECS
+                coding_agent.TOOL_SPECS = [{"name": "x", "description": "y" * 100000}]
+                try:
+                    messages = [
+                        {"role": "system", "content": "BASE POLICY"},
+                        {"role": "user", "content": "CURRENT REQUEST"},
+                    ]
+                    (Path(tmp) / "repo").mkdir(exist_ok=True)
+                    agent = CodingAgent(assistant, Path(tmp) / "repo", allowed_commands=[])
+                    with self.assertRaises(ValueError):
+                        agent._enforce_context_budget(messages)
+                finally:
+                    coding_agent.TOOL_SPECS = original_specs
+            finally:
+                assistant.close()
+                store.close()

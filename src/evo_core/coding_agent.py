@@ -131,12 +131,14 @@ class CodingAgent:
 
         try:
             serialized_schema = json.dumps(TOOL_SPECS, ensure_ascii=False, sort_keys=True)
-        except (TypeError, ValueError) as exc:
+            serialized_schema_bytes = len(serialized_schema.encode("utf-8"))
+        except (TypeError, ValueError, UnicodeEncodeError) as exc:
             raise ValueError("Unable to estimate the coding tool schema size for context budgeting.") from exc
-        # JSON is token-dense; estimate at two characters per token and then
-        # convert that token estimate back into the three-characters-per-token
-        # budget units used by this estimator.
-        schema_token_estimate = (len(serialized_schema) + 1) // 2
+        # Use one token per UTF-8 byte as a deliberately conservative upper
+        # bound. This avoids assuming any JSON token density or tokenizer
+        # behavior; the resulting token estimate is then converted into this
+        # estimator's three-characters-per-token budget units.
+        schema_token_estimate = serialized_schema_bytes
         tool_schema_reserve = schema_token_estimate * 3
         total = sum(_message_size(message) for message in messages) + tool_schema_reserve
         if total <= budget_chars:
