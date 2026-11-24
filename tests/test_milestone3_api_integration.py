@@ -803,6 +803,7 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
         original_decide = lifecycle.decide
         original_get_decision = lifecycle.get_decision
         decision_reads = {"count": 0}
+        api_thread = {"ident": None}
 
         def tracked_decide(*args, **kwargs):
             result = original_decide(*args, **kwargs)
@@ -811,9 +812,14 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             return result
 
         def wait_for_worker_decision(*args, **kwargs):
-            # Only count the API request's reads. lifecycle.decide() itself
-            # calls get_decision() from the worker thread after inserting.
-            if threading.current_thread() is threading.main_thread():
+            current_ident = threading.get_ident()
+            # The synchronous FastAPI endpoint runs in an AnyIO worker thread,
+            # not necessarily the process main thread. Capture its first
+            # decision read, then block its second read until the background
+            # worker has committed its terminal decision.
+            if api_thread["ident"] is None:
+                api_thread["ident"] = current_ident
+            if current_ident == api_thread["ident"]:
                 decision_reads["count"] += 1
                 if decision_reads["count"] == 2:
                     if not worker_decided.wait(timeout=5):
