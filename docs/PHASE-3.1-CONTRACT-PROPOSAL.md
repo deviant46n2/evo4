@@ -12,7 +12,7 @@ The critical invariant is:
 
 > For registered-workspace execution, the exact immutable AI Configuration revision resolved from the authorized workspace determines the participant/provider that is invoked. If that binding is invalid or unavailable, execution fails explicitly. It never falls back to the global TOML assistant.
 
-The existing TOML-backed assistant remains supported as a separate legacy path for callers that do not supply a Registry-bound workspace.
+The existing TOML-backed assistant remains supported as a separate legacy path for callers that do not supply a Registry-bound workspace. Every workspace-bound entrypoint—chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution—must use the same revision-derived assistant runtime; binding only the final coding-agent run is insufficient.
 
 ## 2. Configuration schema proposal
 
@@ -237,6 +237,8 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Endpoint policy rejects disallowed origins, insecure non-loopback HTTP, embedded credentials, cross-origin redirects, and prohibited resolved addresses.
 - A configured but unprobeable endpoint remains `unknown`; initial dispatch is denied until a supported bounded probe establishes availability.
 - Concurrent invocations cannot both acquire the initial global single-flight lease; expired/crashed leases recover without permitting overlapping live work.
+- Workspace chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution all use the exact same workspace-bound assistant runtime factory.
+- Project-only/global callers without a registered workspace retain the legacy TOML-backed assistant path.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
 
 ## 11. Decisions requested
