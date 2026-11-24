@@ -267,3 +267,98 @@ class CumulativeNestedInstructionBudgetTests(unittest.TestCase):
             finally:
                 assistant.close()
                 store.close()
+
+
+class NestedInstructionDeduplicationTests(unittest.TestCase):
+    def test_duplicate_omitted_instruction_recorded_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src"
+            src.mkdir()
+            (src / "AGENTS.md").write_text("x" * 1000, encoding="utf-8")
+            store = EvoStore(Path(tmp) / "evo.sqlite3")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY", 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+            agent.MAX_RUN_INSTRUCTION_BYTES = 10
+            agent.MAX_RUN_INSTRUCTION_FILES = 10
+
+            class FakeProvider:
+                def __init__(self):
+                    self.calls = []
+                    self.step = 0
+                def chat(self, messages, max_tokens=0, temperature=0, on_token=None, tools=None):
+                    self.calls.append([dict(m) for m in messages])
+                    if self.step == 0:
+                        self.step += 1
+                        return {"content": "", "tool_calls": [
+                            {"id": "c1", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}},
+                            {"id": "c2", "type": "function", "function": {"name": "list_files", "arguments": {"path": "src"}}}],
+                            "finish_reason": "tool_calls", "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            cid = assistant.new_conversation("global")
+            result = agent.run(cid, "inspect src", lambda name, args: True)
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(len(agent.omitted_instruction_files), 1)
+            self.assertEqual(agent.omitted_instruction_files[0]["relative_path"], "src/AGENTS.md")
+            assistant.close()
+            store.close()
+
+    def test_tool_schema_serialization_failure_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            assistant, store = ContextBudgetTests._assistant(self, tmp, window=4096)
+            try:
+                import evo_core.coding_agent as coding_agent
+                original = coding_agent.json.dumps
+                coding_agent.json.dumps = lambda *args, **kwargs: (_ for _ in ()).throw(TypeError("boom"))
+                try:
+                    messages = [
+                        {"role": "system", "content": "BASE POLICY"},
+                        {"role": "user", "content": "CURRENT REQUEST"},
+                    ]
+                    (Path(tmp) / "repo").mkdir()
+                    agent = CodingAgent(assistant, Path(tmp) / "repo", allowed_commands=[])
+                    with self.assertRaises(ValueError):
+                        agent._enforce_context_budget(messages)
+                finally:
+                    coding_agent.json.dumps = original
+            finally:
+                assistant.close()
+                store.close()
+
+    def test_end_to_end_mandatory_policy_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = EvoStore(Path(tmp) / "evo.sqlite3")
+            config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0,
+                               "BASE POLICY " + ("x" * 20000), 8, 8, context_window_tokens=4096)
+            assistant = EvoAssistant(config, store, provider=object())
+
+            class FakeProvider:
+                def __init__(self):
+                    self.called = False
+                def chat(self, *args, **kwargs):
+                    self.called = True
+                    return {"content": "done", "tool_calls": [], "finish_reason": "stop",
+                            "elapsed_seconds": 0.01, "ttft_seconds": 0.001,
+                            "prompt_tokens": 1, "completion_tokens": 1}
+
+            assistant.provider = FakeProvider()
+            from evo_core.workspace import Workspace
+            agent = CodingAgent(assistant, root, allowed_commands=[("python", "-c")])
+            cid = assistant.new_conversation("global")
+            before = len(store.db.execute("SELECT id FROM messages").fetchall())
+            with self.assertRaises(ValueError):
+                agent.run(cid, "hello", lambda name, args: True)
+            after = len(store.db.execute("SELECT id FROM messages").fetchall())
+            self.assertEqual(before, after)
+            self.assertFalse(assistant.provider.called)
+            assistant.close()
+            store.close()

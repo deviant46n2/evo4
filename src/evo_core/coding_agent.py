@@ -129,11 +129,15 @@ class CodingAgent:
                         size += len(str(arguments))
             return size
 
-        tool_schema_reserve = 0
         try:
-            tool_schema_reserve = len(json.dumps(TOOL_SPECS, ensure_ascii=False))
-        except (TypeError, ValueError):
-            tool_schema_reserve = 0
+            serialized_schema = json.dumps(TOOL_SPECS, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Unable to estimate the coding tool schema size for context budgeting.") from exc
+        # JSON is token-dense; estimate at two characters per token and then
+        # convert that token estimate back into the three-characters-per-token
+        # budget units used by this estimator.
+        schema_token_estimate = (len(serialized_schema) + 1) // 2
+        tool_schema_reserve = schema_token_estimate * 3
         total = sum(_message_size(message) for message in messages) + tool_schema_reserve
         if total <= budget_chars:
             return
@@ -212,6 +216,7 @@ class CodingAgent:
         self._included_instruction_paths = included_instruction_paths
         self._included_instruction_bytes = 0
         self._included_instruction_count = 0
+        self._considered_instruction_paths = set(included_instruction_paths)
         self.omitted_instruction_files = []
         self._omitted_instruction_files = self.omitted_instruction_files
         self.instruction_omissions = self.omitted_instruction_files
@@ -226,10 +231,12 @@ class CodingAgent:
             from . import instructions
             nested_discovery = instructions.discover_repository_instructions(self.workspace.root, target=relative)
             new_files = [item for item in nested_discovery.applied_files
-                         if item.relative_path not in self._included_instruction_paths]
+                         if item.relative_path not in self._included_instruction_paths
+                         and item.relative_path not in self._considered_instruction_paths]
             if not new_files:
                 return
             for item in new_files:
+                self._considered_instruction_paths.add(item.relative_path)
                 size = len(item.content.encode("utf-8"))
                 max_files = getattr(self, "MAX_RUN_INSTRUCTION_FILES", MAX_RUN_INSTRUCTION_FILES)
                 max_bytes = getattr(self, "MAX_RUN_INSTRUCTION_BYTES", MAX_RUN_INSTRUCTION_BYTES)
