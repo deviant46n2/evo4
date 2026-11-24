@@ -95,7 +95,7 @@ Implemented source foundations recorded by the roadmap include:
 - Project/workspace scope on conversations; messages inherit scope through their parent conversation.
 - Project/workspace scope on memories, memory candidates, lessons, research documents, and tasks, with scope-aware storage/retrieval paths.
 - Scope fields and validation on agent plans, with API visibility checks.
-- Fail-closed project command-prefix policy intersected with the operator's global command allowlist.
+- Fail-closed project command-prefix policy intersected with the operator's global command allowlist for coding-agent execution; agent-plan proposal generation still uses the global allowlist.
 - Workspace-scoped repository instruction discovery; repository-provided instruction files remain untrusted.
 - Projects and Workspaces UI components.
 
@@ -107,6 +107,7 @@ Outstanding Phase 2 acceptance work remains:
 - Adversarial checkout overlap, symlink, and canonical-path verification.
 - Scope continuity and mismatch rejection across approval, execution, cancellation, restart recovery, and resumption paths.
 - Cross-project retrieval and execution leakage tests across scoped records and API operations.
+- Consistent command-policy enforcement across proposal, approval, and execution.
 - Review of project-selection UX and uncertain-scope behavior.
 
 A further important boundary is already visible in source: workspace resolution returns the exact pinned Registry configuration revision, but current assistant chat and agent-plan proposal generation still use the application-global assistant/provider. Phase 3 must bind the pinned revision to every workspace-bound runtime entrypoint; it must fail explicitly rather than silently falling back to global TOML. See `ROADMAP.md` and `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`.
