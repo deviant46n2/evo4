@@ -180,7 +180,7 @@ These are independent dimensions and must not be collapsed:
 - **Authorization:** invocation-specific `authorized` or `denied`, with policy reason and provenance.
 - **Compliance:** `approved`, `restricted`, `suspended`, `unknown`, with integration/interface/use review provenance.
 
-A model-list endpoint is a best-effort discovery signal, not proof that a particular model will accept a completion request. Conversely, an endpoint that does not implement model listing is not automatically unavailable; its availability is unknown unless another supported probe establishes it. Unknown availability is not silently treated as available: the dispatch policy must either deny or require a separately recorded, explicit operator authorization for a bounded first probe. That authorization cannot override denied compliance or resource admission.
+A model-list endpoint is a best-effort discovery signal, not proof that a particular model will accept a completion request. Conversely, an endpoint that does not implement model listing is not automatically unavailable; its availability is unknown unless another supported probe establishes it. For the initial release, unknown availability denies dispatch. An adapter may define a documented, bounded probe that establishes availability; there is no implicit first-request fallback. Unknown availability cannot be overridden by a participant, task, or configuration definition.
 
 A health check does not establish compliance. Capabilities, availability, successful history, or Registry membership do not grant authorization. Unknown or stale required compliance status blocks dispatch.
 
@@ -204,12 +204,13 @@ P3.2 must implement this exact order:
 2. Resolve the active workspace/project/checkout relationship.
 3. Resolve the active AI Configuration relationship.
 4. Load the exact immutable revision ID pinned by that workspace and verify that it belongs to the referenced configuration.
-5. Validate schema version and typed component contract.
-6. Resolve the component's adapter ID/contract version through the code-controlled registry.
-7. Resolve allowlisted secret references.
-8. Apply endpoint destination policy and obtain the required availability/compliance decision.
-9. Construct the immutable participant instance with exact provenance.
-10. Atomically revalidate the workspace/configuration state and acquire dispatch admission before invoking the adapter.
+5. Validate schema version, typed component contracts, and the requested logical entrypoint.
+6. Resolve the entrypoint to a component key and validate all component references, including the assistant-runtime-to-model reference.
+7. Resolve each component's adapter ID/contract version through the code-controlled registry.
+8. Resolve allowlisted secret references.
+9. Apply endpoint destination policy and obtain the required availability/compliance decision.
+10. Construct the immutable model participant and assistant runtime from the pinned revision, with exact provenance.
+11. Atomically revalidate the workspace/configuration state and acquire dispatch admission before invoking the adapter.
 
 **Pinned-revision rule:** advancing a configuration's `current_revision_id` does not make an older immutable revision stale and must not change a workspace's behavior. A workspace continues to use its pinned revision while the workspace, project, and configuration remain active and the pinned revision exists and belongs to that configuration. A missing revision, mismatched configuration/revision pair, archived configuration, archived workspace, or inactive project is invalid. Updating to a newer revision requires an explicit workspace change/rebind operation that records the new pinned revision and version.
 
@@ -225,14 +226,16 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Schema-2 valid model and verifier components validate.
 - Unknown component, component version, adapter, adapter version, or setting is rejected.
 - Secret references reject malformed, missing, empty, and non-allowlisted variables; resolved values are redacted from all observable surfaces.
-- Exact immutable workspace revision determines provider/model/settings and effective configuration behavior.
+- Exact immutable workspace revision determines provider/model, generation settings, context/memory/history budgets, persona guidance, and project command-policy behavior.
+- Changing global TOML provider/model/generation values does not alter a Registry-bound workspace invocation, except for explicitly operator-owned ceilings and code-owned safety policy.
+- The typed command-policy component preserves the existing global-ceiling intersection and per-action approval behavior.
 - Two different revisions produce the corresponding different participant bindings.
 - Missing revision, revision/configuration mismatch, archived configuration/workspace, inactive project, and mismatched workspace/project are rejected.
 - Advancing the configuration's current revision does not invalidate a workspace pinned to an older still-existing revision; tests prove the old workspace continues using its pinned revision until explicitly rebound.
 - Unavailable endpoint and unknown availability are distinct outcomes.
 - No Registry-bound failure falls back to the global TOML assistant.
 - Endpoint policy rejects disallowed origins, insecure non-loopback HTTP, embedded credentials, cross-origin redirects, and prohibited resolved addresses.
-- A configured but unprobeable endpoint remains `unknown`; dispatch denies unless a bounded first-probe authorization is explicitly recorded.
+- A configured but unprobeable endpoint remains `unknown`; initial dispatch is denied until a supported bounded probe establishes availability.
 - Concurrent invocations cannot both acquire the initial global single-flight lease; expired/crashed leases recover without permitting overlapping live work.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
 
@@ -242,6 +245,9 @@ Approval is requested for these architectural constraints, not for implementatio
 
 1. Schema 1 remains readable but non-executable by default; schema 2 is required for runnable typed components. Existing schema-1 workspaces require an explicit migration preview, new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 2. The initial secret resolver supports allowlisted environment-variable references only.
+3. The schema-2 assistant-runtime component binds model selection, persona guidance, generation parameters, context/memory/history budgets, and the logical assistant entrypoint to the same immutable revision. Operator safety policy remains code-owned.
+4. The schema-2 command-policy component preserves the operator global command ceiling and can only narrow it.
+5. Provider destinations require loopback HTTP or exact operator-allowlisted HTTPS origins, with redirect and resolved-address validation.
 3. Registry-bound runtime binding has no global TOML fallback; legacy TOML behavior remains separate for non-Registry callers.
 4. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
 5. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
