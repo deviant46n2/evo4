@@ -86,9 +86,29 @@ Operational constraints:
 3. Revise the documents and reconcile contradictions.
 4. Project Provisioning v1 has been implemented under explicit user authorization; broader redesign implementation still requires authorization.
 
-## Phase 2 planning status
+## Phase 2 implementation status
 
-- Phase 2 planning documentation has been added to `ROADMAP.md`.
-- Current verified implementation: Project Provisioning v1, Registry v1, registered-workspace execution boundary, global conversations/messages, global memory/lessons/research, and coding-agent context isolation for untrusted retrieved text.
-- Current verified gaps: conversations, messages, memories, lessons, research, tasks, plans, and command policy are not project-scoped; project deletion remains deferred; automatic project selection is not authorized. Task/plan scope and command-policy enforcement are now explicit Phase 2 milestones.
-- No Phase 2 implementation has been started.
+The authoritative status and acceptance gates are in `ROADMAP.md`. Phase 2 is **partially implemented, not accepted as complete**. Do not use this continuity summary to override the roadmap.
+
+Implemented source foundations recorded by the roadmap include:
+- Project Provisioning v1, Registry v1, and registered-workspace execution-boundary validation.
+- Project/workspace scope on conversations; messages inherit scope through their parent conversation.
+- Project/workspace scope on memories, memory candidates, lessons, research documents, and tasks, with scope-aware storage/retrieval paths.
+- Scope fields and validation on agent plans, with API visibility checks.
+- Fail-closed project command-prefix policy intersected with the operator's global command allowlist.
+- Workspace-scoped repository instruction discovery; repository-provided instruction files remain untrusted.
+- Projects and Workspaces UI components.
+
+These are implementation observations, not proof that every Phase 2 acceptance gate has passed.
+
+Outstanding Phase 2 acceptance work remains:
+- CLI/API equivalence for scope-sensitive operations.
+- Instruction trust and precedence across assistant, plan, and coding-agent paths.
+- Adversarial checkout overlap, symlink, and canonical-path verification.
+- Scope continuity and mismatch rejection across approval, execution, cancellation, restart recovery, and resumption paths.
+- Cross-project retrieval and execution leakage tests across scoped records and API operations.
+- Review of project-selection UX and uncertain-scope behavior.
+
+A further important boundary is already visible in source: workspace resolution returns the exact pinned Registry configuration revision, but current assistant chat and agent-plan proposal generation still use the application-global assistant/provider. Phase 3 must bind the pinned revision to every workspace-bound runtime entrypoint; it must fail explicitly rather than silently falling back to global TOML. See `ROADMAP.md` and `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`.
+
+Project deletion remains explicitly deferred and is not a Phase 2 exit prerequisite. Automatic project inference/switching and cross-project consultation remain out of scope unless separately authorized.
