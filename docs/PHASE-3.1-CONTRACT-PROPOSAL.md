@@ -172,6 +172,17 @@ The initial normalized terminal outcome set should distinguish at least:
 
 Partial output is retained only as partial evidence and never converted into success. Error details are bounded and redacted.
 
+## 6. Caller authority and deployment trust boundary
+
+The current Evo API is a local, single-user application boundary. It restricts request hostnames to loopback and limits browser origins, but it does not authenticate individual users or provide a multi-user principal/role system. P3 must not invent an authenticated `user_id` or claim that loopback host validation is strong authentication.
+
+For the initial deployment:
+- Treat the caller as the local operator only within the existing local-process trust assumption.
+- Preserve the loopback-only API boundary and explicit per-action approval for consequential coding-agent tools.
+- Record the authority source as the local single-user API boundary, not as a verified identity.
+- Do not expose the API on a LAN or public interface as part of Phase 3.
+- Any remote or multi-user deployment is blocked until a separate authentication, session, CSRF, and authorization design is implemented and reviewed.
+
 ## 7. Availability, authorization, and compliance
 
 These are independent dimensions and must not be collapsed:
@@ -191,7 +202,7 @@ A health check does not establish compliance. Capabilities, availability, succes
 - Do not use advisory workload assessment as a dispatch gate.
 - For the first release, prefer a conservative global single-flight participant-dispatch policy: at most one provider-backed invocation is admitted at a time. This is intentionally throughput-limited and can be generalized only after measured need.
 - Enforce single-flight with a durable SQLite lease in the same database file and transaction boundary as Registry workspace/configuration state. Acquire it with `BEGIN IMMEDIATE`, revalidate workspace/project/configuration status and the pinned revision in that transaction, then commit the lease before network dispatch. A process-local semaphore alone is insufficient across multiple processes.
-- Lease records include invocation ID, owner/process identity, acquired/expiry timestamps, and terminal state. The lease is released on every terminal path; crash recovery expires abandoned leases conservatively. Lease lifetime must cover the bounded provider deadline or be renewed safely; an expired lease must never permit two live invocations to overlap.
+- Lease records include invocation ID, owner/process identity, acquired/heartbeat timestamps, and terminal state. The lease is released on every observed terminal path. A process crash or lost owner marks the lease `abandoned`; do not automatically release it solely because a TTL elapsed, because provider-side work may continue after the client process disappears. New dispatch remains blocked until endpoint idleness is established or the operator explicitly acknowledges recovery. A provider deadline bounds normal live requests but does not prove remote server cancellation.
 - This is a serialization gate, not proof of free VRAM or OS-level isolation. Required telemetry that is absent or stale remains unknown and blocks any policy that depends on it.
 - Remote-provider request/token budgets must be explicit operator-configured limits. If a provider's quota is unknown and no conservative local limit is configured, fail closed. Usage not reported by the endpoint remains unknown, never fabricated.
 - The initial mechanism is not a general-purpose scheduler and does not claim OS-level resource isolation.
@@ -236,7 +247,7 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - No Registry-bound failure falls back to the global TOML assistant.
 - Endpoint policy rejects disallowed origins, insecure non-loopback HTTP, embedded credentials, cross-origin redirects, and prohibited resolved addresses.
 - A configured but unprobeable endpoint remains `unknown`; initial dispatch is denied until a supported bounded probe establishes availability.
-- Concurrent invocations cannot both acquire the initial global single-flight lease; expired/crashed leases recover without permitting overlapping live work.
+- Concurrent invocations cannot both acquire the initial global single-flight lease; crashed/ownerless leases become abandoned and block new dispatch until safe recovery is explicitly established.
 - Workspace chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution all use the exact same workspace-bound assistant runtime factory.
 - Project-only/global callers without a registered workspace retain the legacy TOML-backed assistant path.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
