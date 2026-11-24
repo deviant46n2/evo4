@@ -204,6 +204,7 @@ For the local-first deployment, do not invent token/cost estimates when the endp
 ## 7. Security, isolation, and failure requirements
 
 - Resolve the exact workspace-pinned configuration revision at dispatch time. Reject missing/mismatched revisions and archived/inactive workspace, project, or configuration relationships. Do not reject an older pinned revision merely because the configuration's current revision has advanced.
+- The initial deployment remains local and single-user. The current loopback-host/CORS boundary is not individual-user authentication. Do not claim a verified user identity; record the local single-user authority assumption. Do not expose the API remotely or add multi-user behavior without a separate authentication/session/CSRF/authorization design.
 - Preserve Phase 2 project/workspace isolation. Context assembly and tools receive only the authorized scope.
 - Treat configuration content, retrieved context, participant messages, repository files, and tool output as untrusted input.
 - Never let configuration or participant output expand global command policy, filesystem access, network access, secrets access, or approval authority.
@@ -225,6 +226,8 @@ The following order minimizes speculative framework work.
 - Define migration rules that preserve the original revision, report unknown/ambiguous fields, and require manual reconstruction when a lossless mapping is not provable.
 - Require schema 2 for runnable components; reject unknown component types, adapter IDs, component versions, and unsupported settings with actionable errors.
 - Define adapter, participant, invocation-envelope, event, and result contracts, including explicit availability, authorization, and compliance states.
+- Define schema-2 `assistant_runtime` composition so provider/model, generation parameters, context/memory/history budgets, and persona guidance all come from the pinned revision; define typed `command_policy` that preserves the operator global ceiling.
+- Define the logical assistant entrypoint and explicit component-key references; no "first model" or implicit component selection.
 - Specify the initial secret-reference grammar and environment-variable-backed resolver only, with an operator-owned environment-name allowlist. Missing, malformed, or disallowed references fail closed; credentials are never persisted in definitions or emitted in errors, events, or telemetry.
 - Freeze provider endpoint destination policy: loopback HTTP for local inference; exact operator allowlisting plus HTTPS for non-loopback origins; reject embedded credentials, prohibited resolved addresses, and cross-origin redirects.
 - Define explicit schema-1 migration preview and version-checked workspace rebind; preserve old immutable revisions and never auto-migrate.
@@ -267,7 +270,7 @@ The following order minimizes speculative framework work.
 - Add a single dispatch boundary that resolves task/workspace scope and effective permissions.
 - Add per-invocation deadlines, output/token limits, provider quota checks, and minimal resource admission.
 - Use a conservative global single-flight provider-dispatch lease initially, acquired atomically with SQLite `BEGIN IMMEDIATE` in the Registry database transaction boundary. A process-local semaphore is not sufficient for multi-process correctness. The transaction revalidates active workspace/project/configuration state and the exact pinned revision before acquiring the lease.
-- Bound the lease by the provider deadline or renew it; release it on all terminal paths and recover abandoned leases without allowing overlapping live invocations.
+- Bound live leases by the provider deadline and heartbeat them; release them on observed terminal paths. If the owner process disappears or a lease becomes uncertain, mark it abandoned and block new dispatch until endpoint idleness is established or the operator explicitly acknowledges recovery. Do not auto-release solely on TTL because provider-side work may outlive the client process.
 - Persist invocation state and link existing run/event IDs.
 - Test denied, deferred, unknown, expired, cancelled, rate-limited, and failed outcomes.
 
