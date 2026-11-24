@@ -192,13 +192,11 @@ def create_app(config_path="config.toml", provider_name=None):
     orchestration.initialize(lab_db.connection)
     with lab_db.lock:
         recover_interrupted_executions(lab_db.connection)
-        recovered_agent_tasks = background_agent.recover(lab_db.connection)
-        orchestration.recover_plans(lab_db.connection)
-        for recovered_id in recovered_agent_tasks:
-            store.finish_agent_run(recovered_id, "interrupted", "Evo restarted; in-flight work was not resumed.")
     # Converge every lifecycle record onto one durable terminal decision. This is
     # repeatable: already-repaired records are left alone and completed records
     # are never downgraded. Nothing is replayed and no process is signalled.
+    # Background tasks and plans are intentionally not pre-finalized here; the
+    # reconciler owns their terminal convergence from durable evidence.
     lifecycle.initialize(lab_db.connection)
     app.state.lifecycle_report = lifecycle.reconcile(store, lab_db)
 
@@ -1254,6 +1252,8 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         # Same lock order as worker finalization prevents a late cancellation
         # from racing a completed terminal state.
+        queued = False
+        plan_id = None
         with agent_registry_guard:
             with lab_db.lock:
                 task = background_agent.get(lab_db.connection, run_id)
@@ -1262,16 +1262,17 @@ def create_app(config_path="config.toml", provider_name=None):
                 previous_status = task["status"]
                 if not background_agent.request_cancel(lab_db.connection, run_id):
                     return {"cancelled": False, "status": task["status"]}
-                if previous_status == "queued":
-                    background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
-                    store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
+                queued = previous_status == "queued"
+                if queued:
                     plan_row = lab_db.connection.execute("SELECT id FROM agent_plans WHERE run_id=?", (run_id,)).fetchone()
-                    if plan_row:
-                        orchestration.finish_plan(lab_db.connection, plan_row["id"], "cancelled",
-                                                  "Cancelled before worker claim.")
+                    plan_id = plan_row["id"] if plan_row else None
             stop_event = agent_stop_events.get(run_id)
             if stop_event:
                 stop_event.set()
+        # Record the durable terminal decision only after the task cancellation
+        # request is committed and no SQLite lock is held while finalizing.
+        if queued:
+            _finalize_agent_run(run_id, "cancelled", "Cancelled before execution began.", plan_id)
         with approval_guard:
             for item in pending_approvals.values():
                 if item["run_id"] == run_id:

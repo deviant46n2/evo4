@@ -189,3 +189,89 @@ class AgentLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueuedCancellationLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.tmp.name, "evo.db")
+        self.store = EvoStore(self.db_path)
+        self.lab = ResultsDB(self.db_path)
+        background_agent.initialize(self.lab.connection)
+        orchestration.initialize(self.lab.connection)
+        lifecycle.initialize(self.lab.connection)
+        initialize_scheduler(self.lab.connection)
+        initialize_execution(self.lab.connection)
+
+    def tearDown(self):
+        self.store.close()
+        self.lab.close()
+        self.tmp.cleanup()
+
+    def _insert_run(self, run_id, status="queued", source="desktop"):
+        now = "2026-01-01T00:00:00+00:00"
+        with self.store.lock:
+            self.store.db.execute(
+                "INSERT INTO agent_runs(id,kind,status,started_at,metadata_json) VALUES(?,?,?,?,?)",
+                (run_id, "coding", status, now, '{"source": "%s"}' % source))
+            self.store.db.commit()
+
+    def test_queued_cancellation_creates_one_durable_decision(self):
+        run_id = "run-queued-cancel"
+        self._insert_run(run_id, "queued")
+        with self.lab.lock:
+            background_agent.create(self.lab.connection, run_id)
+            self.assertTrue(background_agent.request_cancel(self.lab.connection, run_id))
+            first = lifecycle.decide(self.lab.connection, run_id, "cancelled", source="worker", reason="cancelled")
+            second = lifecycle.decide(self.lab.connection, run_id, "failed", source="worker", reason="late")
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(second["decision"]["outcome"], "cancelled")
+        lifecycle.apply_decision(self.store, first["decision"])
+        with self.lab.lock:
+            lifecycle.apply_background_from_decision(self.lab.connection, first["decision"])
+        self.assertEqual(self.store.get_agent_run(run_id)["status"], "cancelled")
+        self.assertEqual(background_agent.get(self.lab.connection, run_id)["status"], "cancelled")
+
+    def test_cancellation_after_terminal_completion_does_not_overwrite(self):
+        run_id = "run-terminal-first"
+        self._insert_run(run_id, "completed")
+        with self.lab.lock:
+            background_agent.create(self.lab.connection, run_id)
+            background_agent.finalize(self.lab.connection, run_id, "completed", {}, commit=True)
+            lifecycle.decide(self.lab.connection, run_id, "completed", source="worker", reason="done")
+            cancelled = background_agent.request_cancel(self.lab.connection, run_id)
+            late = lifecycle.decide(self.lab.connection, run_id, "cancelled", source="worker", reason="late")
+        self.assertFalse(cancelled)
+        self.assertFalse(late["created"])
+        self.assertEqual(late["decision"]["outcome"], "completed")
+        self.assertEqual(self.store.get_agent_run(run_id)["status"], "completed")
+
+    def test_crash_after_cancellation_decision_converges_mirrors(self):
+        run_id = "run-cancel-crash"
+        self._insert_run(run_id, "queued")
+        with self.lab.lock:
+            background_agent.create(self.lab.connection, run_id)
+            background_agent.request_cancel(self.lab.connection, run_id)
+            lifecycle.decide(self.lab.connection, run_id, "cancelled", source="worker", reason="cancelled")
+        # Mirrors intentionally not updated.
+        lifecycle.reconcile(self.store, self.lab)
+        self.assertEqual(self.store.get_agent_run(run_id)["status"], "cancelled")
+        self.assertEqual(background_agent.get(self.lab.connection, run_id)["status"], "cancelled")
+
+    def test_repeated_cancellation_requests_are_idempotent(self):
+        run_id = "run-repeat-cancel"
+        self._insert_run(run_id, "queued")
+        with self.lab.lock:
+            background_agent.create(self.lab.connection, run_id)
+            self.assertTrue(background_agent.request_cancel(self.lab.connection, run_id))
+            self.assertTrue(background_agent.request_cancel(self.lab.connection, run_id))
+            self.assertEqual(background_agent.get(self.lab.connection, run_id)["status"], "cancel_requested")
+            lifecycle.decide(self.lab.connection, run_id, "cancelled", source="worker", reason="cancelled")
+            before = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM lifecycle_reconciliation_events WHERE entity_id=?", (run_id,)).fetchone()[0]
+        lifecycle.reconcile(self.store, self.lab)
+        with self.lab.lock:
+            after = self.lab.connection.execute(
+                "SELECT COUNT(*) FROM lifecycle_reconciliation_events WHERE entity_id=?", (run_id,)).fetchone()[0]
+        self.assertEqual(before, after)
