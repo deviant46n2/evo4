@@ -221,7 +221,7 @@ Command policy is settled: effective permissions are the intersection of global 
 - Secret resolution, cancellation semantics, and resource admission are explicit and bounded; missing secrets, unknown required capacity/quota, and unsupported components fail closed. Initial admission uses a durable atomic single-flight lease rather than an advisory telemetry endpoint or process-local semaphore.
 - Participant identity, declared capabilities, availability, compliance status, trust evidence, role eligibility, and authorization are separate fields/concepts.
 - Assignment/task ownership, permission attenuation, context envelopes, message provenance, handoff schemas, verification contracts, and bounded dispatch are explicit.
-- Each dispatch is admitted against local resource reserves, concurrency caps, and provider quota/rate/token budgets; unknown capacity fails closed or requires an explicit policy override.
+- Each dispatch is admitted against local resource reserves, concurrency caps, and provider quota/rate/token budgets; unknown required capacity or quota fails closed in the initial implementation. The initial concurrency control is a durable global single-flight lease; abandoned leases block new dispatch until safe recovery is established.
 - Registration does not grant execution permission.
 
 **Phase 4 — First cooperative vertical slice**
