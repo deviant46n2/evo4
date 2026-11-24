@@ -32,6 +32,11 @@ class BackgroundAgentLedgerTests(unittest.TestCase):
         self.assertTrue(transition(self.db, "run-1", "cancelled"))
         self.assertFalse(transition(self.db, "run-1", "completed"))
 
+    def test_repeated_cancel_does_not_duplicate_event(self):
+        self.assertTrue(request_cancel(self.db, "run-1"))
+        self.assertTrue(request_cancel(self.db, "run-1"))
+        self.assertEqual([e["type"] for e in events(self.db, "run-1")].count("cancel_requested"), 1)
+
     def test_events_are_ordered_and_incremental(self):
         claim(self.db, "run-1", "worker-a")
         transition(self.db, "run-1", "awaiting_approval", {"tool": "write_file"})

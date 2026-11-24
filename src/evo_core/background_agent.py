@@ -131,6 +131,9 @@ def request_cancel(connection, run_id):
             raise ValueError("Background task not found")
         if row["status"] in TERMINAL:
             return False
+        if row["status"] == "cancel_requested" or row["cancel_requested"]:
+            # Repeated requests are idempotent: do not append another event.
+            return True
         connection.execute(
             """UPDATE background_agent_tasks SET cancel_requested=1,status='cancel_requested',
                updated_at=? WHERE run_id=?""", (stamp, run_id))

@@ -1261,6 +1261,8 @@ def create_app(config_path="config.toml", provider_name=None):
                     raise HTTPException(status_code=404, detail="Background agent task not found")
                 previous_status = task["status"]
                 if not background_agent.request_cancel(lab_db.connection, run_id):
+                    # The task already reached a terminal state. Report that
+                    # outcome; do not claim cancellation won.
                     return {"cancelled": False, "status": task["status"]}
                 queued = previous_status == "queued"
                 if queued:
@@ -1269,16 +1271,21 @@ def create_app(config_path="config.toml", provider_name=None):
             stop_event = agent_stop_events.get(run_id)
             if stop_event:
                 stop_event.set()
-        # Record the durable terminal decision only after the task cancellation
-        # request is committed and no SQLite lock is held while finalizing.
+        decision = None
         if queued:
-            _finalize_agent_run(run_id, "cancelled", "Cancelled before execution began.", plan_id)
+            decision = _finalize_agent_run(run_id, "cancelled", "Cancelled before execution began.", plan_id)
+        else:
+            with lab_db.lock:
+                decision = lifecycle.get_decision(lab_db.connection, run_id)
         with approval_guard:
             for item in pending_approvals.values():
                 if item["run_id"] == run_id:
                     item["approved"] = False
                     item["decision"].set()
-        return {"cancelled": True, "status": "cancelled" if previous_status == "queued" else "cancel_requested"}
+        if decision is not None:
+            outcome = decision["outcome"]
+            return {"cancelled": outcome == "cancelled", "status": outcome}
+        return {"cancelled": True, "status": "cancel_requested"}
 
     @app.get("/api/v1/agents/{run_id}/events")
     def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200,
