@@ -726,17 +726,20 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
         import time
         from evo_core import background_agent
         gate = threading.Event()
+        claim_entered = threading.Event()
         original_claim = background_agent.claim
 
         def delayed_claim(conn, run_id, token):
             released = False
             try:
-                app.state.lab_db.lock.release()
+                self.app.state.lab_db.lock.release()
                 released = True
-                gate.wait()
+                claim_entered.set()
+                if not gate.wait(timeout=10):
+                    raise TimeoutError("test did not release delayed worker claim")
             finally:
                 if released:
-                    app.state.lab_db.lock.acquire()
+                    self.app.state.lab_db.lock.acquire()
             return original_claim(conn, run_id, token)
 
         background_agent.claim = delayed_claim
@@ -745,6 +748,7 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
                                         {"request": "queued cancel", "workspace_id": self.workspace["workspace_id"]})
             self.assertEqual(status, 202)
             run_id = body["run_id"]
+            self.assertTrue(claim_entered.wait(timeout=5), "worker never reached the delayed claim")
             status, cancel = asgi_request(self.app, "POST",
                                           f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             self.assertEqual(status, 200)
@@ -788,8 +792,30 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
 
     def test_approval_cancellation(self):
         import time
+        import threading
         import evo_core.workspace as wsmod
+        from evo_core import lifecycle
         executed = {"count": 0}
+        worker_decided = threading.Event()
+        original_decide = lifecycle.decide
+        original_get_decision = lifecycle.get_decision
+        decision_reads = {"count": 0}
+
+        def tracked_decide(*args, **kwargs):
+            result = original_decide(*args, **kwargs)
+            if kwargs.get("source") == "worker":
+                worker_decided.set()
+            return result
+
+        def wait_for_worker_decision(*args, **kwargs):
+            decision_reads["count"] += 1
+            if decision_reads["count"] == 2:
+                if not worker_decided.wait(timeout=5):
+                    raise TimeoutError("worker did not persist its terminal decision before API response")
+            return original_get_decision(*args, **kwargs)
+
+        lifecycle.decide = tracked_decide
+        lifecycle.get_decision = wait_for_worker_decision
         original_run = wsmod.Workspace.run
 
         def tracked_run(self, *args, **kwargs):
@@ -824,6 +850,9 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             status, cancel = asgi_request(self.app, "POST",
                                           f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             self.assertEqual(status, 200)
+            self.assertTrue(cancel["cancelled"])
+            self.assertEqual(cancel["status"], "cancelled")
+            self.assertTrue(worker_decided.is_set())
             for _ in range(100):
                 status, body = asgi_request(self.app, "GET",
                                             f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
@@ -835,23 +864,28 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             self.assertEqual(executed["count"], 0)
         finally:
             wsmod.Workspace.run = original_run
+            lifecycle.decide = original_decide
+            lifecycle.get_decision = original_get_decision
 
     def test_repeated_cancellation(self):
         import threading
         import time
         from evo_core import background_agent
         gate = threading.Event()
+        claim_entered = threading.Event()
         original_claim = background_agent.claim
 
         def delayed_claim(conn, run_id, token):
             released = False
             try:
-                app.state.lab_db.lock.release()
+                self.app.state.lab_db.lock.release()
                 released = True
-                gate.wait()
+                claim_entered.set()
+                if not gate.wait(timeout=10):
+                    raise TimeoutError("test did not release delayed worker claim")
             finally:
                 if released:
-                    app.state.lab_db.lock.acquire()
+                    self.app.state.lab_db.lock.acquire()
             return original_claim(conn, run_id, token)
 
         background_agent.claim = delayed_claim
@@ -860,6 +894,7 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
                                         {"request": "queued cancel", "workspace_id": self.workspace["workspace_id"]})
             self.assertEqual(status, 202)
             run_id = body["run_id"]
+            self.assertTrue(claim_entered.wait(timeout=5), "worker never reached the delayed claim")
             first = asgi_request(self.app, "POST",
                                  f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             second = asgi_request(self.app, "POST",
@@ -871,8 +906,18 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             self.assertFalse(second[1]["cancelled"])
             self.assertEqual(second[1]["status"], "cancelled")
             gate.set()
+            for _ in range(100):
+                status, final_body = asgi_request(
+                    self.app, "GET",
+                    f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
+                if final_body.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+                    break
+                time.sleep(0.05)
+            self.assertEqual(final_body["status"], "cancelled")
             with self.app.state.lab_db.lock:
                 events = background_agent.events(self.app.state.lab_db.connection, run_id)
+                task = background_agent.get(self.app.state.lab_db.connection, run_id)
+            self.assertEqual(task["status"], "cancelled")
             self.assertEqual([e["type"] for e in events].count("cancel_requested"), 1)
         finally:
             background_agent.claim = original_claim
