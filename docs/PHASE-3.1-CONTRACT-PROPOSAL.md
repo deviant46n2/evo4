@@ -272,11 +272,11 @@ Approval is requested for these architectural constraints, not for implementatio
 5. The schema-2 command-policy component preserves the operator global command ceiling and can only narrow it.
 6. Provider destinations require loopback HTTP or exact operator-allowlisted HTTPS origins, with redirect and resolved-address validation.
 7. Provider compliance is separately operator-approved per exact origin, adapter/interface, and use; endpoint allowlisting or a successful health check is not compliance approval.
-7. Unknown endpoint availability denies dispatch until a supported bounded probe establishes availability.
-8. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
-9. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
-10. Cancellation is described as cooperative/bounded until transport-level cancellation is actually implemented and tested.
-11. Initial provider admission uses a durable global single-flight lease; this is deliberately conservative, not a predictive resource scheduler.
-12. Participant identity uses stable integration identity plus immutable revision-specific participant instance identity.
+8. Unknown endpoint availability denies dispatch until a supported bounded probe establishes availability.
+9. The default second production participant is a bounded deterministic structured-output/evidence-contract verifier. It validates declared output schemas, required fields, and evidence-reference shape; it does not make semantic correctness judgments, execute arbitrary tools, or replace an independent model challenger.
+10. If Phase 4 requires independent model judgment, two independently addressable model endpoints are required.
+11. Cancellation is described as cooperative/bounded until transport-level cancellation is actually implemented and tested.
+12. Initial provider admission uses a durable global single-flight lease; this is deliberately conservative, not a predictive resource scheduler.
+13. Participant identity uses stable integration identity plus immutable revision-specific participant instance identity.
 
 No application code, migrations, API behavior, or services should change until the user explicitly approves the contract and authorizes implementation.
