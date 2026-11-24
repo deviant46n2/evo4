@@ -93,7 +93,7 @@ This is a provider destination policy, not a claim that endpoint allowlisting ma
 
 ## 5. Adapter and participant contracts
 
-### 4.1 Adapter responsibilities
+### 5.1 Adapter responsibilities
 
 A code-registered adapter owns provider-specific configuration validation, secret resolution, endpoint interaction, and normalization. It does not decide project scope, task permissions, user approval, or whether a participant is trusted.
 
@@ -105,7 +105,7 @@ Minimum adapter operations:
 - report bounded availability/health observations;
 - invoke a validated request and emit normalized events plus one terminal result.
 
-### 4.2 Participant identity
+### 5.2 Participant identity
 
 Use two identities:
 
@@ -156,13 +156,16 @@ A model-list endpoint is a best-effort discovery signal, not proof that a partic
 
 A health check does not establish compliance. Capabilities, availability, successful history, or Registry membership do not grant authorization. Unknown or stale required compliance status blocks dispatch.
 
-## 7. Cancellation, timeout, and resource admission
+## 8. Cancellation, timeout, and resource admission
 
 - Cancellation is cooperative at safe boundaries and bounded by the provider request timeout in the initial transport. The API must not promise immediate interruption of an in-flight blocking request.
 - The terminal result must state whether cancellation was observed before dispatch, between stream events, or only after the provider returned/timed out.
 - Do not use advisory workload assessment as a dispatch gate.
-- P3.5 must use an atomic participant dispatch lease/reservation, or a demonstrably serialized single-flight policy, to prevent concurrent overcommit.
-- Unknown required capacity, provider quota, or usage limits fail closed. Unreported token/cost usage is represented as unknown, never fabricated.
+- For the first release, prefer a conservative global single-flight participant-dispatch policy: at most one provider-backed invocation is admitted at a time. This is intentionally throughput-limited and can be generalized only after measured need.
+- Enforce single-flight with a durable SQLite lease in the same database file and transaction boundary as Registry workspace/configuration state. Acquire it with `BEGIN IMMEDIATE`, revalidate workspace/project/configuration status and the pinned revision in that transaction, then commit the lease before network dispatch. A process-local semaphore alone is insufficient across multiple processes.
+- Lease records include invocation ID, owner/process identity, acquired/expiry timestamps, and terminal state. The lease is released on every terminal path; crash recovery expires abandoned leases conservatively. Lease lifetime must cover the bounded provider deadline or be renewed safely; an expired lease must never permit two live invocations to overlap.
+- This is a serialization gate, not proof of free VRAM or OS-level isolation. Required telemetry that is absent or stale remains unknown and blocks any policy that depends on it.
+- Remote-provider request/token budgets must be explicit operator-configured limits. If a provider's quota is unknown and no conservative local limit is configured, fail closed. Usage not reported by the endpoint remains unknown, never fabricated.
 - The initial mechanism is not a general-purpose scheduler and does not claim OS-level resource isolation.
 
 ## 9. Runtime binding sequence and revision semantics
@@ -184,7 +187,7 @@ P3.2 must implement this exact order:
 
 No failure may fall back to global TOML, another revision, adapter, endpoint, model, or policy for a Registry-bound workspace.
 
-## 9. Required P3.1/P3.2 tests
+## 10. Required P3.1/P3.2 tests
 
 - Schema-1 definitions remain readable/editable but cannot execute by default.
 - Schema-2 valid model and verifier components validate.
@@ -196,9 +199,12 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Advancing the configuration's current revision does not invalidate a workspace pinned to an older still-existing revision; tests prove the old workspace continues using its pinned revision until explicitly rebound.
 - Unavailable endpoint and unknown availability are distinct outcomes.
 - No Registry-bound failure falls back to the global TOML assistant.
+- Endpoint policy rejects disallowed origins, insecure non-loopback HTTP, embedded credentials, cross-origin redirects, and prohibited resolved addresses.
+- A configured but unprobeable endpoint remains `unknown`; dispatch denies unless a bounded first-probe authorization is explicitly recorded.
+- Concurrent invocations cannot both acquire the initial global single-flight lease; expired/crashed leases recover without permitting overlapping live work.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
 
-## 10. Decisions requested
+## 11. Decisions requested
 
 Approval is requested for these architectural constraints, not for implementation:
 
