@@ -808,10 +808,13 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             return result
 
         def wait_for_worker_decision(*args, **kwargs):
-            decision_reads["count"] += 1
-            if decision_reads["count"] == 2:
-                if not worker_decided.wait(timeout=5):
-                    raise TimeoutError("worker did not persist its terminal decision before API response")
+            # Only count the API request's reads. lifecycle.decide() itself
+            # calls get_decision() from the worker thread after inserting.
+            if threading.current_thread() is threading.main_thread():
+                decision_reads["count"] += 1
+                if decision_reads["count"] == 2:
+                    if not worker_decided.wait(timeout=5):
+                        raise TimeoutError("worker did not persist its terminal decision before API response")
             return original_get_decision(*args, **kwargs)
 
         lifecycle.decide = tracked_decide
