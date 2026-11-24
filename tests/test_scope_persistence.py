@@ -516,14 +516,18 @@ class ScopePersistenceTests(unittest.TestCase):
 
     def test_agent_plan_scope_persists(self):
         with tempfile.TemporaryDirectory() as temp:
-            store = EvoStore(Path(temp) / "evo.sqlite3")
+            root = Path(temp)
+            store = EvoStore(root / "evo.sqlite3")
             initialize(store.db)
             try:
-                plan = create_plan(store.db, "request", "workspace-1", "/workspace", {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
-                                    project_id="project-1")
+                project, workspace = self._fixtures(store, root)
+                plan = create_plan(
+                    store.db, "request", workspace["workspace_id"], "/workspace",
+                    {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                    project_id=project["project_id"], store=store)
                 loaded = get_plan(store.db, plan["id"])
-                self.assertEqual(loaded["workspace_id"], "workspace-1")
-                self.assertEqual(loaded["project_id"], "project-1")
+                self.assertEqual(loaded["workspace_id"], workspace["workspace_id"])
+                self.assertEqual(loaded["project_id"], project["project_id"])
                 legacy = create_plan(store.db, "legacy", None, "/workspace", {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]})
                 self.assertIsNone(get_plan(store.db, legacy["id"])["project_id"])
             finally:

@@ -850,9 +850,9 @@ def create_app(config_path="config.toml", provider_name=None):
     def agent_plans(limit: int = 50, project_id: str | None = None, workspace_id: str | None = None):
         project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
-            rows = orchestration.list_plans(lab_db.connection, 100)
-        visible = [row for row in rows if _plan_visible_in_scope(row, project_id, workspace_id)]
-        return visible[:min(max(limit, 1), 100)]
+            rows = orchestration.list_plans(lab_db.connection, min(max(limit, 1), 100),
+                                           project_id=project_id, workspace_id=workspace_id, store=store)
+        return [dict(row) for row in rows]
 
 
 

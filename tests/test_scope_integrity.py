@@ -93,6 +93,7 @@ class AgentPlanScopeTests(unittest.TestCase):
                 str(self.directory),
                 {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
                 project_id=self.project["project_id"],
+                store=self.store,
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
         status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
@@ -102,16 +103,48 @@ class AgentPlanScopeTests(unittest.TestCase):
         self.assertEqual(metadata.get("project_id"), self.project["project_id"])
         self.assertEqual(metadata.get("workspace_id"), self.workspace["workspace_id"])
 
+    def test_list_plans_filters_before_limit(self):
+        from evo_core.orchestration import create_plan, list_plans
+        for _ in range(105):
+            with self.app.state.lab_db.lock:
+                create_plan(
+                    self.app.state.lab_db.connection, "global request", None, str(self.directory),
+                    {"title": "Global plan", "summary": "Global summary", "steps": [
+                        {"title": "Step", "description": "Do work", "expected_outcome": "Done", "verification": "Check"}]},
+                )
+        with self.app.state.lab_db.lock:
+            scoped = create_plan(
+                self.app.state.lab_db.connection, "scoped request", self.workspace["workspace_id"], str(self.directory),
+                {"title": "Scoped plan", "summary": "Scoped summary", "steps": [
+                    {"title": "Step", "description": "Do work", "expected_outcome": "Done", "verification": "Check"}]},
+                project_id=self.project["project_id"], store=self.store)
+        scoped_rows = list_plans(
+            self.app.state.lab_db.connection, limit=1,
+            project_id=self.project["project_id"], workspace_id=self.workspace["workspace_id"],
+            store=self.store)
+        self.assertEqual([row["id"] for row in scoped_rows], [scoped["id"]])
+
     def test_mismatched_scope_is_rejected(self):
         other_project = register_project(self.store, "Other")
+        other_directory = self.root / "other-checkout"
+        other_directory.mkdir()
+        other_checkout = register_checkout(self.store, other_project["project_id"], other_directory)
+        from evo_core.ai_configurations import create_configuration
+        from evo_core.workspaces import create_workspace
+        other_config = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="other-cfg")
+        other_workspace = create_workspace(
+            self.store, "OtherWorkspace", other_project["project_id"],
+            other_config["configuration"]["configuration_id"], other_config["revision"]["revision_id"],
+            checkout_id=other_checkout["checkout_id"])
         with self.app.state.lab_db.lock:
             plan = create_plan(
                 self.app.state.lab_db.connection,
                 "request",
-                self.workspace["workspace_id"],
-                str(self.directory),
+                other_workspace["workspace_id"],
+                str(other_directory),
                 {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
                 project_id=other_project["project_id"],
+                store=self.store,
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
         before = len(self.store.list_agent_runs(limit=1000))

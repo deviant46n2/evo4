@@ -71,6 +71,7 @@ class VerificationApprovalApiTests(unittest.TestCase):
                     ],
                 },
                 project_id=project["project_id"],
+                store=store,
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, self.plan["id"])
 
@@ -223,6 +224,7 @@ class CommandPolicyVerificationTests(unittest.TestCase):
                             "verification": "Run the configured check.",
                             "verification_commands": [["python", "-c", "print('ok')"]]}]},
                 project_id=project["project_id"],
+                store=store,
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, self.plan["id"])
         return self
@@ -285,6 +287,7 @@ class CommandPolicyVerificationTests(unittest.TestCase):
                             "verification_commands": [["python", "-m", "pytest"]]}]},
                 allowed_commands=[["python", "-c"], ["python", "-m", "pytest"]],
                 project_id=self.project["project_id"],
+                store=self.app.state.store,
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
             self.plan = plan
@@ -315,6 +318,7 @@ class CommandPolicyVerificationTests(unittest.TestCase):
                             "verification_commands": [["python", "-m", "pytest"]]}]},
                 allowed_commands=[["python", "-c"], ["python", "-m", "pytest"]],
                 project_id=self.project["project_id"],
+                store=self.app.state.store,
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
             self.plan = plan

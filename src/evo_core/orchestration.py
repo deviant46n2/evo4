@@ -96,7 +96,9 @@ def create_plan(connection, request, *args, allowed_commands=None, workspace_id=
         raise ValueError("project_id must be a non-empty string when provided")
     if isinstance(project_id, str):
         project_id = project_id.strip()
-    if store is not None:
+    if project_id is not None or workspace_id is not None:
+        if store is None:
+            raise ValueError("store is required to validate scoped plan creation")
         from .scope_validation import validate_scope
         validate_scope(store, project_id, workspace_id)
     if not isinstance(proposal, dict):
@@ -204,10 +206,25 @@ def get_plan(connection, plan_id):
         "SELECT * FROM agent_plan_events WHERE plan_id=? ORDER BY id LIMIT 500", (plan_id,)).fetchall()]
     return result
 
-def list_plans(connection, limit=50):
+def list_plans(connection, limit=50, project_id=None, workspace_id=None, store=None):
+    if project_id is not None or workspace_id is not None:
+        if store is None:
+            raise ValueError("store is required to validate scoped plan listing")
+        from .scope_validation import validate_scope
+        project_id, workspace_id = validate_scope(store, project_id, workspace_id)
+    if project_id is None:
+        scope_sql = "(project_id IS NULL AND workspace_id IS NULL)"
+        scope_params = []
+    elif workspace_id is None:
+        scope_sql = "(project_id = ? AND workspace_id IS NULL)"
+        scope_params = [project_id]
+    else:
+        scope_sql = "(project_id = ? AND (workspace_id IS NULL OR workspace_id = ?))"
+        scope_params = [project_id, workspace_id]
     rows = connection.execute(
-        "SELECT id,title,summary,status,workspace,workspace_id,project_id,created_at,updated_at,run_id,error FROM agent_plans ORDER BY created_at DESC LIMIT ?",
-        (min(max(int(limit), 1), 100),)).fetchall()
+        "SELECT id,title,summary,status,workspace,workspace_id,project_id,created_at,updated_at,run_id,error FROM agent_plans WHERE " +
+        scope_sql + " ORDER BY created_at DESC LIMIT ?",
+        scope_params + [min(max(int(limit), 1), 100)]).fetchall()
     return [dict(row) for row in rows]
 
 def approve_plan(connection, plan_id):
