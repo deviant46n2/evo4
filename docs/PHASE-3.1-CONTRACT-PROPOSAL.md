@@ -144,7 +144,7 @@ A participant instance captures adapter identity/version, capabilities, endpoint
 
 Capabilities describe interface support, not trust or authorization. Registration does not grant permission to execute.
 
-## 6. Invocation envelope and outcomes
+## 7. Invocation envelope and outcomes
 
 A bounded invocation envelope must identify:
 
@@ -183,7 +183,7 @@ For the initial deployment:
 - Do not expose the API on a LAN or public interface as part of Phase 3.
 - Any remote or multi-user deployment is blocked until a separate authentication, session, CSRF, and authorization design is implemented and reviewed.
 
-## 7. Availability, authorization, and compliance
+## 8. Availability, authorization, and compliance
 
 These are independent dimensions and must not be collapsed:
 
@@ -195,7 +195,7 @@ A model-list endpoint is a best-effort discovery signal, not proof that a partic
 
 A health check does not establish compliance. Capabilities, availability, successful history, or Registry membership do not grant authorization. Unknown or stale required compliance status blocks dispatch.
 
-## 8. Cancellation, timeout, and resource admission
+## 9. Cancellation, timeout, and resource admission
 
 - Cancellation is cooperative at safe boundaries and bounded by the provider request timeout in the initial transport. The API must not promise immediate interruption of an in-flight blocking request.
 - The terminal result must state whether cancellation was observed before dispatch, between stream events, or only after the provider returned/timed out.
@@ -207,7 +207,7 @@ A health check does not establish compliance. Capabilities, availability, succes
 - Remote-provider request/token budgets must be explicit operator-configured limits. If a provider's quota is unknown and no conservative local limit is configured, fail closed. Usage not reported by the endpoint remains unknown, never fabricated.
 - The initial mechanism is not a general-purpose scheduler and does not claim OS-level resource isolation.
 
-## 9. Runtime binding sequence and revision semantics
+## 10. Runtime binding sequence and revision semantics
 
 P3.2 must implement this exact order:
 
@@ -227,7 +227,7 @@ P3.2 must implement this exact order:
 
 No failure may fall back to global TOML, another revision, adapter, endpoint, model, or policy for a Registry-bound workspace.
 
-## 10. Required P3.1/P3.2 tests
+## 11. Required P3.1/P3.2 tests
 
 - Schema-1 definitions remain readable/editable but cannot execute by default.
 - Migration preview is lossless and explicit; unknown schema-1 shapes are reported as requiring manual migration.
@@ -252,7 +252,7 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Project-only/global callers without a registered workspace retain the legacy TOML-backed assistant path.
 - Legacy non-Registry callers continue to use the existing TOML-backed assistant path.
 
-## 11. Decisions requested
+## 12. Decisions requested
 
 Approval is requested for these architectural constraints, not for implementation:
 
