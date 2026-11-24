@@ -93,7 +93,7 @@ A phase is complete only when the required evidence is recorded, independently r
 - Tests prove that context, files, commands, and execution authority cannot leak across project boundaries.
 - Project deletion is explicitly deferred and is not required to pass this phase.
 
-### Phase 2 implementation plan (proposed, not implemented)
+### Phase 2 implementation status and remaining acceptance work (partially implemented)
 
 Phase 2 objective: make project, workspace, instruction, and context boundaries explicit and enforceable without fragmenting existing capabilities.
 
@@ -126,7 +126,27 @@ Current verified implementation:
 - Agent plans carry nullable `project_id` and `workspace_id` fields and validate supplied scope; legacy/global plans remain possible. Full scope propagation and mismatch rejection through every approval, execution, interruption, recovery, and resumption path still require acceptance evidence. Source: `src/evo_core/orchestration.py`.
 - **Phase 2 remains partially implemented pending full acceptance reconciliation.** The bullets above describe current source behavior, not a claim that every Phase 2 acceptance criterion has passed. In particular, retain the full isolation test gate and verify CLI/API equivalence, instruction trust boundaries, checkout overlap/symlink protections, and scope continuity across all task/background execution paths before closing Phase 2.
 
-Proposed milestones:
+Original milestones and current source status (implementation presence is not the same as acceptance):
+
+| Milestone | Current source evidence | Acceptance status |
+|---|---|---|
+| Scope and authority contract | Shared scope validation and visibility helpers; scope integrity/persistence tests. | Implemented in source; retain as part of the full isolation gate. |
+| Project-scoped conversations | Conversation rows carry project/workspace scope; messages inherit through the parent conversation; API filters reads and mutations. | Implemented in source; covered by backend tests. |
+| Task and agent-plan scope | Tasks and plans carry scope fields; plans validate supplied scope; API applies scope visibility and workspace checks. | Partially implemented/accepted only in part; continuity through every approval, execution, interruption, recovery, and resumption path still needs explicit evidence. |
+| Command-policy enforcement | Project command prefixes are intersected with the operator's global allowlist; missing project policy fails closed; per-action approvals remain. | Implemented in source and tests; this is an allowlist boundary, not an OS sandbox. |
+| Project-scoped memory and retrieval | Memories, candidates, lessons, research, and retrieval paths carry/filter project/workspace scope. | Implemented in source; keep cross-scope leakage tests in the acceptance gate. |
+| Project instructions and configuration | Trusted Evo-managed instructions are resolved by scope; repository instruction files remain untrusted; Registry configurations/workspaces pin revisions. | Implemented in source; full precedence/trust-boundary evidence remains part of acceptance. |
+| Project selection and switching UX | Projects and Workspaces UI components exist in the desktop app. | UI implementation exists; end-to-end selection/uncertain-scope behavior still needs review. No dedicated frontend test framework is currently present. |
+| Isolation verification | Scope, retrieval, workspace execution, and provisioning test suites exist; the prior isolation audit and Project Provisioning v1 were accepted. | Partial acceptance only. The full Phase 2 gate remains open until the remaining cross-path checks below are reconciled. |
+
+Remaining Phase 2 acceptance checks:
+- CLI/API equivalence for scope-sensitive operations.
+- Instruction trust boundaries and precedence across assistant, plan, and coding-agent paths.
+- Checkout overlap, symlink, and canonical-path protections under adversarial cases.
+- Scope continuity and mismatch rejection across all task/background execution paths, including approval, cancellation, restart recovery, and resumption.
+- Cross-project retrieval and execution leakage tests across the full set of scoped records and API operations.
+
+Original milestones and design detail:
 1. Scope and authority contract.
    - Define minimum global/project/task scope fields and ownership rules.
    - Likely files: `src/evo_core/store.py`, `src/evo_core/orchestration.py`, architecture docs.
