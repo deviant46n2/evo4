@@ -190,7 +190,7 @@ These are independent dimensions and must not be collapsed:
 
 - **Availability:** `available`, `unavailable`, `unknown`, `disabled`. A configured endpoint is not automatically available; a successful health probe is only a time-bounded observation.
 - **Authorization:** invocation-specific `authorized` or `denied`, with policy reason and provenance.
-- **Compliance:** `approved`, `restricted`, `suspended`, `unknown`, with integration/interface/use review provenance.
+- **Compliance:** `local_only`, `approved`, `restricted`, `suspended`, `unknown`, with integration/interface/use review provenance. `local_only` is an explicit operator classification, not inferred from a loopback address.
 
 A model-list endpoint is a best-effort discovery signal, not proof that a particular model will accept a completion request. Conversely, an endpoint that does not implement model listing is not automatically unavailable; its availability is unknown unless another supported probe establishes it. For the initial release, unknown availability denies dispatch. An adapter may define a documented, bounded probe that establishes availability; there is no implicit first-request fallback. Unknown availability cannot be overridden by a participant, task, or configuration definition.
 
