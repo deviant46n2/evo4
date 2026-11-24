@@ -240,8 +240,8 @@ P3.2 must implement this exact order:
 7. Resolve each component's adapter ID/contract version through the code-controlled registry.
 8. Resolve allowlisted secret references.
 9. Apply endpoint destination policy and obtain the required availability/compliance decision.
-10. Construct the immutable model participant and assistant runtime from the pinned revision, with exact provenance.
-11. Atomically revalidate the workspace/configuration state and acquire dispatch admission before invoking the adapter.
+10. Construct the immutable model participant and assistant runtime from the pinned revision, with exact provenance. Construction alone does not authorize or dispatch work.
+11. At invocation time, the P3.5 dispatch boundary atomically revalidates the workspace/configuration state and acquires admission before any adapter invocation. P3.2–P3.4 may use inert/fake adapters for binding and contract tests, but must not expose live Registry-bound dispatch before P3.5 is complete.
 
 **Pinned-revision rule:** advancing a configuration's `current_revision_id` does not make an older immutable revision stale and must not change a workspace's behavior. A workspace continues to use its pinned revision while the workspace, project, and configuration remain active and the pinned revision exists and belongs to that configuration. A missing revision, mismatched configuration/revision pair, archived configuration, archived workspace, or inactive project is invalid. Updating to a newer revision requires an explicit workspace change/rebind operation that records the new pinned revision and version.
 
@@ -258,6 +258,7 @@ No failure may fall back to global TOML, another revision, adapter, endpoint, mo
 - Unknown component, component version, adapter, adapter version, or setting is rejected.
 - Secret references reject malformed, missing, empty, and non-allowlisted variables; resolved values are redacted from all observable surfaces.
 - Exact immutable workspace revision determines provider/model, generation settings, context/memory/history budgets, persona guidance, and project command-policy behavior.
+- P3.2–P3.4 binding/adapter tests use inert or fake adapters; no live Registry-bound participant dispatch is possible until P3.5 authorization, budget, and atomic-admission enforcement is complete.
 - Changing global TOML provider/model/generation values does not alter a Registry-bound workspace invocation, except for explicitly operator-owned ceilings and code-owned safety policy.
 - The typed command-policy component preserves the existing global-ceiling intersection and per-action approval behavior.
 - Two different revisions produce the corresponding different participant bindings.
