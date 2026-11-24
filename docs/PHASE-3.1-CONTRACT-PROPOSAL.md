@@ -31,26 +31,51 @@ Each executable component uses a common envelope:
 
 ```json
 {
-  "type": "model",
-  "component_version": 1,
-  "adapter": {
-    "id": "openai_compatible_chat",
-    "contract_version": 1
+  "schema_version": 2,
+  "components": {
+    "primary_model": {
+      "type": "model",
+      "component_version": 1,
+      "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+      "settings": {
+        "endpoint": "http://127.0.0.1:18997/v1",
+        "model": "configured-model",
+        "timeout_seconds": 120
+      },
+      "secret_refs": {"api_key": "env:EVO_LOCAL_API_KEY"}
+    },
+    "assistant": {
+      "type": "assistant_runtime",
+      "component_version": 1,
+      "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+      "settings": {
+        "model_component": "primary_model",
+        "persona_prompt": "Be concise and evidence-driven.",
+        "max_output_tokens": 2048,
+        "temperature": 0.2,
+        "context_window_tokens": 49152,
+        "history_messages": 16,
+        "max_history_chars": 40000,
+        "memory_limit": 8
+      }
+    },
+    "command_policy": {
+      "type": "command_policy",
+      "component_version": 1,
+      "adapter": {"id": "evo_command_policy", "contract_version": 1},
+      "settings": {"allowed_commands": [["pytest"]]}
+    }
   },
-  "settings": {
-    "endpoint": "http://127.0.0.1:18997/v1",
-    "model": "configured-model",
-    "timeout_seconds": 120,
-    "max_output_tokens": 2048
-  },
-  "secret_refs": {
-    "api_key": "env:EVO_LOCAL_API_KEY"
-  }
+  "entrypoints": {"assistant": "assistant"}
 }
 ```
 
-The example is illustrative; the schema must define exact required/optional fields and bounds. The top-level `components` object retains stable component keys. A key identifies a component within the configuration; it is not an executable class name or provider role.
+This is a shape proposal; exact required/optional fields, bounds, and adapter contracts must be frozen in P3.1. The top-level `components` object retains stable component keys. A key identifies a component within the configuration; it is not an executable class name or provider role. The `entrypoints` map selects a named component for a logical use; it cannot select arbitrary code.
 
+- Initial component types are `model`, `assistant_runtime`, `command_policy`, and `deterministic_verifier`.
+- `assistant_runtime` references a model component by key and owns generation/context behavior currently read from global TOML: persona prompt, output-token limit, temperature, context window, history limits, and memory retrieval limit. Registry-bound execution must not silently inherit these execution settings from global TOML.
+- The persona prompt is user-authored behavior guidance, not trusted platform policy. It must be represented as untrusted configuration content and cannot override code-owned safety policy, scope, permissions, approvals, or tool boundaries.
+- `command_policy` owns project-level command prefixes and can only narrow the operator's global TOML command ceiling. The global ceiling remains operator-owned; project configuration can never expand it. The typed schema must preserve the existing fail-closed intersection semantics.
 - `component_version` versions the typed component's data contract.
 - `adapter.contract_version` selects a supported adapter contract, not an arbitrary installed package version. The adapter implementation/build version is code-owned and recorded at bind time.
 - Configuration may declare required capabilities, but may not assert the capabilities it possesses. The adapter derives provided capabilities from its implementation and validated settings.
@@ -61,25 +86,12 @@ The example is illustrative; the schema must define exact required/optional fiel
 
 P3.1 should authorize only these initial types:
 
-1. **`model`** — text-generation participant through the existing OpenAI-compatible chat-completions transport. Settings are limited to the endpoint, model identifier, bounded timeout, and supported generation limits. Tool-call generation may be represented as a capability, but does not grant tool execution authority.
-2. **`deterministic_verifier`** — bounded, deterministic validation participant. Its accepted input/output contract and verification function must be explicit and narrow. It must not execute arbitrary commands or gain filesystem/network authority merely by being registered.
+1. **`model`** — text-generation participant through the existing OpenAI-compatible chat-completions transport. Settings are limited to endpoint, model identifier, bounded timeout, and supported transport options. Tool-call generation may be represented as an interface capability, but does not grant tool execution authority.
+2. **`assistant_runtime`** — code-owned composition component that binds one model component and its generation/context settings. It is not a provider and cannot create arbitrary tools or authority.
+3. **`command_policy`** — typed project command-prefix policy. It narrows the operator's global allowlist and preserves explicit per-action approval. It does not grant OS sandboxing.
+4. **`deterministic_verifier`** — bounded structured-output/evidence-contract verifier. It validates declared output shape, required fields, and evidence-reference structure. It does not make semantic correctness judgments or execute arbitrary tools.
 
-The existing coding-agent runtime is not automatically a third executable component. It may be considered later if its tool-use and approval semantics can be represented without recursive provider dispatch or bypassing existing controls.
-
-### 2.4 Existing schema-1 migration and workspace rebind
-
-Making schema 1 non-executable has an operational consequence: any existing workspace pinned to a schema-1 revision will stop being eligible for Registry-backed execution until deliberately migrated. Do not silently auto-upgrade it at load or dispatch time.
-
-The migration path must be explicit and reviewable:
-
-1. A migration preview reads the exact schema-1 revision and proposes a schema-2 definition using only known, lossless mappings. Unknown or ambiguous fields are reported; never guessed or dropped silently.
-2. The user reviews the proposed schema-2 definition and mapping report.
-3. Approval creates a new immutable schema-2 revision. The original schema-1 revision remains unchanged and readable.
-4. The workspace remains pinned to the original revision until the user explicitly rebinds it to the new revision.
-5. Workspace rebind requires an expected workspace version, verifies the new revision belongs to the workspace's same active configuration, and records previous revision, new revision, actor/source, timestamp, and reason in an append-only binding history.
-6. Rebind is atomic. Concurrent stale updates fail rather than overwrite another user's change. Existing in-flight invocations retain their captured immutable binding snapshot; new invocations use the new binding.
-
-If the existing schema-1 shape cannot be mapped unambiguously, require manual reconstruction of the schema-2 definition. No automatic schema-1 execution bridge is included in this proposal.
+The existing CodingAgent remains a code-owned execution runtime, not a user-configurable executable component. It may consume a workspace-bound assistant runtime and typed command policy only after its tool-use and approval semantics are preserved; it is not a second independent model.
 
 ## 3. Secret-reference contract
 
