@@ -138,12 +138,12 @@ This inventory is based on inspection of the current implementation, routes, com
 
 ### Phase 2 — Project lifecycle, provisioning, and isolation
 
-- Existing implementation: Platform Registry v1 implements AI configurations (`src/evo_core/ai_configurations.py`), software projects and checkouts (`src/evo_core/project_checkouts.py`), workspaces (`src/evo_core/workspaces.py`), and registered-workspace execution boundaries (`src/evo_core/api.py`). Desktop workspaces exist in `desktop/src/ProjectsWorkspace.tsx`, `desktop/src/WorkspaceRegistryWorkspace.tsx`, and `desktop/src/Workspaces.tsx`.
-- Status: Partially implemented.
-- Redesign gap: Default project creation should create a dedicated folder, initialize Git, and provision an initial framework. Project deletion with verified cleanup is not yet implemented. Project-specific instruction/memory scoping needs UX integration.
-- Backend gap: New backend functionality is required for provisioning, deletion safeguards, and project-scoped instructions/memory.
+- Existing implementation: Platform Registry v1 implements AI configurations (`src/evo_core/ai_configurations.py`), software projects and checkouts (`src/evo_core/project_checkouts.py`), workspaces (`src/evo_core/workspaces.py`), and registered-workspace execution boundaries (`src/evo_core/api.py`). Backend project/workspace scope now exists for conversations, messages, memories, candidates, lessons, research, tasks, plans, command policy, and assistant context assembly. Desktop workspaces exist in `desktop/src/ProjectsWorkspace.tsx`, `desktop/src/WorkspaceRegistryWorkspace.tsx`, and `desktop/src/Workspaces.tsx`.
+- Status: Backend scope isolation substantially implemented; project UX integration and full acceptance verification remain.
+- Redesign gap: Default project creation should create a dedicated folder, initialize Git, and provision an initial framework. Project deletion with verified cleanup is not yet implemented. Project-specific instruction/memory scoping needs UX integration and end-to-end verification.
+- Backend gap: New backend functionality is required for provisioning deletion safeguards and complete project-scoped UX integration. Core project/workspace scope isolation is implemented in source.
 - Preservation and reuse: Reuse existing project, checkout, configuration, and workspace entities and validation.
-- Validation: `tests/test_project_checkouts_api.py`, `tests/test_workspaces_api.py`, `tests/test_workspace_execution_boundary.py`.
+- Validation: `tests/test_project_checkouts_api.py`, `tests/test_workspaces_api.py`, `tests/test_workspace_execution_boundary.py`, `tests/test_scope_integrity.py`, `tests/test_retrieval_isolation.py`, `tests/test_milestone3_api_integration.py`.
 
 ### Phase 3 — Agent interaction, background execution, and interruption
 
