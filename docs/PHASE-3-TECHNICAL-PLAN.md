@@ -86,7 +86,7 @@ Use four distinct concepts:
 
 Do not store live credentials in configuration definitions, participant descriptions, context envelopes, logs, or collaboration messages. Resolve approved secret references at the adapter boundary.
 
-A binding must fail clearly when a component type is unknown, an adapter is unavailable, a required setting/secret is missing, a referenced model is unavailable, or a contract version is unsupported. No silent fallback to the application default provider, another model, a different policy, or a newer configuration revision.
+A binding must fail clearly when a component type is unknown, an adapter is unavailable, a required setting/secret is missing, a referenced model is unavailable, or a contract version is unsupported. No silent fallback to the application default provider, another model, a different policy, or a newer configuration revision. A workspace's pinned immutable revision remains valid when the configuration's current revision advances; it is invalid only when the pinned revision is missing/mismatched or its workspace/project/configuration relationship is no longer active.
 
 ### 3.3 Use typed capabilities, not arbitrary executable configuration
 
@@ -202,7 +202,7 @@ For the local-first deployment, do not invent token/cost estimates when the endp
 
 ## 7. Security, isolation, and failure requirements
 
-- Resolve the exact workspace and configuration revision at dispatch time; reject stale, archived, missing, or mismatched bindings.
+- Resolve the exact workspace-pinned configuration revision at dispatch time. Reject missing/mismatched revisions and archived/inactive workspace, project, or configuration relationships. Do not reject an older pinned revision merely because the configuration's current revision has advanced.
 - Preserve Phase 2 project/workspace isolation. Context assembly and tools receive only the authorized scope.
 - Treat configuration content, retrieved context, participant messages, repository files, and tool output as untrusted input.
 - Never let configuration or participant output expand global command policy, filesystem access, network access, secrets access, or approval authority.
@@ -258,7 +258,8 @@ The following order minimizes speculative framework work.
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - Add a single dispatch boundary that resolves task/workspace scope and effective permissions.
 - Add per-invocation deadlines, output/token limits, provider quota checks, and minimal resource admission.
-- Serialize or reserve admission atomically to avoid concurrent overcommit.
+- Use a conservative global single-flight provider-dispatch lease initially, acquired atomically with SQLite `BEGIN IMMEDIATE` in the Registry database transaction boundary. A process-local semaphore is not sufficient for multi-process correctness. The transaction revalidates active workspace/project/configuration state and the exact pinned revision before acquiring the lease.
+- Bound the lease by the provider deadline or renew it; release it on all terminal paths and recover abandoned leases without allowing overlapping live invocations.
 - Persist invocation state and link existing run/event IDs.
 - Test denied, deferred, unknown, expired, cancelled, rate-limited, and failed outcomes.
 
@@ -321,7 +322,11 @@ The following choices constrain P3.1 and should not be reopened without new sour
 4. **Cancellation:** cancellation is cooperative at safe boundaries and bounded by provider request timeout. Terminal status and partial evidence must be accurate; immediate in-flight cancellation is not promised by the current transport.
 5. **Second participant:** default to a bounded deterministic verifier/tool participant. It is not an independent model. If Phase 4 requires independent model judgment, require two independently addressable model endpoints.
 6. **Admission:** do not use the advisory assess_workload function as a dispatch gate. P3.5 must use an atomic participant reservation/lease (or an explicitly single-flight policy proven to serialize all relevant dispatch) so concurrent calls cannot overcommit shared capacity. Unknown required capacity/quota fails closed.
-7. **Participant identity:** choose persistent integration identity plus immutable revision-specific participant instance identity unless implementation evidence shows that this complicates correctness.
+7. **Participant identity:** use stable integration identity plus immutable revision-specific participant instance identity unless implementation evidence shows that this complicates correctness.
+8. **Pinned revisions:** a workspace remains bound to its exact immutable revision even after a newer configuration revision is created. "Stale" means missing/mismatched revision or inactive/archived relationship—not simply "not current."
+9. **Endpoint security:** loopback HTTP is permitted for local inference; non-loopback origins require HTTPS and exact operator allowlisting. Reject embedded credentials and cross-origin redirects; validate resolved destinations against the same policy.
+10. **Secret allowlist:** environment variable names are allowlisted in operator-owned application configuration; the AI Configuration definition cannot expand that allowlist.
+11. **Initial admission:** prefer one global in-flight provider dispatch across Evo instances using a durable SQLite lease. This intentionally conservative single-flight policy is the initial atomic gate, not a general scheduler.
 
 The precise Python names and persistence details remain implementation choices, but these invariants are not optional. Keep the implementation minimal and evidence-driven.
 
