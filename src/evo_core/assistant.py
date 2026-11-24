@@ -19,9 +19,7 @@ class EvoAssistant:
         conversation_project = conversation["project_id"] if conversation is not None else None
         conversation_workspace = conversation["workspace_id"] if conversation is not None else None
         if conversation is None:
-            if project_id is not None or workspace_id is not None:
-                raise ValueError("Conversation not found in the requested scope")
-            return (None, None)
+            raise ValueError("Conversation not found")
         if conversation_project is None:
             if project_id is not None or workspace_id is not None:
                 raise ValueError("Global conversation does not accept project or workspace scope")

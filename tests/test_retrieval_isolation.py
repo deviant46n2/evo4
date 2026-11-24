@@ -627,16 +627,19 @@ class AssistantExplicitScopeContractTests(unittest.TestCase):
                 assistant.close()
                 store.close()
 
-    def test_missing_conversation_does_not_broaden(self):
+    def test_missing_conversation_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = make_store(tmp)
             config = EvoConfig("http://localhost", "no-key", "fake", 30, Path(tmp) / "state.db", 128, 0.0, "BASE", 8, 8, context_window_tokens=4096)
             assistant = EvoAssistant(config, store, provider=object())
             try:
-                msgs = assistant._build_messages("missing", "hello")
-                self.assertIsInstance(msgs, list)
-                # no project context retrieved
-                self.assertFalse(any("project-a" in str(m.get("content", "")) for m in msgs))
+                with self.assertRaises(ValueError):
+                    assistant._build_messages("missing", "hello")
+                before = len(store.db.execute("SELECT id FROM messages").fetchall())
+                with self.assertRaises(ValueError):
+                    assistant.turn("missing", "hello")
+                after = len(store.db.execute("SELECT id FROM messages").fetchall())
+                self.assertEqual(before, after)
             finally:
                 assistant.close()
                 store.close()

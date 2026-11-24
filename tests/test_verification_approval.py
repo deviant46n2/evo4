@@ -246,6 +246,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             run_id = result["run_id"]
             run = self._wait_terminal(run_id)
             self.assertEqual(run["status"], "failed")
+            store = self.app.state.store
+            stored = store.get_agent_run(run_id)
+            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
+            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
+            self.assertIsNone(metadata.get("pending_approval_id"))
             run_mock.assert_not_called()
 
     def test_empty_project_policy_denies_command(self):
@@ -257,6 +262,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             run_id = result["run_id"]
             run = self._wait_terminal(run_id)
             self.assertEqual(run["status"], "failed")
+            store = self.app.state.store
+            stored = store.get_agent_run(run_id)
+            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
+            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
+            self.assertIsNone(metadata.get("pending_approval_id"))
             run_mock.assert_not_called()
 
     def test_malformed_project_policy_fails_closed_before_execution(self):
@@ -298,6 +308,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             run_id = result["run_id"]
             run = self._wait_terminal(run_id)
             self.assertEqual(run["status"], "failed")
+            store = self.app.state.store
+            stored = store.get_agent_run(run_id)
+            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
+            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
+            self.assertIsNone(metadata.get("pending_approval_id"))
             run_mock.assert_not_called()
 
     def test_persisted_verification_command_no_longer_allowed(self):
@@ -329,6 +344,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             run_id = result["run_id"]
             run = self._wait_terminal(run_id)
             self.assertEqual(run["status"], "failed")
+            store = self.app.state.store
+            stored = store.get_agent_run(run_id)
+            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
+            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
+            self.assertIsNone(metadata.get("pending_approval_id"))
             run_mock.assert_not_called()
 
     def _wait_terminal(self, run_id, timeout=10):
