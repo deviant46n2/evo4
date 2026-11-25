@@ -292,6 +292,8 @@ class PinnedProviderTransport:
             yield response
         except ProviderEndpointError:
             raise
+        except (TimeoutError, socket.timeout) as exc:
+            raise ProviderEndpointError("provider request timed out") from exc
         except Exception as exc:
             raise ProviderEndpointError("pinned provider request failed") from exc
         finally:
