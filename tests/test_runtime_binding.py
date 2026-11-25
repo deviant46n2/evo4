@@ -137,6 +137,9 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(runtime.bound_participant.temperature, 0.35)
         self.assertIsInstance(runtime.participant_adapter._provider_for(runtime.bound_participant).transport, PinnedProviderTransport)
         self.assertEqual(runtime.effective_allowed_commands, (("python", "-m", "unittest"),))
+        self.assertEqual(len(runtime.participants), 2)
+        self.assertEqual(len(runtime.participant_bindings), 2)
+        self.assertEqual(runtime.participants[0].adapter_id, "openai_compatible_chat")
         self.assertEqual(len(runtime.additional_participants), 1)
         verifier = runtime.additional_participants[0]
         self.assertEqual(verifier.adapter_id, "evo_deterministic_verifier")
