@@ -1,0 +1,420 @@
+"""Versioned, bounded, immutable handoff contracts for sequential cooperation.
+
+This module validates and records structured artifacts only. It does not invoke
+participants, authorize dispatch, execute tools, or advance an experiment.
+"""
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
+import json
+import re
+import uuid
+
+from . import workspaces
+from .store import utc_now
+
+
+HANDOFF_SCHEMA_VERSION = 1
+HANDOFF_CONTRACT_VERSION = 1
+MAX_HANDOFF_BYTES = 131072
+MAX_CONTEXT_REFERENCES = 64
+MAX_LIST_ITEMS = 80
+MAX_TEXT_CHARS = 8192
+MAX_REFERENCE_CHARS = 2048
+MIGRATION_NAME = "cooperative_handoffs_v1"
+HANDOFF_ROLES = frozenset({"proposal", "critique", "synthesis", "adjudication"})
+PERSISTABLE_ROLES = frozenset({"proposal", "critique", "synthesis"})
+
+
+class HandoffError(ValueError):
+    """A handoff is malformed, unbounded, or outside its pinned lifecycle."""
+
+
+@dataclass(frozen=True)
+class HandoffBudget:
+    input_tokens: int
+    output_tokens: int
+    deadline_utc: str
+
+    def __post_init__(self):
+        for name, value in (("input_tokens", self.input_tokens), ("output_tokens", self.output_tokens)):
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10_000_000:
+                raise HandoffError(f"{name} must be a positive bounded integer")
+        _parse_deadline(self.deadline_utc)
+
+
+@dataclass(frozen=True)
+class HandoffContextReference:
+    reference_id: str
+    source_type: str
+    scope: str
+    trust_label: str
+
+
+def _canonical(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def _text(value, field, *, maximum=MAX_TEXT_CHARS, allow_empty=False):
+    if not isinstance(value, str) or (not allow_empty and not value.strip()) or len(value) > maximum:
+        raise HandoffError(f"{field} must be non-empty bounded text")
+    if any(ord(char) < 32 and char not in "\n\t\r" for char in value):
+        raise HandoffError(f"{field} contains unsupported control characters")
+    return value
+
+
+def _reference_list(value, field, *, maximum=MAX_LIST_ITEMS):
+    if not isinstance(value, list) or len(value) > maximum:
+        raise HandoffError(f"{field} must be a bounded list")
+    result = []
+    for item in value:
+        result.append(_text(item, field, maximum=MAX_REFERENCE_CHARS))
+    if len(result) != len(set(result)):
+        raise HandoffError(f"{field} contains duplicate references")
+    return result
+
+
+def _exact_keys(value, required, optional=()):
+    if not isinstance(value, dict) or set(value) - set(required) - set(optional) or set(required) - set(value):
+        raise HandoffError("handoff payload fields do not match the role contract")
+
+
+def _parse_deadline(value):
+    if not isinstance(value, str) or not value or len(value) > 64:
+        raise HandoffError("handoff deadline is missing or invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HandoffError("handoff deadline is invalid") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise HandoffError("handoff deadline must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def validate_context_references(references):
+    if not isinstance(references, (list, tuple)) or len(references) > MAX_CONTEXT_REFERENCES:
+        raise HandoffError("context references must be a bounded list")
+    normalized = []
+    seen = set()
+    for item in references:
+        if isinstance(item, HandoffContextReference):
+            item = {
+                "reference_id": item.reference_id, "source_type": item.source_type,
+                "scope": item.scope, "trust_label": item.trust_label,
+            }
+        _exact_keys(item, {"reference_id", "source_type", "scope", "trust_label"})
+        reference_id = _text(item["reference_id"], "context reference id", maximum=128)
+        source_type = item["source_type"]
+        if source_type not in {"task_statement", "repository_revision", "artifact", "verification", "handoff"}:
+            raise HandoffError("context reference source_type is unsupported")
+        scope = _text(item["scope"], "context reference scope", maximum=256)
+        trust_label = item["trust_label"]
+        if trust_label not in {"trusted_policy", "untrusted_input", "derived_output", "verified_evidence"}:
+            raise HandoffError("context reference trust_label is unsupported")
+        if reference_id in seen:
+            raise HandoffError("context references must be unique")
+        seen.add(reference_id)
+        normalized.append({
+            "reference_id": reference_id, "source_type": source_type,
+            "scope": scope, "trust_label": trust_label,
+        })
+    return normalized
+
+
+def validate_handoff_payload(role, payload):
+    """Validate one role-specific JSON object and return a detached canonical value."""
+    if role not in HANDOFF_ROLES:
+        raise HandoffError("handoff role is unsupported")
+    if role == "proposal":
+        _exact_keys(payload, {"summary", "plan"}, {"artifact_references"})
+        _text(payload["summary"], "proposal summary")
+        if not isinstance(payload["plan"], list) or not 1 <= len(payload["plan"]) <= 40:
+            raise HandoffError("proposal plan must contain 1 to 40 steps")
+        plan, ids = [], set()
+        for step in payload["plan"]:
+            _exact_keys(step, {"step_id", "description"}, {"affected_paths", "evidence_references"})
+            step_id = _text(step["step_id"], "proposal step id", maximum=96)
+            if step_id in ids:
+                raise HandoffError("proposal step IDs must be unique")
+            ids.add(step_id)
+            plan.append({
+                "step_id": step_id,
+                "description": _text(step["description"], "proposal step description", maximum=2048),
+                "affected_paths": _reference_list(step.get("affected_paths", []), "affected_paths", maximum=32),
+                "evidence_references": _reference_list(step.get("evidence_references", []), "evidence_references", maximum=32),
+            })
+        result = {"summary": payload["summary"], "plan": plan}
+        if "artifact_references" in payload:
+            result["artifact_references"] = _reference_list(payload["artifact_references"], "artifact_references")
+    elif role == "critique":
+        _exact_keys(payload, {"summary", "findings"})
+        _text(payload["summary"], "critique summary")
+        if not isinstance(payload["findings"], list) or len(payload["findings"]) > 40:
+            raise HandoffError("critique findings must be a bounded list")
+        findings, ids = [], set()
+        for finding in payload["findings"]:
+            _exact_keys(finding, {"finding_id", "severity", "target", "issue", "recommendation"}, {"evidence_references"})
+            finding_id = _text(finding["finding_id"], "finding id", maximum=96)
+            if finding_id in ids:
+                raise HandoffError("critique finding IDs must be unique")
+            ids.add(finding_id)
+            if finding["severity"] not in {"critical", "high", "medium", "low", "informational"}:
+                raise HandoffError("critique finding severity is unsupported")
+            findings.append({
+                "finding_id": finding_id,
+                "severity": finding["severity"],
+                "target": _text(finding["target"], "finding target", maximum=512),
+                "issue": _text(finding["issue"], "finding issue", maximum=4096),
+                "recommendation": _text(finding["recommendation"], "finding recommendation", maximum=2048),
+                "evidence_references": _reference_list(finding.get("evidence_references", []), "evidence_references", maximum=32),
+            })
+        result = {"summary": payload["summary"], "findings": findings}
+    elif role == "synthesis":
+        _exact_keys(payload, {"summary", "dispositions"}, {"artifact_references"})
+        _text(payload["summary"], "synthesis summary")
+        if not isinstance(payload["dispositions"], list) or len(payload["dispositions"]) > 80:
+            raise HandoffError("synthesis dispositions must be a bounded list")
+        dispositions, ids = [], set()
+        for item in payload["dispositions"]:
+            _exact_keys(item, {"finding_id", "disposition", "reason"})
+            finding_id = _text(item["finding_id"], "disposition finding id", maximum=96)
+            if finding_id in ids:
+                raise HandoffError("synthesis finding dispositions must be unique")
+            ids.add(finding_id)
+            if item["disposition"] not in {"accepted", "rejected", "deferred"}:
+                raise HandoffError("synthesis disposition is unsupported")
+            dispositions.append({
+                "finding_id": finding_id, "disposition": item["disposition"],
+                "reason": _text(item["reason"], "disposition reason", maximum=2048),
+            })
+        result = {"summary": payload["summary"], "dispositions": dispositions}
+        if "artifact_references" in payload:
+            result["artifact_references"] = _reference_list(payload["artifact_references"], "artifact_references")
+    else:
+        _exact_keys(payload, {"reviewer_type", "criteria_results", "notes"})
+        if payload["reviewer_type"] not in {"human", "deterministic"}:
+            raise HandoffError("adjudication reviewer_type must be human or deterministic")
+        _text(payload["notes"], "adjudication notes", maximum=4096, allow_empty=True)
+        if not isinstance(payload["criteria_results"], list) or not 1 <= len(payload["criteria_results"]) <= 100:
+            raise HandoffError("adjudication requires 1 to 100 criteria results")
+        criteria, ids = [], set()
+        for item in payload["criteria_results"]:
+            _exact_keys(item, {"criterion_id", "status", "evidence_references"})
+            criterion_id = _text(item["criterion_id"], "criterion id", maximum=96)
+            if criterion_id in ids:
+                raise HandoffError("adjudication criterion IDs must be unique")
+            ids.add(criterion_id)
+            if item["status"] not in {"pass", "fail", "unknown"}:
+                raise HandoffError("adjudication criterion status is unsupported")
+            criteria.append({
+                "criterion_id": criterion_id, "status": item["status"],
+                "evidence_references": _reference_list(item["evidence_references"], "evidence_references", maximum=32),
+            })
+        result = {"reviewer_type": payload["reviewer_type"], "criteria_results": criteria, "notes": payload["notes"]}
+    encoded = _canonical(result)
+    if len(encoded.encode("utf-8")) > MAX_HANDOFF_BYTES:
+        raise HandoffError("handoff payload exceeds the byte limit")
+    return json.loads(encoded)
+
+
+def initialize_cooperative_handoffs(store):
+    """Create append-only handoff storage; invocation/snapshot migrations must exist first."""
+    db = workspaces._store_db(store)
+    with store.lock:
+        tables = {
+            row["name"] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not {"runtime_invocation_snapshots", "participant_invocations", "schema_migrations"}.issubset(tables):
+            raise HandoffError("runtime snapshots and invocation lifecycle must be initialized first")
+        if db.in_transaction:
+            raise RuntimeError("unexpected active transaction on EvoStore connection")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS cooperative_handoffs (
+                    handoff_id TEXT PRIMARY KEY,
+                    invocation_id TEXT NOT NULL REFERENCES participant_invocations(invocation_id) ON DELETE RESTRICT,
+                    workspace_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    configuration_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    revision_hash TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('proposal','critique','synthesis')),
+                    source_participant_id TEXT NOT NULL,
+                    target_participant_id TEXT,
+                    handoff_json TEXT NOT NULL,
+                    handoff_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(invocation_id, role)
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_cooperative_handoffs_task
+                ON cooperative_handoffs(workspace_id, task_id, created_at)
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_handoffs_no_update
+                BEFORE UPDATE ON cooperative_handoffs
+                BEGIN SELECT RAISE(ABORT, 'cooperative handoffs are immutable'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_handoffs_no_delete
+                BEFORE DELETE ON cooperative_handoffs
+                BEGIN SELECT RAISE(ABORT, 'cooperative handoffs cannot be deleted'); END
+            """)
+            applied = db.execute("SELECT 1 FROM schema_migrations WHERE name=?", (MIGRATION_NAME,)).fetchone()
+            if not applied:
+                db.execute("INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)", (MIGRATION_NAME, utc_now()))
+            db.commit()
+            return "already-initialized" if applied else "initialized"
+        except Exception:
+            if db.in_transaction:
+                db.rollback()
+            raise
+
+
+def create_handoff(
+    store, runtime, *, invocation_id, task_id, role, target_participant_id,
+    payload, context_references=(), budget,
+):
+    """Persist a handoff only from a succeeded invocation on this exact runtime revision."""
+    if role not in PERSISTABLE_ROLES:
+        raise HandoffError("only proposal, critique, and synthesis handoffs may be persisted in this slice")
+    task_id = _text(task_id, "task_id", maximum=128)
+    if not isinstance(budget, HandoffBudget):
+        raise HandoffError("handoff requires a validated aggregate budget and deadline")
+    normalized_payload = validate_handoff_payload(role, payload)
+    references = validate_context_references(context_references)
+    parent = getattr(runtime, "parent_runtime", runtime)
+    selected = runtime if hasattr(runtime, "participant") else None
+    if selected is None or not hasattr(selected, "participant_adapter"):
+        raise HandoffError("handoff source must be a selected participant runtime")
+    if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
+        raise HandoffError("invocation_id is invalid")
+    if not isinstance(target_participant_id, str) or not target_participant_id.strip() or len(target_participant_id) > 128:
+        raise HandoffError("target participant ID is required")
+    if role == "proposal" and target_participant_id == selected.participant.participant_id:
+        raise HandoffError("proposal must target a distinct participant")
+    if role == "critique" and target_participant_id == selected.participant.participant_id:
+        raise HandoffError("critique must target a distinct participant")
+    participants = {item.participant_id for item in parent.participants}
+    if target_participant_id not in participants:
+        raise HandoffError("handoff target is not bound to the pinned runtime revision")
+    parent.assert_current(store)
+    created_at = utc_now()
+    deadline = _parse_deadline(budget.deadline_utc)
+    payload_record = {
+        "schema_version": HANDOFF_SCHEMA_VERSION,
+        "contract_version": HANDOFF_CONTRACT_VERSION,
+        "task_id": task_id,
+        "role": role,
+        "source_participant_id": selected.participant.participant_id,
+        "target_participant_id": target_participant_id,
+        "context_references": references,
+        "budget": {
+            "input_tokens": budget.input_tokens,
+            "output_tokens": budget.output_tokens,
+            "deadline_utc": budget.deadline_utc,
+        },
+        "payload": normalized_payload,
+    }
+    encoded = _canonical(payload_record)
+    if len(encoded.encode("utf-8")) > MAX_HANDOFF_BYTES:
+        raise HandoffError("complete handoff record exceeds the byte limit")
+    digest = sha256(encoded.encode("utf-8")).hexdigest()
+    handoff_id = "handoff_" + uuid.uuid4().hex
+    def operation(db):
+        parent.assert_current(store)
+        invocation = db.execute(
+            "SELECT * FROM participant_invocations WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        snapshot = db.execute(
+            "SELECT * FROM runtime_invocation_snapshots WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        if invocation is None or snapshot is None:
+            raise HandoffError("handoff source invocation or snapshot is missing")
+        if invocation["status"] != "succeeded":
+            raise HandoffError("handoff source invocation must have succeeded")
+        if (
+            invocation["participant_id"] != selected.participant.participant_id
+            or invocation["workspace_id"] != parent.workspace_id
+            or invocation["project_id"] != parent.project_id
+            or invocation["configuration_id"] != parent.configuration_id
+            or invocation["revision_id"] != parent.revision_id
+            or invocation["revision_hash"] != parent.revision_hash
+            or invocation["snapshot_hash"] != snapshot["snapshot_hash"]
+            or snapshot["workspace_id"] != parent.workspace_id
+            or snapshot["project_id"] != parent.project_id
+            or snapshot["configuration_id"] != parent.configuration_id
+            or snapshot["revision_id"] != parent.revision_id
+            or snapshot["revision_hash"] != parent.revision_hash
+        ):
+            raise HandoffError("handoff source invocation does not match the selected pinned runtime")
+        invocation_deadline = _parse_deadline(invocation["deadline_utc"])
+        if deadline > invocation_deadline:
+            raise HandoffError("handoff deadline cannot exceed its source invocation deadline")
+        db.execute(
+            """INSERT INTO cooperative_handoffs(
+                handoff_id,invocation_id,workspace_id,project_id,configuration_id,
+                revision_id,revision_hash,snapshot_hash,task_id,role,
+                source_participant_id,target_participant_id,handoff_json,handoff_hash,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                handoff_id, invocation_id, parent.workspace_id, parent.project_id,
+                parent.configuration_id, parent.revision_id, parent.revision_hash,
+                snapshot["snapshot_hash"], task_id, role, selected.participant.participant_id,
+                target_participant_id, encoded, digest, created_at,
+            ),
+        )
+        return {
+            "handoff_id": handoff_id, "invocation_id": invocation_id,
+            "workspace_id": parent.workspace_id, "project_id": parent.project_id,
+            "configuration_id": parent.configuration_id, "revision_id": parent.revision_id,
+            "revision_hash": parent.revision_hash, "snapshot_hash": snapshot["snapshot_hash"],
+            "task_id": task_id, "role": role,
+            "source_participant_id": selected.participant.participant_id,
+            "target_participant_id": target_participant_id,
+            "handoff_hash": digest, "created_at": created_at,
+            "handoff": payload_record,
+        }
+    return workspaces._write(store, operation)
+
+
+def get_handoff(store, handoff_id):
+    if not isinstance(handoff_id, str) or not handoff_id.strip() or len(handoff_id) > 128:
+        raise HandoffError("handoff ID is invalid")
+    with store.lock:
+        row = store.db.execute(
+            "SELECT * FROM cooperative_handoffs WHERE handoff_id=?", (handoff_id.strip(),)
+        ).fetchone()
+    if row is None:
+        return None
+    encoded = row["handoff_json"]
+    if sha256(encoded.encode("utf-8")).hexdigest() != row["handoff_hash"]:
+        raise HandoffError("persisted handoff integrity check failed")
+    try:
+        value = json.loads(encoded)
+    except (TypeError, ValueError) as exc:
+        raise HandoffError("persisted handoff JSON is malformed") from exc
+    return {**dict(row), "handoff_json": value}
+
+
+def list_handoffs(store, workspace_id, task_id, *, limit=100):
+    if not isinstance(workspace_id, str) or not workspace_id.strip():
+        raise HandoffError("workspace_id is required")
+    task_id = _text(task_id, "task_id", maximum=128)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise HandoffError("handoff list limit must be positive")
+    with store.lock:
+        rows = store.db.execute(
+            """SELECT handoff_id,invocation_id,role,source_participant_id,target_participant_id,
+                      handoff_hash,created_at
+               FROM cooperative_handoffs WHERE workspace_id=? AND task_id=?
+               ORDER BY created_at, handoff_id LIMIT ?""",
+            (workspace_id.strip(), task_id, min(limit, 500)),
+        ).fetchall()
+    return [dict(row) for row in rows]
