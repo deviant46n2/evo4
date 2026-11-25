@@ -269,10 +269,15 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, None, _utc_now(),
                 "openai_compatible:model_listing_malformed",
             )
-        except (ProviderTimeoutError, ProviderError):
+        except ProviderTimeoutError:
             return AvailabilityEvidence(
                 False, None, None, _utc_now(),
-                "openai_compatible:model_listing_unreachable",
+                "openai_compatible:model_listing_timed_out",
+            )
+        except ProviderError:
+            return AvailabilityEvidence(
+                None, None, None, _utc_now(),
+                "openai_compatible:model_listing_unverified",
             )
         
     def probe_completion(
@@ -301,11 +306,21 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, False, _utc_now(),
                 "openai_compatible:completion_probe_malformed",
             )
-        except ProviderError:
-            # Rate limits, authorization failures, and transient provider errors
-            # do not prove that the configured model is unavailable.
+        except ProviderHTTPError:
             return AvailabilityEvidence(
                 True, None, None, _utc_now(),
+                "openai_compatible:completion_probe_rejected",
+            )
+        except ProviderTimeoutError:
+            return AvailabilityEvidence(
+                False, None, None, _utc_now(),
+                "openai_compatible:completion_probe_timed_out",
+            )
+        except ProviderError:
+            # Transport-policy and transient failures do not prove that the
+            # configured model is unavailable or that transport was reached.
+            return AvailabilityEvidence(
+                None, None, None, _utc_now(),
                 "openai_compatible:completion_probe_unverified",
             )
 
