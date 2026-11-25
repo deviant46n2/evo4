@@ -151,10 +151,12 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         runtime = self.build()
         self.assertEqual(runtime.revision_id, self.revision["revision_id"])
         self.assertEqual(runtime.assistant.config.model, "model-a")
-        self.assertNotEqual(runtime.revision_id, newer["revision"]["revision_id"])
+        self.assertNotEqual(runtime.revision_id, newer["revision_id"])
 
     def test_live_dispatch_is_explicitly_disabled(self):
-        runtime = self.build()
+        runtime = build_workspace_runtime(
+            self.store, self.base_config, self.workspace["workspace_id"]
+        )
         self.assertFalse(runtime.dispatch_enabled)
         with self.assertRaises(RegistryDispatchDisabledError):
             runtime.require_dispatch_enabled()
