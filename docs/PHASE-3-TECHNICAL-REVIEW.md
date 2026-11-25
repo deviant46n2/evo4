@@ -151,6 +151,14 @@ The first corrective validation had exposed two implementation defects and incom
 This acceptance is only for P3.3. P3.2 formal acceptance remains a separate disposition. P3-R4 remains open. P3.5 dispatch remains disabled; no merge into `local-demo-ready-v1` is authorized.
 
 
-## P3.4 deterministic verifier — implementation checkpoint, validation pending
+## P3.4 deterministic verifier — formal acceptance
 
-A second production runtime kind is being added as a local deterministic verifier. It validates bounded structured JSON output, required fields, unexpected fields, and evidence-reference string shape. It deliberately does not resolve references, prove claims, run shell or arbitrary tools, access the network, or consume credentials. The Registry runtime binds configured verifier components from the exact immutable workspace revision and exposes descriptor/binding metadata for inspection. Runtime construction does not install an invocation authorizer; verifier invocation therefore remains disabled until P3.5. The deterministic self-test is local and bounded. Independent validation and formal acceptance remain pending.
+**ACCEPTED — 2026-11-25.** Exact candidate: `ad04198b95708df58aae1ff07e0b38380671b574`; P3.4 base `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; cumulative validation base `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree validation of the exact SHA: compileall exit 0; 14 deterministic-verifier tests passed; 21 participant-contract/runtime-binding tests passed; full unittest suite 877/877 passed with zero failures, errors, or skips; diff-check against both P3.4 and cumulative bases exited 0. The final correction was explicitly checked: `probe_completion()` returns `model_advertised=None` while retaining `transport_reachable=True` and `completion_verified=True` for the local deterministic self-test.
+
+Review confirmed that the verifier is a distinct local-only deterministic participant, bounded to 1 MiB input/output and at most 128 valid evidence references. It validates structure and reference shape only; it does not resolve references, establish artifact existence, prove factual claims, execute shell/arbitrary tools, access the network, or consume secrets. Runtime binding is exact-revision-specific and optional for configurations without a verifier. The production runtime installs no invocation authorizer; invocation fails closed without authorization. No API/worker route can invoke either participant before P3.5. No tests were weakened or removed.
+
+The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` with identical status, and all 32 pre-existing worktrees were preserved. No live provider calls or dispatch occurred.
+
+Acceptance is limited to P3.4. P3.2 formal acceptance remains pending; P3-R4 remains open and must be resolved before finalizing P3.5 admission; P3.5 remains the first milestone permitted to enable live dispatch. No merge into `local-demo-ready-v1` is authorized.
