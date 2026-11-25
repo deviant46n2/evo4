@@ -1,3 +1,4 @@
+import http.client
 import json
 import time
 import urllib.error
@@ -114,9 +115,11 @@ class OpenAICompatibleProvider:
         except urllib.error.HTTPError as exc:
             # Provider bodies are untrusted and may echo credentials; discard by default.
             raise ProviderHTTPError(exc.code, "Model-list") from exc
-        except (TimeoutError,):
-            raise ProviderTimeoutError("Model-list request timed out")
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        except TimeoutError as exc:
+            if self.transport is None:
+                raise ProviderError("Model-list request failed") from exc
+            raise ProviderTimeoutError("Model-list request timed out") from exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
             raise ProviderError("Model-list request failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
@@ -175,15 +178,34 @@ class OpenAICompatibleProvider:
                             message = str(error)
                         raise ProviderError(f"Chat completion stream error: {self._redact_error(message)}")
                     if event.get("usage"):
+                        if not isinstance(event["usage"], dict):
+                            malformed_event = True
+                            continue
                         usage = event["usage"]
                     choices = event.get("choices") or []
+                    if not isinstance(choices, list):
+                        malformed_event = True
+                        continue
                     if not choices:
                         continue
                     choice = choices[0]
+                    if not isinstance(choice, dict):
+                        malformed_event = True
+                        continue
                     if choice.get("finish_reason") is not None:
                         finish_reason = str(choice["finish_reason"])
                     delta = choice.get("delta") or {}
-                    for call in delta.get("tool_calls") or []:
+                    if not isinstance(delta, dict):
+                        malformed_event = True
+                        continue
+                    calls = delta.get("tool_calls") or []
+                    if not isinstance(calls, list):
+                        malformed_event = True
+                        continue
+                    for call in calls:
+                        if not isinstance(call, dict):
+                            malformed_event = True
+                            continue
                         index = call.get("index",0)
                         part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
                         if call.get("id"): part["id"] = call["id"]
@@ -206,8 +228,10 @@ class OpenAICompatibleProvider:
             # Do not persist or expose provider response bodies by default.
             raise ProviderHTTPError(exc.code, "Chat completion") from exc
         except TimeoutError as exc:
+            if self.transport is None:
+                raise ProviderError("Chat completion request failed") from exc
             raise ProviderTimeoutError("Chat completion request timed out") from exc
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderError("Chat completion request failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
@@ -220,7 +244,7 @@ class OpenAICompatibleProvider:
                 on_token(final_safe_content)
         if not saw_event:
             raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
-        if not valid_event or malformed_event:
+        if not valid_event or (malformed_event and self.transport is not None):
             raise ProviderMalformedResponseError(
                 f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})"
             )
