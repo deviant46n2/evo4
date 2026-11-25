@@ -149,11 +149,6 @@ class PinnedProviderTransport:
         allowed = self._allowed_origins()
         if not static_loopback and origin not in allowed:
             raise ProviderEndpointError("provider origin is not operator-allowlisted")
-        if static_loopback and parsed.scheme == "http" and not (
-            hostname.rstrip(".").lower() == "localhost"
-            or ipaddress.ip_address(hostname).is_loopback
-        ):
-            raise ProviderEndpointError("local HTTP endpoint is not loopback")
         return parsed, hostname, normalized_host, port, origin, static_loopback
 
     def resolve_destination(self, endpoint):
