@@ -93,6 +93,18 @@ def model_component(endpoint):
     }
 
 
+def provenance(participant_id):
+    return {
+        "participant_id": participant_id,
+        "project_id": "project-1",
+        "workspace_id": "workspace-1",
+        "configuration_id": "config-1",
+        "configuration_revision_id": "revision-1",
+        "component_key": "model",
+        "component_version": 1,
+    }
+
+
 def envelope(participant_id, *, input_json=None):
     return InvocationEnvelope(
         invocation_id="invocation-1",
@@ -145,7 +157,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         adapter = OpenAICompatibleParticipantAdapter(resolver=self.resolver)
         component = model_component(self.endpoint)
         adapter.validate_component(component)
-        participant = adapter.bind_component(component, {"participant_id": "participant-1"})
+        participant = adapter.bind_component(component, provenance("participant-1"))
         self.assertIsInstance(participant.provider.transport, PinnedProviderTransport)
         evidence = adapter.preflight(participant, timeout_seconds=3)
         self.assertTrue(evidence.transport_reachable)
@@ -158,7 +170,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             def list_models(self, *, timeout_seconds=None):
                 raise ProviderHTTPError(404, "Model-list")
         adapter = OpenAICompatibleParticipantAdapter(provider_factory=UnsupportedListing)
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         evidence = adapter.preflight(participant, timeout_seconds=3)
         self.assertTrue(evidence.transport_reachable)
         self.assertIsNone(evidence.model_advertised)
