@@ -237,30 +237,30 @@ class PinnedProviderTransport:
         if body is not None and not isinstance(body, (bytes, bytearray, memoryview)):
             raise ProviderEndpointError("provider request body must be bytes")
         connection = None
+        raw_socket = None
         try:
             raw_socket = self._connect_pinned(pinned_ip, port, timeout)
             if parsed.scheme == "https":
                 context = ssl.create_default_context()
                 if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
-                    raw_socket.close()
                     raise ProviderEndpointError("TLS hostname and certificate verification must remain enabled")
-                try:
-                    # URL authorities bracket IPv6 literals; TLS reference
-                    # identities must use the unbracketed IP address.
-                    tls_server_name = (
-                        normalized_host[1:-1]
-                        if normalized_host.startswith("[")
-                        else normalized_host
-                    )
-                    wrapped = context.wrap_socket(raw_socket, server_hostname=tls_server_name)
-                except Exception:
-                    raw_socket.close()
-                    raise
-                connection = http.client.HTTPSConnection(normalized_host, port, timeout=timeout, context=context)
+                # URL authorities bracket IPv6 literals; TLS reference identities
+                # must use the unbracketed IP address.
+                tls_server_name = (
+                    normalized_host[1:-1]
+                    if normalized_host.startswith("[")
+                    else normalized_host
+                )
+                wrapped = context.wrap_socket(raw_socket, server_hostname=tls_server_name)
+                raw_socket = None  # ownership transferred to the TLS socket
+                connection = http.client.HTTPSConnection(
+                    normalized_host, port, timeout=timeout, context=context
+                )
                 connection.sock = wrapped
             else:
                 connection = http.client.HTTPConnection(normalized_host, port, timeout=timeout)
                 connection.sock = raw_socket
+                raw_socket = None  # ownership transferred to the HTTP connection
             # A fresh connection is used for every request; never reuse or pool.
             connection.putrequest(method.upper(), request_path, skip_host=True, skip_accept_encoding=True)
             connection.putheader("Host", host_header)
@@ -279,23 +279,39 @@ class PinnedProviderTransport:
                     "content-length", "transfer-encoding",
                 }:
                     raise ProviderEndpointError("provider request contains a reserved header")
-                if any(ch in name + value for ch in "\r\n"):
+                if any(ch in name + value for ch in "\\r\\n"):
                     raise ProviderEndpointError("provider request header is malformed")
                 connection.putheader(name, value)
             if body is not None or method.upper() == "POST":
                 connection.putheader("Content-Length", str(len(body) if body is not None else 0))
             connection.endheaders(body)
             response = connection.getresponse()
-            if 300 <= response.status < 400:
-                response.close()
-                raise ProviderEndpointError("provider redirects are disabled")
-            yield response
         except ProviderEndpointError:
-            raise
-        except (TimeoutError, socket.timeout) as exc:
-            raise ProviderEndpointError("provider request timed out") from exc
-        except Exception as exc:
-            raise ProviderEndpointError("pinned provider request failed") from exc
-        finally:
             if connection is not None:
                 connection.close()
+            if raw_socket is not None:
+                raw_socket.close()
+            raise
+        except (TimeoutError, socket.timeout) as exc:
+            if connection is not None:
+                connection.close()
+            if raw_socket is not None:
+                raw_socket.close()
+            raise ProviderEndpointError("provider request timed out") from exc
+        except Exception as exc:
+            if connection is not None:
+                connection.close()
+            if raw_socket is not None:
+                raw_socket.close()
+            raise ProviderEndpointError("pinned provider request failed") from exc
+
+        if 300 <= response.status < 400:
+            response.close()
+            connection.close()
+            raise ProviderEndpointError("provider redirects are disabled")
+        try:
+            # Exceptions from the consumer must propagate unchanged. In
+            # particular, ProviderHTTPError is not a transport failure.
+            yield response
+        finally:
+            connection.close()
