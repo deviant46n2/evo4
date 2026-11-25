@@ -3,6 +3,48 @@ import time
 import urllib.error
 import urllib.request
 
+class _StreamingSecretRedactor:
+    """Withhold partial secret prefixes so chunk boundaries cannot leak a key."""
+
+    def __init__(self, secret):
+        self.secret = secret if isinstance(secret, str) and secret and secret != "no-key" else None
+        self.pending = ""
+
+    def push(self, text):
+        if not self.secret:
+            return text
+        combined = self.pending + text
+        safe_end = max(0, len(combined) - len(self.secret) + 1)
+        # Never emit a prefix that overlaps a complete secret spanning this boundary.
+        for start in range(max(0, safe_end - len(self.secret) + 1), safe_end):
+            if combined.startswith(self.secret, start) and start + len(self.secret) > safe_end:
+                safe_end = start
+                break
+        safe = combined[:safe_end].replace(self.secret, "[REDACTED]")
+        self.pending = combined[safe_end:]
+        return safe
+
+    def finish(self):
+        pending = self.pending
+        self.pending = ""
+        if self.secret:
+            pending = pending.replace(self.secret, "[REDACTED]")
+        return pending
+
+
+def _redact_value(value, secret):
+    if isinstance(value, str) and secret:
+        return value.replace(secret, "[REDACTED]")
+    if isinstance(value, list):
+        return [_redact_value(item, secret) for item in value]
+    if isinstance(value, dict):
+        return {
+            _redact_value(key, secret): _redact_value(item, secret)
+            for key, item in value.items()
+        }
+    return value
+
+
 class ProviderError(RuntimeError):
     pass
 
@@ -20,6 +62,12 @@ class OpenAICompatibleProvider:
         self.model = model
         self.timeout = timeout
 
+    def _redact_error(self, message):
+        text = str(message)
+        if self.api_key and self.api_key != "no-key":
+            text = text.replace(str(self.api_key), "[REDACTED]")
+        return text[:500]
+
     def list_models(self):
         request = urllib.request.Request(self.base_url + "/v1/models",
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"})
@@ -28,9 +76,10 @@ class OpenAICompatibleProvider:
                 payload = json.loads(response.read().decode("utf-8"))
             return [item.get("id") for item in payload.get("data",[]) if item.get("id")]
         except urllib.error.HTTPError as exc:
-            raise ProviderError(f"Model-list HTTP {exc.code}: {exc.read().decode(errors='replace')[:1000]}") from exc
+            # Provider bodies are untrusted and may echo credentials; discard by default.
+            raise ProviderError(f"Model-list HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            raise ProviderError(f"Model-list request failed: {exc}") from exc
+            raise ProviderError("Model-list request failed") from exc
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
@@ -46,6 +95,7 @@ class OpenAICompatibleProvider:
         first_token = None
         usage = {}
         pieces = []
+        redactor = _StreamingSecretRedactor(self.api_key)
         tool_call_parts = {}
         content_type = ""
         saw_event = False
@@ -78,7 +128,7 @@ class OpenAICompatibleProvider:
                             message = error.get("message") or error.get("detail") or str(error)
                         else:
                             message = str(error)
-                        raise ProviderError(f"Chat completion stream error: {message}")
+                        raise ProviderError(f"Chat completion stream error: {self._redact_error(message)}")
                     if event.get("usage"):
                         usage = event["usage"]
                     choices = event.get("choices") or []
@@ -102,13 +152,21 @@ class OpenAICompatibleProvider:
                     if isinstance(content,str) and content:
                         if first_token is None:
                             first_token = time.perf_counter()
-                        pieces.append(content)
-                        if on_token:
-                            on_token(content)
+                        safe_content = redactor.push(content)
+                        if safe_content:
+                            pieces.append(safe_content)
+                            if on_token:
+                                on_token(safe_content)
         except urllib.error.HTTPError as exc:
-            raise ProviderError(f"Chat completion HTTP {exc.code}: {exc.read().decode(errors='replace')[:2000]}") from exc
+            # Do not persist or expose provider response bodies by default.
+            raise ProviderError(f"Chat completion HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ProviderError(f"Chat completion request failed: {exc}") from exc
+            raise ProviderError("Chat completion request failed") from exc
+        final_safe_content = redactor.finish()
+        if final_safe_content:
+            pieces.append(final_safe_content)
+            if on_token:
+                on_token(final_safe_content)
         if not saw_event:
             raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
         if not valid_event:
@@ -127,7 +185,8 @@ class OpenAICompatibleProvider:
         # and perform its bounded safe continuation without executing calls.
         if finish_reason != "length":
             for index in sorted(tool_call_parts):
-                call = tool_call_parts[index]
+                secret = self.api_key if self.api_key != "no-key" else None
+                call = _redact_value(tool_call_parts[index], secret)
                 try:
                     arguments = json.loads(call["function"]["arguments"] or "{}")
                 except json.JSONDecodeError as exc:

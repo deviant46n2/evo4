@@ -78,14 +78,15 @@ class ProviderToolTests(unittest.TestCase):
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
-    def test_model_list_http_error_includes_response_body(self):
+    def test_model_list_http_error_discards_untrusted_response_body(self):
         server=ThreadingHTTPServer(("127.0.0.1",0),UnauthorizedHandler)
         thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()
         try:
             provider=OpenAICompatibleProvider(f"http://127.0.0.1:{server.server_port}","bad","fake",3)
             with self.assertRaises(ProviderError) as raised:
                 provider.list_models()
-            self.assertIn("invalid api key",str(raised.exception))
+            self.assertNotIn("invalid api key", str(raised.exception))
+            self.assertIn("401", str(raised.exception))
         finally:
             server.shutdown(); server.server_close(); thread.join(timeout=2)
 
@@ -209,6 +210,50 @@ class InvalidToolArgumentsSSEHandler(BaseHTTPRequestHandler):
         pass
 
 
+class SecretEchoSSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        events = [
+            {"choices": [{"delta": {"content": "hello super-"}, "finish_reason": None}]},
+            {"choices": [{"delta": {"content": "secret world"}, "finish_reason": None}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+        ]
+        body = "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+class SecretToolCallSSEHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(size)
+        events = [
+            {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": "call_1", "type": "function",
+                "function": {"name": "read_file", "arguments": '{"super-secret":"value"}'},
+            }]}}]},
+            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+        ]
+        body = "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
+        raw = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
 class ProviderReliabilityTests(unittest.TestCase):
     def _request(self, handler):
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -219,6 +264,48 @@ class ProviderReliabilityTests(unittest.TestCase):
             return provider
         finally:
             pass
+
+
+
+    def test_api_key_is_redacted_from_tool_call_argument_keys(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SecretToolCallSSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(
+                f"http://127.0.0.1:{server.server_port}", "super-secret", "fake", 3
+            )
+            result = provider.chat(
+                [{"role": "user", "content": "read"}], tools=[{"type": "function"}]
+            )
+            self.assertEqual(
+                result["tool_calls"][0]["function"]["arguments"],
+                {"[REDACTED]": "value"},
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_api_key_echo_is_redacted_across_stream_chunk_boundaries(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SecretEchoSSEHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = OpenAICompatibleProvider(
+                f"http://127.0.0.1:{server.server_port}", "super-secret", "fake", 3
+            )
+            emitted = []
+            result = provider.chat(
+                [{"role": "user", "content": "hello"}], on_token=emitted.append
+            )
+            self.assertEqual(result["content"], "hello [REDACTED] world")
+            self.assertNotIn("super-secret", "".join(emitted))
+            self.assertEqual("".join(emitted), result["content"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_invalid_non_length_tool_arguments_raise_recoverable_error(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), InvalidToolArgumentsSSEHandler)

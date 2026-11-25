@@ -3,6 +3,10 @@ from pathlib import Path
 import os
 import tomllib
 
+from .provider_approvals import ProviderApprovalError, parse_provider_approvals
+from .provider_endpoint import ProviderEndpointError, normalize_provider_origin
+from .secret_references import SecretResolutionError, resolve_secret_references
+
 @dataclass(frozen=True)
 class EvoConfig:
     base_url: str
@@ -20,6 +24,9 @@ class EvoConfig:
     max_history_chars: int = 40000
     context_window_tokens: int = 49152
     provider_name: str = "default"
+    allowed_provider_origins: tuple[str, ...] = ()
+    allowed_secret_env_vars: tuple[str, ...] = ()
+    provider_approvals: tuple = ()
 
 def load_config(path: str | Path = "config.toml", provider_name: str | None = None) -> EvoConfig:
     source = Path(path)
@@ -33,6 +40,33 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     assistant = raw.get("assistant", {})
     workspace = raw.get("workspace", {})
     profiles = raw.get("providers", {})
+    security = raw.get("security", {})
+    secrets = raw.get("secrets", {})
+    if not isinstance(security, dict):
+        raise ValueError("security must be a TOML table")
+    if not isinstance(secrets, dict):
+        raise ValueError("secrets must be a TOML table")
+    raw_origins = security.get("allowed_provider_origins", [])
+    if not isinstance(raw_origins, list):
+        raise ValueError("security.allowed_provider_origins must be a list of exact origins")
+    try:
+        allowed_origins = tuple(normalize_provider_origin(origin) for origin in raw_origins)
+    except (ProviderEndpointError, TypeError) as exc:
+        raise ValueError("security.allowed_provider_origins contains an invalid exact origin") from exc
+    if len(allowed_origins) != len(set(allowed_origins)):
+        raise ValueError("security.allowed_provider_origins contains duplicate origins")
+    allowed_env_vars = secrets.get("allowed_env_vars", [])
+    try:
+        resolve_secret_references({}, allowed_env_vars)
+    except SecretResolutionError as exc:
+        raise ValueError("secrets.allowed_env_vars must contain valid environment-variable names") from exc
+    if len(allowed_env_vars) != len(set(allowed_env_vars)):
+        raise ValueError("secrets.allowed_env_vars contains duplicate names")
+    provider_approvals_raw = raw.get("provider_approvals", [])
+    try:
+        provider_approvals = parse_provider_approvals(provider_approvals_raw)
+    except ProviderApprovalError as exc:
+        raise ValueError(str(exc)) from exc
     selected_provider = provider_name or server.get("profile")
     profile = {}
     if selected_provider:
@@ -71,4 +105,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
         max_history_chars=max(2000,int(assistant.get("max_history_chars",40000))),
         context_window_tokens=max(4096,int(assistant.get("context_window_tokens",49152))),
         provider_name=str(selected_provider or "default"),
+        allowed_provider_origins=allowed_origins,
+        allowed_secret_env_vars=tuple(allowed_env_vars),
+        provider_approvals=provider_approvals,
     )

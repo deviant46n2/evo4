@@ -55,6 +55,28 @@ flash_attention = ""
 notes = "Record desktop state and unusual background GPU use here."
 
 
+
+# Registry-bound provider endpoints are separately allowlisted by exact origin.
+# Loopback HTTP endpoints are handled by the fixed local-inference policy.
+[security]
+allowed_provider_origins = []
+
+# Registry component secrets are resolved only from these operator-approved
+# environment-variable names. Values never belong in AI Configuration records.
+[secrets]
+allowed_env_vars = []
+
+# Compliance is a separate operator decision from endpoint allowlisting.
+# Add one record per exact origin, adapter/interface, and approved use.
+# [[provider_approvals]]
+# origin = "https://api.example.com"
+# adapter_id = "openai_compatible_chat"
+# uses = ["chat_completion"]
+# status = "approved"
+# reviewed_at = "2026-11-23"
+# terms_reference = "provider terms revision reviewed"
+# data_handling_reference = "provider data-handling policy reviewed"
+
 # Named OpenAI-compatible providers. Cloud providers are optional; no paid
 # provider is required. Put API keys in environment variables, never here.
 [providers.local]
