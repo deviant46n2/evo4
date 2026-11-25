@@ -250,5 +250,10 @@ def assert_runtime_matches_snapshot(store, runtime, invocation_id, *, expected_k
     )
     if actual != expected:
         raise RuntimeSnapshotError("runtime does not match the invocation's pinned snapshot")
+    _, _, current_digest = _runtime_snapshot_payload(
+        runtime, record["snapshot"].get("invocation_kind", "workspace_invocation")
+    )
+    if current_digest != record["snapshot_hash"]:
+        raise RuntimeSnapshotError("runtime settings or participant identity differ from the invocation snapshot")
     runtime.assert_current(store)
     return record
