@@ -217,6 +217,13 @@ Risks and unresolved decisions:
 Command policy is settled: effective permissions are the intersection of global and project permissions. Project policy can only restrict global permissions and cannot expand them. Missing, invalid, or ambiguous project policy must not silently grant broader access. Milestone 2b implements and enforces this model; milestone 4 tests instruction precedence and command-policy behavior against the already settled model.
 
 **Phase 3 — Participant contracts and runtime binding**
+**Phase 3 implementation status (2026-11-25):**
+- P3.1 executable configuration/contract foundations: accepted.
+- P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: implementation complete and independently validated at 843 passing tests; formal phase acceptance remains pending. The one documentation whitespace finding was corrected in commit 11b173d7d7405c80f1ec6c5acb9087b5e1382646.
+- P3.3 OpenAI-compatible participant adapter: implementation in progress on candidate a67f92fb71eaaf667c7079bc8e743e996f1fd248; local full-suite and independent review are pending.
+- P3.5 remains the first milestone permitted to enable live Registry-bound dispatch. No production dispatch authorizer is installed; no live provider dispatch or external provider calls are enabled.
+- P3-R4 remains open and must be resolved before finalizing P3.5 resource admission.
+
 - Runnable AI Configuration components use an explicit, versioned typed schema; legacy opaque schema-version 1 definitions remain readable but are not executable by default. Existing schema-1 workspaces require explicit migration preview, a new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 - The first runtime integration proves that the exact immutable workspace-pinned configuration revision constructs and controls the complete assistant runtime for every workspace-bound entrypoint: chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution. Creating a newer configuration revision does not invalidate an older revision already pinned by a workspace. The global TOML assistant remains a separate legacy path only for callers without a Registry-bound workspace; no silent fallback is permitted.
 - The pinned revision determines provider/model, generation settings, context/memory/history budgets, persona guidance, and project command policy. Operator-owned global command ceilings and code-owned safety policy remain authoritative.
@@ -301,7 +308,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5, but configuration-to-runtime binding, project-scoped context, common participant dispatch, and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant-adapter work is in progress. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission and P3-R4. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
