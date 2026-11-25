@@ -309,7 +309,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are accepted at validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; P3.3 participant adapter is accepted at `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; P3.4 deterministic verifier is accepted at `ad04198b95708df58aae1ff07e0b38380671b574`. P3-R4 resource-admission design and telemetry freshness are accepted at `85b9f933a32dc45b72492dfee136edaad5c882fd`. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission. P3.5 admission and dispatch remain unimplemented. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are accepted at validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; P3.3 participant adapter is accepted at `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; P3.4 deterministic verifier is accepted at `ad04198b95708df58aae1ff07e0b38380671b574`. P3-R4 resource-admission design and telemetry freshness are accepted at `85b9f933a32dc45b72492dfee136edaad5c882fd`. P3.5 authorization/admission is formally accepted and merged. Live Registry-bound dispatch remains disabled by default pending explicit operator configuration and the remaining Phase 3 acceptance gates. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
@@ -434,9 +434,9 @@ Independent detached-worktree validation of the exact implementation target: com
 Source review found no remaining P3.2 implementation blocker: workspace chat, plan proposal, plan execution, and coding-agent entrypoints create typed invocation snapshots; worker continuity verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert and cannot dispatch to a live provider before P3.5. This acceptance covers P3.2 runtime binding and invocation-snapshot continuity only; it does not implement or accept P3.5, enable live dispatch, or imply that external provider calls occurred.
 
 
-## P3.5 dispatch integration — independent validation PASS; formal acceptance pending
+## P3.5 dispatch integration — formal acceptance (2026-11-25)
 
-**Validation target:** `922051067fa41ecd75038714aafe96e514333f28` on `agent-p35-dispatch-admission-v1`; base `3ab42edac54a46a28ae09112b24cf61f10d9a871`.
+**Disposition: ACCEPTED.** Exact validated implementation target: `922051067fa41ecd75038714aafe96e514333f28` on `agent-p35-dispatch-admission-v1`; integration PR #3 merged into `agent-lifecycle-reconciliation-v1` at `ab01f90547c435ed158dc914583dbb21485e221f`.
 
 Independent detached-worktree validation reported:
 - `python -m compileall -q src tests`: exit 0.
@@ -447,4 +447,8 @@ Independent detached-worktree validation reported:
 - The three findings from the preceding validation were corrected and revalidated.
 - Original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees were preserved.
 
-This is a validation record, **not a formal acceptance record**. No external provider calls were performed. `dispatch.enabled` remains false by default; this validation does not enable live dispatch or authorize changing the operator's local configuration. P3.6 and P3.7 remain outstanding.
+The user formally accepted P3.5 on 2026-11-25. No external provider calls were performed. `dispatch.enabled` remains false by default; acceptance does not enable live dispatch or change the operator's local configuration. P3.6 and P3.7 remain outstanding.
+
+## P3.6 participant inspection API — implementation in progress (2026-11-25)
+
+On branch `agent-p36-participant-inspection-v1`, the backend now exposes a read-only participant descriptor list and a bounded metadata-only availability preflight for the exact workspace-pinned runtime. The preflight is ephemeral, never invokes a completion probe, never acquires admission, and never persists evidence. A positive model-list response records transport reachability/model advertisement only; completion availability remains unknown until the separate explicitly admitted completion probe. Focused API tests were added, but no local tests have been run by GPT-6. Frontend inspection and independent validation remain outstanding.
