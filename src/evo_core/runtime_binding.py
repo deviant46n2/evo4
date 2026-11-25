@@ -23,6 +23,7 @@ from .participant_contracts import (
     stable_participant_id,
 )
 from .provider_endpoint import normalize_provider_origin
+from .openai_compatible_adapter import OpenAICompatibleParticipantAdapter
 from .secret_references import SecretResolutionError, resolve_secret_references
 
 
@@ -64,6 +65,8 @@ class RegistryBoundRuntime:
     revision_hash: str
     assistant: EvoAssistant
     participant: ParticipantDescriptor
+    participant_adapter: OpenAICompatibleParticipantAdapter
+    bound_participant: object
     effective_allowed_commands: tuple[tuple[str, ...], ...]
     provenance: object
 
@@ -188,6 +191,16 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             component_version=model_component["component_version"],
             compliance_reference=None,
         )
+        # Construct the Registry adapter with the pinned transport, but do not
+        # install a dispatch authorizer. P3.5 must supply that gate explicitly.
+        participant_adapter = OpenAICompatibleParticipantAdapter(
+            allowed_origins=base_config.allowed_provider_origins,
+        )
+        bound_participant = participant_adapter.bind_component(
+            model_component,
+            {"participant_id": participant_id},
+            secret_values=secret_values,
+        )
         # User-authored persona guidance is explicitly delimited as untrusted
         # behavior guidance. It cannot replace the operator's global policy.
         persona = assistant_settings["persona_prompt"]
@@ -253,6 +266,8 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             revision_hash=revision_hash,
             assistant=assistant,
             participant=participant,
+            participant_adapter=participant_adapter,
+            bound_participant=bound_participant,
             effective_allowed_commands=effective_commands,
             provenance=provenance,
         )
