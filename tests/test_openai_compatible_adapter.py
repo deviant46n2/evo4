@@ -11,7 +11,7 @@ from evo_core.openai_compatible_adapter import (
     ParticipantDispatchDisabledError,
 )
 from evo_core.participant_contracts import InvocationEnvelope, ParticipantResult
-from evo_core.provider import ProviderHTTPError, ProviderTimeoutError
+from evo_core.provider import ProviderHTTPError, ProviderMalformedResponseError, ProviderTimeoutError
 from evo_core.provider_endpoint import PinnedProviderTransport
 
 
@@ -142,6 +142,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), AdapterHandler)
         self.server.status_code = 200
+        self.server.malformed_sse = False
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.endpoint = f"http://127.0.0.1:{self.server.server_port}/v1"
@@ -212,6 +213,29 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         result = list(adapter.invoke(participant, envelope("p")))[-1]
         self.assertEqual(result.status, "rate_limited")
         self.assertEqual(result.error_code, "provider_rate_limited")
+
+    def test_malformed_sse_is_normalized_as_malformed_output(self):
+        self.server.malformed_sse = True
+        adapter = OpenAICompatibleParticipantAdapter(
+            resolver=self.resolver,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        result = list(adapter.invoke(participant, envelope("p")))[-1]
+        self.assertEqual(result.status, "malformed_output")
+        self.assertEqual(result.error_code, "malformed_provider_output")
+
+    def test_provider_malformed_error_is_normalized(self):
+        class Malformed(FakeProvider):
+            def chat(self, *args, **kwargs):
+                raise ProviderMalformedResponseError("bad response")
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=Malformed,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        result = list(adapter.invoke(participant, envelope("p")))[-1]
+        self.assertEqual(result.status, "malformed_output")
 
     def test_real_pinned_transport_preserves_http_status_for_normalization(self):
         self.server.status_code = 429
