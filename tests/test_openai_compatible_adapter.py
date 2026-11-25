@@ -163,7 +163,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         component = model_component(self.endpoint)
         adapter.validate_component(component)
         participant = adapter.bind_component(component, provenance("participant-1"))
-        self.assertIsInstance(participant.provider.transport, PinnedProviderTransport)
+        self.assertIsInstance(adapter._provider_for(participant).transport, PinnedProviderTransport)
         evidence = adapter.preflight(participant, timeout_seconds=3)
         self.assertTrue(evidence.transport_reachable)
         self.assertTrue(evidence.model_advertised)
@@ -285,7 +285,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         records = list(adapter.invoke(participant, envelope("p"), cancellation_event=cancellation))
         self.assertEqual(records[0].event_type, "started")
         self.assertEqual(records[-1].status, "cancelled")
-        self.assertFalse(hasattr(participant.provider, "called"))
+        self.assertFalse(hasattr(adapter._provider_for(participant), "called"))
 
     def test_cancellation_during_request_suppresses_late_events(self):
         class BlockingProvider(FakeProvider):
@@ -314,7 +314,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         iterator = adapter.invoke(participant, envelope("p"), cancellation_event=cancellation)
         try:
             self.assertEqual(next(iterator).event_type, "started")
-            self.assertTrue(participant.provider.started.wait(timeout=1))
+            self.assertTrue(adapter._provider_for(participant).started.wait(timeout=1))
             cancellation.set()
             terminal = next(iterator)
             self.assertEqual(terminal.status, "cancelled")
@@ -322,7 +322,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             with self.assertRaises(StopIteration):
                 next(iterator)
         finally:
-            participant.provider.release.set()
+            adapter._provider_for(participant).release.set()
             iterator.close()
 
     def test_invocation_rejects_workspace_or_revision_provenance_drift(self):
