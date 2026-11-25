@@ -62,6 +62,29 @@ class BackgroundAgentLedgerTests(unittest.TestCase):
         self.assertEqual(task["workspace_id"], "workspace-2")
         self.assertEqual(task["status"], "failed")
 
+    def test_initialize_backfills_scope_for_legacy_tasks(self):
+        legacy = sqlite3.connect(":memory:")
+        legacy.row_factory = sqlite3.Row
+        legacy.execute("CREATE TABLE agent_runs(id TEXT PRIMARY KEY, metadata_json TEXT)")
+        legacy.execute(
+            "INSERT INTO agent_runs(id,metadata_json) VALUES('legacy-run',?)",
+            ('{"project_id":"legacy-project","workspace_id":"legacy-workspace"}',))
+        legacy.execute("""CREATE TABLE background_agent_tasks(
+            run_id TEXT PRIMARY KEY, status TEXT NOT NULL,
+            cancel_requested INTEGER NOT NULL DEFAULT 0, worker_token TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+        legacy.execute(
+            """INSERT INTO background_agent_tasks(run_id,status,created_at,updated_at)
+               VALUES('legacy-run','interrupted','now','now')""")
+        initialize(legacy)
+        row = legacy.execute(
+            "SELECT project_id,workspace_id,status FROM background_agent_tasks WHERE run_id='legacy-run'"
+        ).fetchone()
+        self.assertEqual(row["project_id"], "legacy-project")
+        self.assertEqual(row["workspace_id"], "legacy-workspace")
+        self.assertEqual(row["status"], "interrupted")
+        legacy.close()
+
     def test_atomic_claim_only_once(self):
         self.assertTrue(claim(self.db, "run-1", "worker-a"))
         self.assertFalse(claim(self.db, "run-1", "worker-b"))
