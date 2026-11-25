@@ -136,3 +136,16 @@ P3.3 is not accepted yet. Local compile/test/diff validation and independent sou
 ## Phase 2 formal acceptance record
 
 **ACCEPTED — 2026-11-24.** The user approved the clarification that Phase 2 resumption means preserving scope and history across interruption/restart, while automatic replay remains disabled and continuation requires a newly scope-validated task. Exact regression target: `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`. Validation: 824/824 tests passed; compileall and diff-check clean. See `ROADMAP.md` for the full acceptance record. This does not authorize live Registry-bound provider dispatch.
+
+
+## P3.3 OpenAI-compatible participant adapter — formal acceptance
+
+**ACCEPTED — 2026-11-25.** Exact candidate: `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; parent `9227983befe938b9bd605acd9f54400861869def`; cumulative validation base `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree evidence: compileall passed; focused tests passed (148); full suite passed (863 tests, zero failures/errors/skips); cumulative diff-check passed with exit 0. The original checkout remained at `local-demo-ready-v1` / `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, with identical status and 32 worktrees restored.
+
+The validation specifically exercised actual CR/LF header injection, ordinary JSON content type, worker start-before-yield ordering, pre-cancelled no-dispatch behavior, cancellation suppression of late events, bounded request timeout, and complete provenance fixtures. Security checks found Registry transport pinning and origin/DNS/TLS/redirect/proxy restrictions intact; bounded response handling and strict parsing intact; no secret leakage; no provider factory injection; no runtime-construction network request; and no API/worker route to live dispatch. No external provider calls were made.
+
+The first corrective validation had exposed two implementation defects and incomplete test fixtures; these were corrected. A subsequent test-literal defect and trailing whitespace were also corrected. The exact final candidate passed all validation with no findings.
+
+This acceptance is only for P3.3. P3.2 formal acceptance remains a separate disposition. P3-R4 remains open. P3.5 dispatch remains disabled; no merge into `local-demo-ready-v1` is authorized.
