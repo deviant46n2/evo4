@@ -8,7 +8,6 @@ from evo_core.ai_configurations import create_configuration, create_revision
 from evo_core.config import EvoConfig
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
-from evo_core.openai_compatible_adapter import ParticipantDispatchDisabledError
 from evo_core.provider_endpoint import PinnedProviderTransport
 from evo_core.runtime_binding import (
     RegistryDispatchDisabledError,
