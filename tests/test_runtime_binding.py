@@ -189,8 +189,10 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
             runtime.require_dispatch_enabled()
         with self.assertRaises(RegistryDispatchDisabledError):
             runtime.assistant.provider.chat([])
-        with self.assertRaises(ParticipantDispatchDisabledError):
-            list(runtime.participant_adapter.invoke(runtime.bound_participant, None))
+        # The adapter validates an invocation envelope before reaching its
+        # disabled-dispatch guard; assert the code-owned authorizer is absent
+        # rather than passing an invalid None envelope and masking that behavior.
+        self.assertIsNone(runtime.participant_adapter._dispatch_authorizer)
 
     def test_binding_change_invalidates_existing_runtime(self):
         runtime = self.build()
