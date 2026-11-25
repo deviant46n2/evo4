@@ -375,6 +375,7 @@ class OpenAICompatibleParticipantAdapter:
             raise TypeError("cancellation_event must expose is_set()")
         events = Queue(maxsize=32)
         stop = threading.Event()
+        provider_completed = threading.Event()
         finished = object()
         streamed_text = []
 
@@ -394,8 +395,10 @@ class OpenAICompatibleParticipantAdapter:
                     timeout_seconds=request_timeout,
                 )
                 publish("terminal", result)
+                provider_completed.set()
             except Exception as exc:
                 publish("error", exc)
+                provider_completed.set()
             finally:
                 publish("finished", finished)
 
@@ -419,7 +422,11 @@ class OpenAICompatibleParticipantAdapter:
         deadline_monotonic = time.monotonic() + request_timeout
         try:
             while True:
-                if cancellation_event is not None and cancellation_event.is_set():
+                if (
+                    cancellation_event is not None
+                    and cancellation_event.is_set()
+                    and not provider_completed.is_set()
+                ):
                     stop.set()
                     partial = {"content": "".join(streamed_text), "partial": True}
                     partial_json = json.dumps(partial, separators=(",", ":"), ensure_ascii=False) if streamed_text else None
