@@ -17,6 +17,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
+from .runtime_binding import (
+    RegistryDispatchDisabledError,
+    RuntimeBindingError,
+    build_workspace_runtime,
+)
 from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
@@ -228,6 +233,21 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except workspace_registry.WorkspaceValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _build_workspace_runtime_for_request(workspace_id):
+        try:
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+        except workspace_registry.WorkspaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeBindingError, workspace_registry.WorkspaceValidationError,
+                workspace_registry.WorkspaceRelationshipError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+            runtime.require_dispatch_enabled()
+        except RegistryDispatchDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return runtime
 
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
@@ -860,10 +880,11 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
-            effective_allowed_commands = effective_project_command_prefixes(config.allowed_commands, revision)
+            effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
@@ -937,6 +958,7 @@ def create_app(config_path="config.toml", provider_name=None):
         if not workspace_id:
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
         plan_project_id = plan.get("project_id")
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
@@ -1005,6 +1027,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
@@ -1422,6 +1445,8 @@ def create_app(config_path="config.toml", provider_name=None):
             validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if validated_workspace_id is not None:
+            _build_workspace_runtime_for_request(validated_workspace_id)
 
         conversation_id = payload.conversation_id
         if conversation_id is None:
