@@ -125,7 +125,7 @@ def _runtime_snapshot_payload(runtime, invocation_kind):
         "participant": asdict(participant),
         "effective_allowed_commands": [list(command) for command in runtime.effective_allowed_commands],
         "provenance": safe_provenance,
-        "dispatch_enabled": False,
+        "dispatch_enabled": bool(runtime.dispatch_enabled),
     }
     try:
         encoded = _canonical_json(payload)
@@ -233,11 +233,13 @@ def list_runtime_invocation_snapshots(store, workspace_id, *, limit=100):
     return [dict(row) for row in rows]
 
 
-def assert_runtime_matches_snapshot(store, runtime, invocation_id):
+def assert_runtime_matches_snapshot(store, runtime, invocation_id, *, expected_kind=None):
     """Fail closed unless a runtime is identical to its immutable invocation snapshot."""
     record = get_runtime_invocation_snapshot(store, invocation_id)
     if record is None:
         raise RuntimeSnapshotError("runtime invocation snapshot is missing")
+    if expected_kind is not None and record["snapshot"].get("invocation_kind") != expected_kind:
+        raise RuntimeSnapshotError("runtime invocation snapshot kind does not match the requested operation")
     expected = (
         record["workspace_id"], record["project_id"], record["workspace_version"],
         record["configuration_id"], record["revision_id"], record["revision_hash"],
