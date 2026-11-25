@@ -45,6 +45,36 @@ type Checkout = {
   availability_status: string;
 };
 
+type ParticipantDescriptor = {
+  participant_id: string;
+  integration_id: string;
+  participant_type: string;
+  display_name: string;
+  adapter_id: string;
+  adapter_contract_version: number;
+  adapter_implementation_version: string;
+  capabilities: string[];
+  execution_location: string;
+  availability: string;
+  availability_observed_at: string | null;
+  resource_requirements: Record<string, string>;
+  limits: Record<string, string | number>;
+  configuration_revision_id: string;
+  component_key: string;
+  component_version: number;
+};
+
+type ParticipantAvailability = {
+  availability: "available" | "unavailable" | "unknown";
+  metadata_preflight?: string;
+  transport_reachable: boolean | null;
+  model_advertised: boolean | null;
+  completion_verified: boolean | null;
+  observed_at_utc: string;
+  probe_kind: string;
+  ephemeral: boolean;
+};
+
 type ListResult<T> = { items: T[]; total: number };
 
 class ApiError extends Error {
@@ -112,11 +142,18 @@ export function WorkspaceRegistryWorkspace() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [participants, setParticipants] = useState<ParticipantDescriptor[]>([]);
+  const [participantLoading, setParticipantLoading] = useState(false);
+  const [participantError, setParticipantError] = useState("");
+  const [availability, setAvailability] = useState<Record<string, ParticipantAvailability>>({});
+  const [availabilityLoadingId, setAvailabilityLoadingId] = useState<string | null>(null);
 
   const viewGeneration = useRef(0);
   const dependencyGeneration = useRef(0);
   const checkoutGeneration = useRef(0);
   const revisionGeneration = useRef(0);
+  const participantGeneration = useRef(0);
+  const availabilityGeneration = useRef(0);
   const savingRef = useRef(false);
 
   const fetchList = useCallback(async (status: "active" | "archived") => {
@@ -408,6 +445,67 @@ export function WorkspaceRegistryWorkspace() {
 
   const selectedRevision = revisions.find(item => item.revision_id === revisionId);
 
+  const loadParticipants = useCallback(async () => {
+    if (!selected || selected.status !== "active") return;
+    const token = ++participantGeneration.current;
+    setParticipantLoading(true);
+    setParticipantError("");
+    try {
+      const result = await api<{
+        workspace_id: string;
+        configuration_revision_id: string;
+        dispatch_enabled: boolean;
+        participants: ParticipantDescriptor[];
+      }>(`/workspaces/${encodeURIComponent(selected.workspace_id)}/participants`);
+      if (token !== participantGeneration.current) return;
+      if (result.configuration_revision_id !== selected.configuration_revision_id) {
+        throw new Error("Runtime inspection returned a different pinned configuration revision.");
+      }
+      setParticipants(result.participants);
+      setAvailability({});
+    } catch (e) {
+      if (token === participantGeneration.current) {
+        setParticipantError(errorText(e));
+        setParticipants([]);
+      }
+    } finally {
+      if (token === participantGeneration.current) setParticipantLoading(false);
+    }
+  }, [selected]);
+
+  useEffect(() => {
+    participantGeneration.current += 1;
+    availabilityGeneration.current += 1;
+    setParticipants([]);
+    setAvailability({});
+    setAvailabilityLoadingId(null);
+    setParticipantError("");
+    if (selected?.status === "active") void loadParticipants();
+    return () => {
+      participantGeneration.current += 1;
+      availabilityGeneration.current += 1;
+    };
+  }, [loadParticipants, selected?.workspace_id, selected?.status]);
+
+  async function checkParticipantAvailability(participantId: string) {
+    if (!selected || availabilityLoadingId) return;
+    const token = ++availabilityGeneration.current;
+    setAvailabilityLoadingId(participantId);
+    setParticipantError("");
+    try {
+      const result = await api<ParticipantAvailability>(
+        `/workspaces/${encodeURIComponent(selected.workspace_id)}/participants/${encodeURIComponent(participantId)}/availability?timeout_seconds=4`,
+      );
+      if (token === availabilityGeneration.current) {
+        setAvailability(previous => ({ ...previous, [participantId]: result }));
+      }
+    } catch (e) {
+      if (token === availabilityGeneration.current) setParticipantError(errorText(e));
+    } finally {
+      if (token === availabilityGeneration.current) setAvailabilityLoadingId(null);
+    }
+  }
+
   return (
     <div className="workspace-page configuration-page">
       <div className="workspace-heading">
@@ -641,6 +739,57 @@ export function WorkspaceRegistryWorkspace() {
                 <p className="policy-copy">
                   The configuration revision is pinned by ID, not by the configuration's moving current-revision pointer. Archiving or reactivating a workspace does not rewrite its bindings.
                 </p>
+              </section>
+
+              <section className="configuration-section">
+                <div className="panel-toolbar">
+                  <div>
+                    <h3>Bound participants</h3>
+                    <p>Runtime participants resolved from this workspace's exact pinned revision. Inspection does not authorize invocation.</p>
+                  </div>
+                  <button className="quiet-button" disabled={participantLoading || selected.status !== "active"} onClick={() => void loadParticipants()}>
+                    {participantLoading ? "Inspecting…" : "Refresh participants"}
+                  </button>
+                </div>
+                {participantError && <div className="workspace-error" role="alert">{participantError}</div>}
+                {participantLoading && <div className="empty-state">Resolving the pinned runtime…</div>}
+                {!participantLoading && participants.length === 0 && !participantError && (
+                  <div className="empty-state">No executable participants are available for this workspace revision.</div>
+                )}
+                <div className="record-list">
+                  {participants.map(participant => {
+                    const observed = availability[participant.participant_id];
+                    return <article className="record-card" key={participant.participant_id}>
+                      <div className="record-top">
+                        <span className="record-category">{participant.participant_type}</span>
+                        <span>{participant.availability}</span>
+                        <span>{participant.execution_location}</span>
+                      </div>
+                      <p><strong>{participant.display_name}</strong></p>
+                      <div className="record-bottom">
+                        <small>{participant.adapter_id} v{participant.adapter_contract_version} · {participant.adapter_implementation_version}</small>
+                        <small>Capabilities: {participant.capabilities.join(", ") || "None declared"}</small>
+                        <small>Component: {participant.component_key} v{participant.component_version}</small>
+                        <small>Revision: {participant.configuration_revision_id}</small>
+                      </div>
+                      {participant.adapter_id === "openai_compatible_chat" && (
+                        <div className="inline-actions">
+                          <button className="quiet-button" disabled={availabilityLoadingId !== null} onClick={() => void checkParticipantAvailability(participant.participant_id)}>
+                            {availabilityLoadingId === participant.participant_id ? "Checking…" : "Check metadata availability"}
+                          </button>
+                        </div>
+                      )}
+                      {observed && (
+                        <div className="record-bottom">
+                          <small>Participant availability: {observed.availability} · metadata: {observed.metadata_preflight || observed.probe_kind}</small>
+                          <small>Transport reachable: {observed.transport_reachable === null ? "unknown" : observed.transport_reachable ? "yes" : "no"} · model advertised: {observed.model_advertised === null ? "unknown" : observed.model_advertised ? "yes" : "no"}</small>
+                          <small>Completion verified: {observed.completion_verified === null ? "not tested" : observed.completion_verified ? "yes" : "no"} · observation: {date(observed.observed_at_utc)}</small>
+                          <small>This metadata-only result is ephemeral and does not prove a completion will succeed.</small>
+                        </div>
+                      )}
+                    </article>;
+                  })}
+                </div>
               </section>
             </>
           ) : (

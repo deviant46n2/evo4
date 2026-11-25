@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization/admission/lifecycle is implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests), with formal acceptance pending. P3.6 and P3.7 remain outstanding. Dispatch remains disabled by default.
+**Status (2026-11-25):** P3.1–P3.5 and P3-R4 accepted. P3.5 was formally accepted at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests) and merged through PR #3 at `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 read-only API/configuration inspection is in progress; P3.7 remains outstanding. Dispatch remains disabled by default.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
@@ -235,3 +235,10 @@ Independent detached-worktree validation:
 - Original checkout remained unchanged at `local-demo-ready-v1` / `a8ab59324caceab5b6fb2e5c674276c5ba96d072`; 32 pre-existing worktrees were restored.
 
 This is evidence of implementation and independent validation, not a formal acceptance decision. No live provider calls occurred and dispatch remains disabled by default. P3.6 read-only API/configuration inspection and P3.7 independent Phase 3 review remain.
+
+
+## P3.5 formal acceptance and P3.6 implementation checkpoint (2026-11-25)
+
+P3.5 is formally accepted by the user at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28`. Independent validation reported 916/916 full-suite tests passing, 117/117 focused tests passing, compileall and diff-check clean, and no security/integration findings. PR #3 merged the accepted work into `agent-lifecycle-reconciliation-v1` at `ab01f90547c435ed158dc914583dbb21485e221f`. No live provider calls were performed; dispatch remains disabled by default.
+
+P3.6 backend inspection work is in progress on `agent-p36-participant-inspection-v1`. The new participant-list endpoint exposes only non-secret descriptor fields from the freshly rebuilt exact-revision runtime. The availability endpoint performs only bounded metadata preflight for model participants and reports transport reachability/model advertisement separately from completion availability. A positive model-list response deliberately leaves completion availability unknown; only the separately admitted completion probe can verify it. The endpoint is ephemeral and does not persist evidence, create invocation state, acquire a dispatch lease, or invoke completion. API regression tests were added. The Workspace Registry UI now renders the pinned participant descriptors and exposes an explicit metadata-preflight action, with stale-response protection. These changes have not yet been independently validated; formal P3.6 acceptance remains outstanding.

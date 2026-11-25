@@ -302,6 +302,123 @@ def create_app(config_path="config.toml", provider_name=None):
             "provider_approval_status": approval.status if approval is not None else "unknown",
         }
 
+    @app.get("/api/v1/workspaces/{workspace_id}/participants")
+    def workspace_participants(workspace_id: str):
+        """List the non-secret participant contracts bound to this exact workspace revision."""
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        participants = []
+        for descriptor in runtime.participants:
+            participants.append({
+                "participant_id": descriptor.participant_id,
+                "integration_id": descriptor.integration_id,
+                "participant_type": descriptor.participant_type,
+                "display_name": descriptor.display_name,
+                "adapter_id": descriptor.adapter_id,
+                "adapter_contract_version": descriptor.adapter_contract_version,
+                "adapter_implementation_version": descriptor.adapter_implementation_version,
+                "capabilities": list(descriptor.capabilities),
+                "input_contract_versions": list(descriptor.input_contract_versions),
+                "output_contract_versions": list(descriptor.output_contract_versions),
+                "execution_location": descriptor.execution_location,
+                "availability": descriptor.availability,
+                "availability_observed_at": descriptor.availability_observed_at,
+                "resource_requirements": dict(descriptor.resource_requirements),
+                "limits": dict(descriptor.limits),
+                "configuration_id": descriptor.configuration_id,
+                "configuration_revision_id": descriptor.configuration_revision_id,
+                "component_key": descriptor.component_key,
+                "component_version": descriptor.component_version,
+                "compliance_reference": descriptor.compliance_reference,
+            })
+        return {
+            "workspace_id": runtime.workspace_id,
+            "project_id": runtime.project_id,
+            "configuration_id": runtime.configuration_id,
+            "configuration_revision_id": runtime.revision_id,
+            "revision_hash": runtime.revision_hash,
+            "dispatch_enabled": runtime.dispatch_enabled,
+            "participants": participants,
+        }
+
+    @app.get("/api/v1/workspaces/{workspace_id}/participants/{participant_id}/availability")
+    def workspace_participant_availability(
+        workspace_id: str, participant_id: str, timeout_seconds: int = 3,
+    ):
+        """Perform bounded, ephemeral metadata preflight; never issue a completion."""
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 10:
+            raise HTTPException(status_code=422, detail="timeout_seconds must be between 1 and 10")
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        descriptor = next(
+            (item for item in runtime.participants if item.participant_id == participant_id),
+            None,
+        )
+        if descriptor is None:
+            raise HTTPException(status_code=404, detail="participant is not bound to this workspace revision")
+        bindings = {
+            getattr(bound, "participant_id", None): (adapter, bound)
+            for adapter, bound in runtime.participant_bindings
+        }
+        binding = bindings.get(participant_id)
+        if binding is None:
+            raise HTTPException(status_code=409, detail="participant binding is unavailable")
+        adapter, bound = binding
+        if descriptor.adapter_id == "evo_deterministic_verifier":
+            # This adapter is local code, not a remote service. Its presence in
+            # the freshly built immutable runtime is the only availability check.
+            return {
+                "workspace_id": runtime.workspace_id,
+                "participant_id": participant_id,
+                "availability": "available",
+                "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "probe_kind": "local_binding",
+                "probe_performed": False,
+                "transport_reachable": None,
+                "model_advertised": None,
+                "completion_verified": None,
+                "ephemeral": True,
+            }
+        preflight = getattr(adapter, "preflight", None)
+        if not callable(preflight):
+            raise HTTPException(status_code=501, detail="participant adapter has no metadata preflight")
+        try:
+            evidence = preflight(bound, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            # Do not return provider exception text, which may contain endpoint
+            # details or other integration diagnostics.
+            raise HTTPException(status_code=502, detail="participant metadata preflight failed safely") from exc
+        # A metadata-only model-list response cannot establish that a
+        # completion will succeed. Keep the participant unavailable when the
+        # endpoint/model is explicitly absent; otherwise completion availability
+        # remains unknown until a separately admitted operator probe verifies it.
+        state = (
+            "unavailable"
+            if evidence.transport_reachable is False or evidence.model_advertised is False
+            else "unknown"
+        )
+        return {
+            "workspace_id": runtime.workspace_id,
+            "participant_id": participant_id,
+            "availability": state,
+            "metadata_preflight": (
+                "model_advertised"
+                if evidence.transport_reachable is True and evidence.model_advertised is True
+                else "not_advertised"
+                if evidence.model_advertised is False
+                else "reachable_unverified"
+                if evidence.transport_reachable is True
+                else "unknown"
+            ),
+            "transport_reachable": evidence.transport_reachable,
+            "model_advertised": evidence.model_advertised,
+            "completion_verified": None,
+            "observed_at_utc": evidence.observed_at_utc,
+            "evidence_reference": evidence.evidence_reference,
+            "probe_kind": "metadata_only",
+            "probe_performed": True,
+            "timeout_seconds": timeout_seconds,
+            "ephemeral": True,
+        }
+
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 

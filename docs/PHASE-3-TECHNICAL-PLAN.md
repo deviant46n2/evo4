@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization, budgets, durable admission, and invocation lifecycle are implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests); formal acceptance remains pending. P3.6 API/configuration inspection and P3.7 independent review/Phase 3 acceptance remain outstanding. `dispatch.enabled` remains false by default.
+**Status (2026-11-25):** P3.1–P3.5 and P3-R4 accepted. P3.5 was formally accepted at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests) and merged through PR #3 at `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 read-only API/configuration inspection is in progress; P3.7 independent review/Phase 3 acceptance remains outstanding. `dispatch.enabled` remains false by default.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -358,12 +358,21 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 **Exit:** no adapter can be invoked without an auditable authorization and admission decision; concurrent dispatch cannot bypass configured local/provider limits.
 
 ### P3.6 — API and configuration integration
-- Expose read-only participant/binding/availability inspection first.
-- Add explicit, permission-checked invocation only when the backend boundary is complete.
-- Keep UI changes minimal: make binding and availability errors inspectable; do not start the full Cyberdeck redesign.
-- Ensure backend APIs, not frontend state, enforce authorization.
+- Expose read-only participant/binding/availability inspection first. The initial API surface is:
+  - `GET /api/v1/workspaces/{workspace_id}/runtime-binding` for the existing secret-safe binding diagnostic;
+  - `GET /api/v1/workspaces/{workspace_id}/participants` for non-secret descriptors bound to the exact immutable workspace revision;
+  - `GET /api/v1/workspaces/{workspace_id}/participants/{participant_id}/availability` for bounded, ephemeral adapter preflight.
+- Participant IDs must be resolved from the freshly rebuilt workspace runtime. Arbitrary IDs, stale workspace bindings, and unknown participants are rejected.
+- OpenAI-compatible metadata preflight is limited to the adapter's bounded model-list request (1–10 seconds). It distinguishes transport reachability from model advertisement. A reachable endpoint advertising the configured model still leaves completion availability **unknown**; only the separately authorized, budgeted completion probe can verify completion capability.
+- The read-only availability route must never call `probe_completion`, create an invocation, acquire a dispatch lease, mutate compliance/availability state, or persist probe evidence. Its result is explicitly ephemeral.
+- A local deterministic verifier may report that its code-owned local binding is present; this is not evidence of model completion or provider availability.
+- Return only allowlisted descriptor/evidence fields. Never expose endpoint credentials, resolved secrets, raw provider exception text, or arbitrary configuration payloads.
+- Keep explicit participant invocation behind the P3.5 dispatch boundary. P3.6 inspection does not grant authority or enable dispatch.
+- Keep UI changes minimal: make binding and availability states inspectable; do not start the full Cyberdeck redesign. Ensure backend APIs, not frontend state, enforce authorization.
 
-**Exit:** API tests prove equivalent enforcement and no secret leakage; frontend can inspect real participant/configuration status without inventing runtime state.
+**Current implementation slice:** backend read-only participant listing and metadata-only preflight routes have been added with focused API regression tests. The Workspace Registry now displays exact-revision participant descriptors and offers an explicit user-triggered metadata preflight, with stale-response guards. Independent validation and formal P3.6 acceptance remain outstanding.
+
+**Exit:** API tests prove exact-revision binding, participant-ID scoping, bounded preflight, no completion-probe/dispatch side effects, and no secret leakage; frontend can inspect real participant/configuration status without inventing runtime state.
 
 ### P3.7 — Independent review and Phase 3 acceptance
 - Run migration tests, full Python suite, compile checks, frontend build, and diff checks.
@@ -371,7 +380,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.4 and P3-R4 are accepted; P3.5 implementation and remaining Phase 3 criteria are still outstanding. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.5 and P3-R4 are accepted; P3.6 implementation/validation and independent review remain outstanding. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
@@ -463,4 +472,4 @@ P3.5 implementation candidate `922051067fa41ecd75038714aafe96e514333f28` on `age
 - Prior findings on daily request accounting and test setup were corrected and revalidated.
 - Original checkout and all 32 pre-existing worktrees were preserved.
 
-**Disposition: IMPLEMENTED; INDEPENDENT VALIDATION PASS; FORMAL ACCEPTANCE PENDING.** No live provider calls were made. Dispatch remains disabled by default. P3.6 and P3.7 are not complete.
+**Disposition: ACCEPTED — 2026-11-25.** The user formally accepted P3.5 at exact validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28`. Independent detached-worktree validation reported compileall exit 0, focused suite 117/117, full suite 916/916 with zero failures/errors/skips, diff-check exit 0, and no security/integration findings. No live provider calls were made; dispatch remains disabled by default. The accepted branch was merged through PR #3 into `agent-lifecycle-reconciliation-v1` at merge commit `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 and P3.7 remain outstanding.
