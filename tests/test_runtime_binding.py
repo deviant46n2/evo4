@@ -133,7 +133,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(runtime.bound_participant.model, "model-a")
         self.assertEqual(runtime.bound_participant.max_output_tokens, 777)
         self.assertEqual(runtime.bound_participant.temperature, 0.35)
-        self.assertIsInstance(runtime.bound_participant.provider.transport, PinnedProviderTransport)
+        self.assertIsInstance(runtime.participant_adapter._provider_for(runtime.bound_participant).transport, PinnedProviderTransport)
         self.assertEqual(runtime.effective_allowed_commands, (("python", "-m", "unittest"),))
 
     def test_global_model_changes_do_not_change_bound_runtime(self):
@@ -214,7 +214,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
             runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"],
                                               provider_factory=FakeProvider)
             self.assertEqual(runtime.assistant.provider.api_key, "runtime-secret-value")
-            self.assertEqual(runtime.bound_participant.provider.api_key, "runtime-secret-value")
+            self.assertEqual(runtime.participant_adapter._provider_for(runtime.bound_participant).api_key, "runtime-secret-value")
             self.assertNotIn("runtime-secret-value", repr(runtime.bound_participant))
             self.assertNotIn("runtime-secret-value", repr(runtime.provenance))
             self.assertNotIn("runtime-secret-value", repr(runtime.participant))
