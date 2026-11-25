@@ -357,9 +357,7 @@ def step_verification_status(step):
     checks = step.get("verification_checks") or []
     persisted = step.get("verification_status")
     if not commands:
-        if persisted == "not_required":
-            return "not_required"
-        if persisted in {"failed", "not_run"}:
+        if persisted in {"passed", "not_required", "failed", "not_run"}:
             return persisted
         return "not_configured"
     if not checks:
