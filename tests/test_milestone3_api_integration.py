@@ -434,7 +434,7 @@ class BackgroundRunMalformedTests(unittest.TestCase):
         self.directory = self.root / "checkout"
         self.directory.mkdir()
         self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
-        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        cfg = create_configuration(self.store, schema2_workspace_definition(), name="cfg")
         self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
                                          cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
                                          checkout_id=self.checkout["checkout_id"])
@@ -511,11 +511,13 @@ class BackgroundRunMalformedTests(unittest.TestCase):
         self.assertEqual(run["status"], "failed")
         self.assertFalse(created["called"])
 
-    def test_valid_metadata_passes(self):
+    def test_valid_metadata_reaches_disabled_dispatch_gate(self):
         import json
         run_id, created = self._run_with_metadata(json.dumps({"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}))
         run = self.store.get_agent_run(run_id)
-        self.assertTrue(created["called"])
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+        self.assertIn("dispatchable", run["summary"] or "")
 
 
 
