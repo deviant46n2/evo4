@@ -200,6 +200,7 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             model_component,
             {"participant_id": participant_id},
             secret_values=secret_values,
+            assistant_settings=assistant_settings,
         )
         # User-authored persona guidance is explicitly delimited as untrusted
         # behavior guidance. It cannot replace the operator's global policy.
