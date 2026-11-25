@@ -208,11 +208,13 @@ class CommandPolicyVerificationTests(unittest.TestCase):
         return self
 
     def tearDown(self):
-        self.app.state.execution_executor.shutdown(wait=True, cancel_futures=False)
-        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
-        self.app.state.assistant.close()
-        self.app.state.lab_db.close()
-        self.temp.cleanup()
+        if hasattr(self, "app"):
+            self.app.state.execution_executor.shutdown(wait=True, cancel_futures=False)
+            self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+            self.app.state.assistant.close()
+            self.app.state.lab_db.close()
+        if hasattr(self, "temp"):
+            self.temp.cleanup()
 
     def test_missing_project_policy_denies_command(self):
         self._make_app([["python", "-c"]], {})
