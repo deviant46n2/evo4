@@ -364,3 +364,22 @@ None. Residual limitations for accepted priorities are documented in `docs/GEMIN
 ### False positives
 - Evaluation false positive: disproved by `evaluate_task`.
 - Unbudgeted context: disproved by `_fit_context`.
+
+
+### P3.3 OpenAI-compatible participant adapter — ACCEPTED (2026-11-25)
+
+**Disposition: ACCEPTED at candidate `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`.** Independent detached-worktree validation verified the exact SHA, its parent `9227983befe938b9bd605acd9f54400861869def`, and cumulative base `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Acceptance evidence supplied by the independent local validator:
+- `python -m compileall -q src tests`: exit 0.
+- Focused adapter, endpoint, provider/runtime/workspace/API/contract tests: 148 passed, zero failures/errors.
+- `python -m unittest discover -s tests -v`: 863 passed, zero failures/errors/skips.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD`: exit 0, no findings.
+- The CRLF regression test contains actual CR/LF control characters; injection is rejected and ordinary JSON content type is accepted. Worker start ordering, pre-cancel behavior, cancellation event suppression, timeout bounds, and complete provenance fixtures were verified.
+- Security review confirmed pinned Registry transport, TLS/peer/origin/DNS/redirect/proxy protections, bounded parsing and timeouts, secret non-disclosure, no Registry provider-factory injection, and no network activity during runtime construction.
+- No API or worker path reaches live provider dispatch. No live provider calls were made.
+- Original checkout remains `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees preserved.
+
+GPT-6 reviewed the cumulative change inventory and the current adapter/transport sources. The two defects found by the first independent validation (literal CR/LF validation and worker start after generator yield), plus the incomplete test fixtures, were corrected. The follow-up regression-test literal defect and whitespace finding were also corrected before this clean validation. No remaining P3.3 acceptance finding is recorded.
+
+Acceptance is limited to P3.3 adapter implementation and its tested security/contract behavior. It does not accept P3.2 formally, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`. P3-R4 remains open and must be resolved before finalizing P3.5 admission. P3.5 remains the first milestone permitted to enable live dispatch.
