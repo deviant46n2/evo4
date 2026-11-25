@@ -48,7 +48,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     secrets = raw.get("secrets", {})
     dispatch = raw.get("dispatch", {})
     if not isinstance(dispatch, dict) or set(dispatch) - {"enabled", "provider_budgets", "local_resource_profiles"}:
-        raise ValueError("dispatch must contain only provider_budgets and local_resource_profiles")
+        raise ValueError("dispatch must contain only enabled, provider_budgets, and local_resource_profiles")
     if not isinstance(security, dict) or set(security) - {"allowed_provider_origins"}:
         raise ValueError("security must contain only allowed_provider_origins")
     if not isinstance(secrets, dict) or set(secrets) - {"allowed_env_vars"}:
