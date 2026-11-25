@@ -96,7 +96,7 @@ class PinnedProviderTransportTests(unittest.TestCase):
 
     def test_request_headers_reject_actual_crlf_injection(self):
         transport = PinnedProviderTransport(EndpointPolicy(), resolver=self._local_resolver)
-        for header_value in ("application/json\\r\\nInjected: yes", "application/json\\nInjected: yes"):
+        for header_value in ("application/json\r\nInjected: yes", "application/json\nInjected: yes"):
             with self.subTest(header_value=header_value):
                 with self.assertRaises(ProviderEndpointError):
                     with transport.open_response(
