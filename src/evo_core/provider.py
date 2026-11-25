@@ -125,7 +125,8 @@ class OpenAICompatibleProvider:
         return text[:500]
 
     def list_models(self, *, timeout_seconds=None):
-        request = urllib.request.Request(self.base_url + "/v1/models",
+        model_url = self.base_url + ("/models" if self.transport is not None else "/v1/models")
+        request = urllib.request.Request(model_url,
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"})
         try:
             with self._open_response(request, "GET", "/models", min(self.timeout, 10) if timeout_seconds is None else min(self.timeout, timeout_seconds, 10)) as response:
@@ -161,7 +162,10 @@ class OpenAICompatibleProvider:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        request = urllib.request.Request(self.base_url + "/v1/chat/completions",
+        completion_url = self.base_url + (
+            "/chat/completions" if self.transport is not None else "/v1/chat/completions"
+        )
+        request = urllib.request.Request(completion_url,
             data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type":"application/json","Authorization":f"Bearer {self.api_key}"},
             method="POST")
