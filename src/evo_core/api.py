@@ -270,6 +270,7 @@ def create_app(config_path="config.toml", provider_name=None):
         """Expose only non-secret runtime identity needed for operator policy setup."""
         runtime = _build_workspace_runtime_for_request(workspace_id)
         from .provider_endpoint import normalize_provider_origin
+        from .provider_approvals import find_provider_approval
         origin = normalize_provider_origin(
             f"{urlsplit(runtime.bound_participant.endpoint).scheme}://"
             f"{urlsplit(runtime.bound_participant.endpoint).netloc}"
