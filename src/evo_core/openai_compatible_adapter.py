@@ -43,6 +43,12 @@ class ParticipantDispatchDisabledError(ParticipantAdapterError):
 @dataclass(frozen=True)
 class BoundOpenAICompatibleParticipant:
     participant_id: str
+    project_id: str
+    workspace_id: str
+    configuration_id: str
+    configuration_revision_id: str
+    component_key: str
+    component_version: int
     endpoint: str
     model: str
     timeout_seconds: int
@@ -154,9 +160,18 @@ class OpenAICompatibleParticipantAdapter:
         self.validate_component(component)
         if not isinstance(provenance, Mapping):
             raise ParticipantAdapterError("participant provenance is required")
+        required_provenance = (
+            "participant_id", "project_id", "workspace_id", "configuration_id",
+            "configuration_revision_id", "component_key", "component_version",
+        )
+        if any(key not in provenance for key in required_provenance):
+            raise ParticipantAdapterError("complete participant provenance is required")
         participant_id = provenance.get("participant_id")
-        if not isinstance(participant_id, str) or not participant_id:
-            raise ParticipantAdapterError("participant identity is required")
+        if any(not isinstance(provenance.get(key), str) or not provenance.get(key) for key in required_provenance[:-1]):
+            raise ParticipantAdapterError("participant provenance identity is invalid")
+        component_version = provenance.get("component_version")
+        if isinstance(component_version, bool) or not isinstance(component_version, int) or component_version != 1:
+            raise ParticipantAdapterError("participant component version is invalid")
         secrets = secret_values or {}
         if not isinstance(secrets, Mapping) or set(secrets) - {"api_key"}:
             raise ParticipantAdapterError("resolved provider secret material is invalid")
@@ -188,6 +203,12 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("provider participant could not be constructed") from exc
         return BoundOpenAICompatibleParticipant(
             participant_id=participant_id,
+            project_id=provenance["project_id"],
+            workspace_id=provenance["workspace_id"],
+            configuration_id=provenance["configuration_id"],
+            configuration_revision_id=provenance["configuration_revision_id"],
+            component_key=provenance["component_key"],
+            component_version=component_version,
             endpoint=settings["endpoint"],
             model=settings["model"],
             timeout_seconds=settings["timeout_seconds"],
@@ -281,6 +302,12 @@ class OpenAICompatibleParticipantAdapter:
             envelope.participant_id != participant.participant_id
             or envelope.adapter_id != self.adapter_id
             or envelope.adapter_contract_version != self.contract_version
+            or envelope.project_id != participant.project_id
+            or envelope.workspace_id != participant.workspace_id
+            or envelope.configuration_id != participant.configuration_id
+            or envelope.configuration_revision_id != participant.configuration_revision_id
+            or envelope.component_key != participant.component_key
+            or envelope.component_version != participant.component_version
         ):
             raise ParticipantAdapterError("invocation identity does not match the bound participant")
         if not isinstance(envelope.deadline_utc, str) or not envelope.deadline_utc:
