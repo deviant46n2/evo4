@@ -1477,6 +1477,14 @@ def create_app(config_path="config.toml", provider_name=None):
             validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if validated_workspace_id is not None and payload.conversation_id is not None:
+            with locks_guard:
+                if store.get_conversation(
+                    payload.conversation_id,
+                    project_id=validated_project_id,
+                    workspace_id=validated_workspace_id,
+                ) is None:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
         runtime = None
         invocation_id = None
         if validated_workspace_id is not None:
