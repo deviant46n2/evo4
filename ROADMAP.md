@@ -219,11 +219,11 @@ Command policy is settled: effective permissions are the intersection of global 
 **Phase 3 — Participant contracts and runtime binding**
 **Phase 3 implementation status (2026-11-25; updated after P3.3 acceptance):**
 - P3.1 executable configuration/contract foundations: accepted.
-- P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: implementation complete and independently validated at 843 passing tests; formal phase acceptance remains pending. The one documentation whitespace finding was corrected in commit 11b173d7d7405c80f1ec6c5acb9087b5e1382646.
+- P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: **accepted**. Exact implementation validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; 843 tests passed, compileall passed, and the only documentation whitespace finding was corrected in `11b173d7d7405c80f1ec6c5acb9087b5e1382646`. Later cumulative P3.3/P3.4/P3-R4 validations also passed.
 - P3.3 OpenAI-compatible participant adapter: accepted at exact candidate 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; independent validation passed 863/863 tests, compileall, and cumulative diff-check. Formal evidence is recorded below.
 - P3.4 deterministic verifier: implementation in progress. A bounded local-only verifier adapter is being integrated into revision-pinned Registry runtime construction; independent validation and acceptance are pending.
 - P3.5 remains the first milestone permitted to enable live Registry-bound dispatch. No production dispatch authorizer is installed; no live provider dispatch or external provider calls are enabled.
-- P3-R4 remains open and must be resolved before finalizing P3.5 resource admission.
+- P3-R4 resource-admission design and telemetry freshness: accepted as the P3.5 design prerequisite; implementation belongs to P3.5.
 
 - Runnable AI Configuration components use an explicit, versioned typed schema; legacy opaque schema-version 1 definitions remain readable but are not executable by default. Existing schema-1 workspaces require explicit migration preview, a new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 - The first runtime integration proves that the exact immutable workspace-pinned configuration revision constructs and controls the complete assistant runtime for every workspace-bound entrypoint: chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution. Creating a newer configuration revision does not invalidate an older revision already pinned by a workspace. The global TOML assistant remains a separate legacy path only for callers without a Registry-bound workspace; no silent fallback is permitted.
@@ -309,7 +309,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant adapter is accepted at 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; P3.4 deterministic verifier is accepted at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574`. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission. P3-R4's resource-semantics design passed independent challenge with findings incorporated; telemetry completion-timestamp correction and tests are committed pending local validation. P3.5 admission and dispatch remain unimplemented. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are accepted at validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; P3.3 participant adapter is accepted at `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; P3.4 deterministic verifier is accepted at `ad04198b95708df58aae1ff07e0b38380671b574`. P3-R4 resource-admission design and telemetry freshness are accepted at `85b9f933a32dc45b72492dfee136edaad5c882fd`. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission. P3.5 admission and dispatch remain unimplemented. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
@@ -383,7 +383,7 @@ Acceptance evidence supplied by the independent local validator:
 
 GPT-6 reviewed the cumulative change inventory and the current adapter/transport sources. The two defects found by the first independent validation (literal CR/LF validation and worker start after generator yield), plus the incomplete test fixtures, were corrected. The follow-up regression-test literal defect and whitespace finding were also corrected before this clean validation. No remaining P3.3 acceptance finding is recorded.
 
-Acceptance is limited to P3.3 adapter implementation and its tested security/contract behavior. It does not accept P3.2 formally, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`. P3-R4 remains open and must be resolved before finalizing P3.5 admission. P3.5 remains the first milestone permitted to enable live dispatch.
+Acceptance is limited to P3.3 adapter implementation and its tested security/contract behavior. P3.2 and P3-R4 are separately accepted. P3.5 remains the first milestone permitted to enable live dispatch; no live dispatch or external provider calls are enabled.
 
 
 ### P3.4 deterministic verifier — formal acceptance (2026-11-25)
@@ -398,10 +398,10 @@ Independent detached-worktree validation of the exact accepted SHA reported:
 - `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD` and `git diff --check 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1..HEAD`: both exit 0.
 - The final semantic correction was verified: the deterministic verifier's local completion self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`.
 - Source review confirmed bounded local JSON validation, shape-only evidence references (maximum 128 valid references), no reference resolution or truth claims, no shell/network/secret capability, immutable revision-specific binding, and no production invocation authorizer. Invocation fails closed without authorization; workspace configurations without a verifier remain compatible.
-- No API or worker route can invoke either participant before P3.5. P3-R4 remains open. No live provider calls or dispatch were enabled.
+- No API or worker route can invoke either participant before P3.5. P3-R4 design is accepted; P3.5 implementation remains outstanding. No live provider calls or dispatch were enabled.
 - The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, with identical status; all 32 pre-existing worktrees were preserved. No tests were weakened or removed.
 
-Acceptance is limited to P3.4's deterministic verifier implementation, exact-revision runtime binding, and the tested inert/fail-closed behavior. It does not formally accept P3.2, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`.
+Acceptance is limited to P3.4's deterministic verifier implementation, exact-revision runtime binding, and the tested inert/fail-closed behavior. P3.2 and P3-R4 are separately accepted. P3.5 remains the first milestone permitted to enable live dispatch; no external provider calls are enabled.
 
 
 ### P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
@@ -422,4 +422,13 @@ Independent detached-worktree validation of the exact SHA reported:
 
 The initial independent challenge findings were addressed: timestamp completion semantics, CPU-utilization pressure handling, reserve/thermal scaling caveats, residency-attestation risk, unsupported GPU behavior, CPU-count unknown handling, adapter contract versioning, and scheduler separation are documented in the accepted contract. The first telemetry test's impossible assertion and a documentation whitespace issue were corrected; the final exact-SHA validation reports no findings.
 
-Acceptance closes P3-R4's resource-admission design and telemetry-freshness prerequisite for P3.5 planning. It does **not** implement or accept P3.5, authorize live dispatch/provider calls, formally accept P3.2, or authorize merging into `local-demo-ready-v1`. P3.5 remains the first milestone that may enable live dispatch and still requires its authorization, budgets, durable atomic admission, and invocation lifecycle gates.
+Acceptance closes P3-R4's resource-admission design and telemetry-freshness prerequisite for P3.5 planning. It does **not** implement or accept P3.5 or authorize live dispatch/provider calls. P3.5 remains the first milestone that may enable live dispatch and still requires its authorization, budgets, durable atomic admission, and invocation lifecycle gates.
+
+
+## P3.2 Registry-driven runtime binding — formal acceptance
+
+**ACCEPTED — 2026-11-25.** Exact implementation validation target: `7c50ff666b7cd684cf21f373a82badc3dad5627c`; documentation-only whitespace correction: `11b173d7d7405c80f1ec6c5acb9087b5e1382646`.
+
+Independent detached-worktree validation of the exact implementation target: compileall passed; full unittest suite passed (843 tests, zero failures/errors/skips); focused runtime, workspace-boundary, invocation-snapshot, and orchestration tests passed (100 tests). The sole review finding was trailing whitespace in documentation, corrected in the documentation-only follow-up; no application code or tests changed in that cleanup. Subsequent cumulative validation for P3.3 (863 tests), P3.4 (877 tests), and P3-R4 (879 tests) also passed, with cumulative diff checks clean.
+
+Source review found no remaining P3.2 implementation blocker: workspace chat, plan proposal, plan execution, and coding-agent entrypoints create typed invocation snapshots; worker continuity verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert and cannot dispatch to a live provider before P3.5. This acceptance covers P3.2 runtime binding and invocation-snapshot continuity only; it does not implement or accept P3.5, enable live dispatch, or imply that external provider calls occurred.
