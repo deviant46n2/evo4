@@ -196,6 +196,51 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(selected.provenance["secret_reference_names"], ())
         self.assertIsNone(selected.participant_adapter._dispatch_authorizer)
 
+    def test_secondary_model_secret_is_transient_and_provenance_contains_reference_only(self):
+        definition = schema2_definition()
+        definition["components"]["secondary_model"] = {
+            "type": "model",
+            "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {
+                "endpoint": "http://127.0.0.1:18997/v1",
+                "model": "model-b",
+                "timeout_seconds": 45,
+            },
+            "secret_refs": {"api_key": "env:EVO_SECONDARY_MODEL_KEY"},
+        }
+        definition["components"]["assistant_runtime"]["settings"]["additional_model_components"] = [
+            "secondary_model"
+        ]
+        created = create_configuration(self.store, definition, name="secondary secret config")
+        workspace = create_workspace(
+            self.store, "Secondary secret workspace", self.project["project_id"],
+            created["configuration"]["configuration_id"], created["revision"]["revision_id"],
+            checkout_id=self.checkout["checkout_id"],
+        )
+        os.environ["EVO_SECONDARY_MODEL_KEY"] = "secondary-secret-value"
+        try:
+            config = replace(
+                self.base_config, allowed_secret_env_vars=("EVO_SECONDARY_MODEL_KEY",)
+            )
+            runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"])
+            secondary = next(
+                item for item in runtime.participants
+                if item.participant_type == "model" and item.component_key == "secondary_model"
+            )
+            selected = runtime.select_participant(secondary.participant_id)
+            provider = selected.participant_adapter._provider_for(selected.bound_participant)
+            self.assertEqual(provider.api_key, "secondary-secret-value")
+            self.assertEqual(
+                selected.provenance["secret_reference_names"],
+                (("api_key", "env:EVO_SECONDARY_MODEL_KEY"),),
+            )
+            self.assertNotIn("secondary-secret-value", repr(selected.provenance))
+            self.assertNotIn("secondary-secret-value", repr(secondary))
+            self.assertNotIn("secondary-secret-value", repr(selected.bound_participant))
+        finally:
+            os.environ.pop("EVO_SECONDARY_MODEL_KEY", None)
+
     def test_schema_rejects_secondary_model_with_same_integration_as_primary(self):
         definition = schema2_definition()
         definition["components"]["secondary_model"] = copy.deepcopy(
