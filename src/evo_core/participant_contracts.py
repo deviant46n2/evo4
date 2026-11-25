@@ -185,7 +185,7 @@ class ParticipantAdapter(Protocol):
     def bind_component(
         self,
         component: Mapping[str, Any],
-        provenance: Mapping[str, str],
+        provenance: Mapping[str, Any],
         *,
         secret_values: Mapping[str, str] | None = None,
         runtime_settings: Mapping[str, Any] | None = None,
