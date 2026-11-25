@@ -795,39 +795,9 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
 
     def test_approval_cancellation(self):
         import time
-        import threading
         import evo_core.workspace as wsmod
-        from evo_core import lifecycle
+        from evo_core import background_agent, lifecycle
         executed = {"count": 0}
-        worker_decided = threading.Event()
-        original_decide = lifecycle.decide
-        original_get_decision = lifecycle.get_decision
-        decision_reads = {"count": 0}
-        api_thread = {"ident": None}
-
-        def tracked_decide(*args, **kwargs):
-            result = original_decide(*args, **kwargs)
-            if kwargs.get("source") == "worker":
-                worker_decided.set()
-            return result
-
-        def wait_for_worker_decision(*args, **kwargs):
-            current_ident = threading.get_ident()
-            # The synchronous FastAPI endpoint runs in an AnyIO worker thread,
-            # not necessarily the process main thread. Capture its first
-            # decision read, then block its second read until the background
-            # worker has committed its terminal decision.
-            if api_thread["ident"] is None:
-                api_thread["ident"] = current_ident
-            if current_ident == api_thread["ident"]:
-                decision_reads["count"] += 1
-                if decision_reads["count"] == 2:
-                    if not worker_decided.wait(timeout=5):
-                        raise TimeoutError("worker did not persist its terminal decision before API response")
-            return original_get_decision(*args, **kwargs)
-
-        lifecycle.decide = tracked_decide
-        lifecycle.get_decision = wait_for_worker_decision
         original_run = wsmod.Workspace.run
 
         def tracked_run(self, *args, **kwargs):
@@ -863,8 +833,10 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
                                           f"/api/v1/agents/{run_id}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
             self.assertEqual(status, 200)
             self.assertTrue(cancel["cancelled"])
-            self.assertEqual(cancel["status"], "cancelled")
-            self.assertTrue(worker_decided.is_set())
+            # Cancellation is asynchronous while an approval is pending. The
+            # API may report cancel_requested until the worker commits its
+            # terminal decision; the durable task and decision must converge.
+            self.assertIn(cancel["status"], {"cancel_requested", "cancelled"})
             for _ in range(100):
                 status, body = asgi_request(self.app, "GET",
                                             f"/api/v1/agents/{run_id}?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}")
@@ -873,11 +845,15 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertEqual(body["status"], "cancelled")
             self.assertFalse(body.get("pending_approval"))
+            with self.app.state.lab_db.lock:
+                task = background_agent.get(self.app.state.lab_db.connection, run_id)
+                decision = lifecycle.get_decision(self.app.state.lab_db.connection, run_id)
+            self.assertEqual(task["status"], "cancelled")
+            self.assertIsNotNone(decision)
+            self.assertEqual(decision["outcome"], "cancelled")
             self.assertEqual(executed["count"], 0)
         finally:
             wsmod.Workspace.run = original_run
-            lifecycle.decide = original_decide
-            lifecycle.get_decision = original_get_decision
 
     def test_repeated_cancellation(self):
         import threading
