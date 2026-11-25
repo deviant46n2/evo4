@@ -55,6 +55,15 @@ def _canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise HandoffError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
@@ -260,6 +269,30 @@ def initialize_cooperative_handoffs(store):
         db.execute("BEGIN IMMEDIATE")
         try:
             db.execute("""
+                CREATE TABLE IF NOT EXISTS participant_invocation_outputs (
+                    invocation_id TEXT PRIMARY KEY REFERENCES participant_invocations(invocation_id) ON DELETE RESTRICT,
+                    workspace_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    configuration_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    revision_hash TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL,
+                    output_json TEXT NOT NULL,
+                    output_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS participant_outputs_no_update
+                BEFORE UPDATE ON participant_invocation_outputs
+                BEGIN SELECT RAISE(ABORT, 'participant invocation outputs are immutable'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS participant_outputs_no_delete
+                BEFORE DELETE ON participant_invocation_outputs
+                BEGIN SELECT RAISE(ABORT, 'participant invocation outputs cannot be deleted'); END
+            """)
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS cooperative_handoffs (
                     handoff_id TEXT PRIMARY KEY,
                     invocation_id TEXT NOT NULL REFERENCES participant_invocations(invocation_id) ON DELETE RESTRICT,
@@ -269,6 +302,7 @@ def initialize_cooperative_handoffs(store):
                     revision_id TEXT NOT NULL,
                     revision_hash TEXT NOT NULL,
                     snapshot_hash TEXT NOT NULL,
+                    source_output_hash TEXT NOT NULL,
                     task_id TEXT NOT NULL,
                     role TEXT NOT NULL CHECK(role IN ('proposal','critique','synthesis')),
                     source_participant_id TEXT NOT NULL,
@@ -302,6 +336,67 @@ def initialize_cooperative_handoffs(store):
             if db.in_transaction:
                 db.rollback()
             raise
+
+
+def record_participant_output(store, invocation_id, output_json):
+    """Persist a bounded structured-role completion while its dispatch lease is active."""
+    initialize_cooperative_handoffs(store)
+    if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
+        raise HandoffError("invocation_id is invalid")
+    if not isinstance(output_json, str):
+        raise HandoffError("participant output must be JSON text")
+    try:
+        encoded_bytes = output_json.encode("utf-8")
+        output = json.loads(output_json, object_pairs_hook=_unique_pairs)
+    except (UnicodeEncodeError, TypeError, ValueError) as exc:
+        raise HandoffError("participant output is malformed") from exc
+    if len(encoded_bytes) > MAX_HANDOFF_BYTES or not isinstance(output, dict):
+        raise HandoffError("participant output is oversized or not an object")
+    if not isinstance(output.get("content"), str) or output.get("tool_calls") != []:
+        raise HandoffError("structured handoff output must be text-only and contain no tool calls")
+    _text(output["content"], "participant structured output", maximum=MAX_HANDOFF_BYTES)
+    output_hash = sha256(output_json.encode("utf-8")).hexdigest()
+    created_at = utc_now()
+
+    def operation(db):
+        row = db.execute(
+            """SELECT i.*, s.snapshot_hash AS current_snapshot_hash,
+                      s.workspace_id AS snapshot_workspace_id,
+                      s.project_id AS snapshot_project_id,
+                      s.configuration_id AS snapshot_configuration_id,
+                      s.revision_id AS snapshot_revision_id,
+                      s.revision_hash AS snapshot_revision_hash,
+                      l.state AS lease_state
+               FROM participant_invocations i
+               JOIN runtime_invocation_snapshots s ON s.invocation_id=i.invocation_id
+               LEFT JOIN dispatch_leases l ON l.invocation_id=i.invocation_id
+               WHERE i.invocation_id=?""",
+            (invocation_id.strip(),),
+        ).fetchone()
+        if row is None or row["status"] != "running" or row["lease_state"] != "active":
+            raise HandoffError("structured output requires a running invocation with its active lease")
+        if (
+            row["snapshot_hash"] != row["current_snapshot_hash"]
+            or row["workspace_id"] != row["snapshot_workspace_id"]
+            or row["project_id"] != row["snapshot_project_id"]
+            or row["configuration_id"] != row["snapshot_configuration_id"]
+            or row["revision_id"] != row["snapshot_revision_id"]
+            or row["revision_hash"] != row["snapshot_revision_hash"]
+        ):
+            raise HandoffError("structured output invocation does not match its immutable snapshot")
+        db.execute(
+            """INSERT INTO participant_invocation_outputs(
+                invocation_id,workspace_id,project_id,configuration_id,revision_id,
+                revision_hash,snapshot_hash,output_json,output_hash,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (
+                invocation_id.strip(), row["workspace_id"], row["project_id"],
+                row["configuration_id"], row["revision_id"], row["revision_hash"],
+                row["snapshot_hash"], output_json, output_hash, created_at,
+            ),
+        )
+        return {"invocation_id": invocation_id.strip(), "output_hash": output_hash, "created_at": created_at}
+    return workspaces._write(store, operation)
 
 
 def create_handoff(
@@ -364,8 +459,11 @@ def create_handoff(
         snapshot = db.execute(
             "SELECT * FROM runtime_invocation_snapshots WHERE invocation_id=?", (invocation_id,)
         ).fetchone()
-        if invocation is None or snapshot is None:
-            raise HandoffError("handoff source invocation or snapshot is missing")
+        output_record = db.execute(
+            "SELECT * FROM participant_invocation_outputs WHERE invocation_id=?", (invocation_id,)
+        ).fetchone()
+        if invocation is None or snapshot is None or output_record is None:
+            raise HandoffError("handoff source invocation, snapshot, or structured output artifact is missing")
         if invocation["status"] != "succeeded":
             raise HandoffError("handoff source invocation must have succeeded")
         try:
@@ -400,6 +498,29 @@ def create_handoff(
             or snapshot["revision_hash"] != parent.revision_hash
         ):
             raise HandoffError("handoff source invocation does not match the selected pinned runtime")
+        if sha256(output_record["output_json"].encode("utf-8")).hexdigest() != output_record["output_hash"]:
+            raise HandoffError("persisted participant output integrity check failed")
+        if (
+            output_record["snapshot_hash"] != snapshot["snapshot_hash"]
+            or output_record["workspace_id"] != parent.workspace_id
+            or output_record["project_id"] != parent.project_id
+            or output_record["configuration_id"] != parent.configuration_id
+            or output_record["revision_id"] != parent.revision_id
+            or output_record["revision_hash"] != parent.revision_hash
+        ):
+            raise HandoffError("participant output artifact does not match the pinned invocation")
+        try:
+            normalized_output = json.loads(
+                output_record["output_json"], object_pairs_hook=_unique_pairs
+            )
+            model_payload = json.loads(
+                normalized_output["content"], object_pairs_hook=_unique_pairs
+            )
+            model_payload = validate_handoff_payload(role, model_payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HandoffError("participant output does not satisfy the requested handoff contract") from exc
+        if _canonical(model_payload) != _canonical(normalized_payload):
+            raise HandoffError("handoff payload differs from the participant's persisted structured output")
         invocation_deadline = _parse_deadline(invocation["deadline_utc"])
         if deadline > invocation_deadline:
             raise HandoffError("handoff deadline cannot exceed its source invocation deadline")
@@ -420,13 +541,13 @@ def create_handoff(
         db.execute(
             """INSERT INTO cooperative_handoffs(
                 handoff_id,invocation_id,workspace_id,project_id,configuration_id,
-                revision_id,revision_hash,snapshot_hash,task_id,role,
+                revision_id,revision_hash,snapshot_hash,source_output_hash,task_id,role,
                 source_participant_id,target_participant_id,handoff_json,handoff_hash,created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 handoff_id, invocation_id, parent.workspace_id, parent.project_id,
                 parent.configuration_id, parent.revision_id, parent.revision_hash,
-                snapshot["snapshot_hash"], task_id, role, selected.participant.participant_id,
+                snapshot["snapshot_hash"], output_record["output_hash"], task_id, role, selected.participant.participant_id,
                 target_participant_id, encoded, digest, created_at,
             ),
         )
@@ -435,6 +556,7 @@ def create_handoff(
             "workspace_id": parent.workspace_id, "project_id": parent.project_id,
             "configuration_id": parent.configuration_id, "revision_id": parent.revision_id,
             "revision_hash": parent.revision_hash, "snapshot_hash": snapshot["snapshot_hash"],
+            "source_output_hash": output_record["output_hash"],
             "task_id": task_id, "role": role,
             "source_participant_id": selected.participant.participant_id,
             "target_participant_id": target_participant_id,
