@@ -84,6 +84,10 @@ def _strict_json_object(value, label):
 
 
 class OpenAICompatibleParticipantAdapter:
+    __slots__ = (
+        "_endpoint_policy", "_resolver", "_provider_factory",
+        "_dispatch_authorizer", "_providers", "_sealed",
+    )
     adapter_id = "openai_compatible_chat"
     contract_version = 1
 
