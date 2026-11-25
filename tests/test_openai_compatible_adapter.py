@@ -181,6 +181,12 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         self.assertIsNone(evidence.model_advertised)
         self.assertIsNone(evidence.completion_verified)
 
+    def test_adapter_configuration_cannot_be_mutated_after_construction(self):
+        adapter = OpenAICompatibleParticipantAdapter()
+        self.assertFalse(hasattr(adapter, "__dict__"))
+        with self.assertRaises(AttributeError):
+            adapter._dispatch_authorizer = lambda *args: True
+
     def test_dispatch_and_completion_probe_are_disabled_without_p35_authorizer(self):
         adapter = OpenAICompatibleParticipantAdapter(provider_factory=FakeProvider)
         participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
