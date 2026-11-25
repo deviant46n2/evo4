@@ -23,7 +23,7 @@ from .participant_contracts import (
     stable_participant_id,
 )
 from .provider_endpoint import normalize_provider_origin
-from .openai_compatible_adapter import OpenAICompatibleParticipantAdapter
+from .openai_compatible_adapter import OpenAICompatibleParticipantAdapter, ParticipantAdapterError
 from .secret_references import SecretResolutionError, resolve_secret_references
 
 
@@ -272,7 +272,7 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             effective_allowed_commands=effective_commands,
             provenance=provenance,
         )
-    except (ConfigurationValidationError, CommandPolicyError, SecretResolutionError) as exc:
+    except (ConfigurationValidationError, CommandPolicyError, SecretResolutionError, ParticipantAdapterError) as exc:
         raise RuntimeBindingError("workspace configuration cannot be bound to an executable runtime") from exc
     except workspaces.WorkspaceNotFoundError:
         raise
