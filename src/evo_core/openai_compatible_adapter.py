@@ -7,6 +7,7 @@ authorization callback, which is intentionally absent before P3.5.
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import re
 from queue import Empty, Queue
 import threading
 from typing import Any, Mapping
@@ -45,6 +46,8 @@ class BoundOpenAICompatibleParticipant:
     endpoint: str
     model: str
     timeout_seconds: int
+    max_output_tokens: int
+    temperature: float
     provider: OpenAICompatibleProvider = field(repr=False, compare=False)
 
 
@@ -119,10 +122,20 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("model identifier is invalid")
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
             raise ParticipantAdapterError("model timeout is invalid")
+        if component.get("component_version") != 1:
+            raise ParticipantAdapterError("model component version is unsupported")
         if set(component) - {"type", "component_version", "adapter", "settings", "secret_refs"}:
             raise ParticipantAdapterError("model component contains unsupported fields")
         secret_refs = component.get("secret_refs", {})
-        if not isinstance(secret_refs, Mapping) or set(secret_refs) - {"api_key"}:
+        if (
+            not isinstance(secret_refs, Mapping)
+            or set(secret_refs) - {"api_key"}
+            or any(
+                not isinstance(value, str)
+                or re.fullmatch(r"env:[A-Za-z_][A-Za-z0-9_]*", value) is None
+                for value in secret_refs.values()
+            )
+        ):
             raise ParticipantAdapterError("model secret references are unsupported")
         transport = PinnedProviderTransport(self._endpoint_policy, resolver=self._resolver)
         try:
@@ -136,6 +149,7 @@ class OpenAICompatibleParticipantAdapter:
         provenance: Mapping[str, str],
         *,
         secret_values: Mapping[str, str] | None = None,
+        assistant_settings: Mapping[str, Any] | None = None,
     ) -> BoundOpenAICompatibleParticipant:
         self.validate_component(component)
         if not isinstance(provenance, Mapping):
@@ -149,6 +163,20 @@ class OpenAICompatibleParticipantAdapter:
         api_key = secrets.get("api_key", "no-key")
         if not isinstance(api_key, str) or not api_key:
             raise ParticipantAdapterError("resolved provider credential is invalid")
+        if bool(component.get("secret_refs")) != ("api_key" in secrets):
+            raise ParticipantAdapterError("resolved provider credentials do not match declared secret references")
+        generation = assistant_settings or {}
+        max_output_tokens = generation.get("max_output_tokens", 32768)
+        temperature = generation.get("temperature", 0.2)
+        if (
+            isinstance(max_output_tokens, bool)
+            or not isinstance(max_output_tokens, int)
+            or not 1 <= max_output_tokens <= 32768
+            or isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not 0 <= temperature <= 2
+        ):
+            raise ParticipantAdapterError("assistant generation settings are invalid")
         settings = component["settings"]
         transport = PinnedProviderTransport(self._endpoint_policy, resolver=self._resolver)
         try:
@@ -163,6 +191,8 @@ class OpenAICompatibleParticipantAdapter:
             endpoint=settings["endpoint"],
             model=settings["model"],
             timeout_seconds=settings["timeout_seconds"],
+            max_output_tokens=max_output_tokens,
+            temperature=float(temperature),
             provider=provider,
         )
 
@@ -210,10 +240,10 @@ class OpenAICompatibleParticipantAdapter:
         timeout_seconds: int,
     ) -> AvailabilityEvidence:
         """Completion probes are billable invocations and remain P3.5-gated."""
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 30:
+            raise ValueError("completion probe timeout must be between 1 and 30 seconds")
         self._authorize("availability_probe", participant, None)
         timeout = min(participant.timeout_seconds, timeout_seconds)
-        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 30:
-            raise ValueError("completion probe timeout must be between 1 and 30 seconds")
         try:
             result = participant.provider.chat(
                 [{"role": "user", "content": "Reply with OK."}],
@@ -279,10 +309,18 @@ class OpenAICompatibleParticipantAdapter:
                 or not isinstance(message.get("content", ""), (str, list, type(None)))
             ):
                 raise ParticipantAdapterError("invocation message shape is invalid")
-        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 32768:
-            raise ParticipantAdapterError("invocation output token limit is invalid")
-        if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
-            raise ParticipantAdapterError("invocation temperature is invalid")
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or not 1 <= max_tokens <= participant.max_output_tokens
+        ):
+            raise ParticipantAdapterError("invocation output token limit exceeds the pinned assistant runtime")
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or float(temperature) != participant.temperature
+        ):
+            raise ParticipantAdapterError("invocation temperature differs from the pinned assistant runtime")
         tools = request.get("tools")
         if tools is not None and (not isinstance(tools, list) or len(tools) > 128):
             raise ParticipantAdapterError("invocation tools are invalid")
