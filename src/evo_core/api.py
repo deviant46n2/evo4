@@ -243,10 +243,6 @@ def create_app(config_path="config.toml", provider_name=None):
         except (RuntimeBindingError, workspace_registry.WorkspaceValidationError,
                 workspace_registry.WorkspaceRelationshipError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        try:
-            runtime.require_dispatch_enabled()
-        except RegistryDispatchDisabledError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
         return runtime
 
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
@@ -881,6 +877,7 @@ def create_app(config_path="config.toml", provider_name=None):
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
         runtime = _build_workspace_runtime_for_request(workspace_id)
+        runtime.require_dispatch_enabled()
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
@@ -959,6 +956,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
         runtime = _build_workspace_runtime_for_request(workspace_id)
+        runtime.require_dispatch_enabled()
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
         plan_project_id = plan.get("project_id")
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
@@ -1028,6 +1026,7 @@ def create_app(config_path="config.toml", provider_name=None):
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
         runtime = _build_workspace_runtime_for_request(workspace_id)
+        runtime.require_dispatch_enabled()
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
@@ -1445,8 +1444,11 @@ def create_app(config_path="config.toml", provider_name=None):
             validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        runtime = None
         if validated_workspace_id is not None:
-            _build_workspace_runtime_for_request(validated_workspace_id)
+            runtime = _build_workspace_runtime_for_request(validated_workspace_id)
+            runtime.require_dispatch_enabled()
+        turn_assistant = runtime.assistant if runtime is not None else assistant
 
         conversation_id = payload.conversation_id
         if conversation_id is None:
@@ -1493,7 +1495,7 @@ def create_app(config_path="config.toml", provider_name=None):
                     with reservation["lock"]:
                         if shutting_down.is_set():
                             raise RuntimeError("Evo is shutting down")
-                        result = assistant.turn(
+                        result = turn_assistant.turn(
                             conversation_id, text,
                             on_token=lambda token: publish(
                                 {"event": "token", "data": token}
