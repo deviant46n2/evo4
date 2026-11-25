@@ -314,8 +314,17 @@ class EvoAssistant:
         user_metadata = {"runtime_invocation_id": invocation_id} if invocation_id else None
         self.store.add_message(conversation_id,"user",user_text,metadata=user_metadata,project_id=project_id,workspace_id=workspace_id)
         self._capture_memory_candidate(conversation_id,user_text)
-        result = self.provider.chat(messages,max_tokens=self.config.max_tokens,
-                                    temperature=self.config.temperature,on_token=on_token)
+        if getattr(self.provider, "dispatch_enabled", False):
+            result = self.provider.chat(
+                messages, max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature, on_token=on_token,
+                parent_task_id=invocation_id, task_role="assistant_chat",
+            )
+        else:
+            result = self.provider.chat(
+                messages, max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature, on_token=on_token,
+            )
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
             "elapsed_seconds":result["elapsed_seconds"],"ttft_seconds":result["ttft_seconds"],
             "prompt_tokens":result["prompt_tokens"],"completion_tokens":result["completion_tokens"],
