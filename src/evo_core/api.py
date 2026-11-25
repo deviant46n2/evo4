@@ -245,6 +245,12 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return runtime
 
+    def _require_workspace_dispatch(runtime):
+        try:
+            runtime.require_dispatch_enabled()
+        except RegistryDispatchDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 
@@ -886,7 +892,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             proposal = orchestration.propose_with_model(
-                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
+                runtime.assistant.provider, payload.request, str(workspace),\n                max_tokens=min(runtime.assistant.config.max_tokens, 3000),
                 allowed_commands=effective_allowed_commands)
             with lab_db.lock:
                 plan = orchestration.create_plan(
@@ -964,7 +970,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
         revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
-            effective_allowed_commands = effective_project_command_prefixes(config.allowed_commands, revision)
+            effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         from evo_experiments.execution import command_allowed
@@ -989,7 +995,7 @@ def create_app(config_path="config.toml", provider_name=None):
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
+                "workspace": str(workspace_path), "model": runtime.assistant.config.model,\n                "base_url": runtime.assistant.config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -1030,7 +1036,7 @@ def create_app(config_path="config.toml", provider_name=None):
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "workspace": str(workspace), "model": runtime.assistant.config.model,\n            "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
@@ -1455,7 +1461,7 @@ def create_app(config_path="config.toml", provider_name=None):
             # Create and reserve in the same critical section too, so even a
             # second local client cannot delete the new conversation in between.
             with locks_guard:
-                conversation_id = assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
+                conversation_id = turn_assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
                 reservation = {"lock": threading.Lock(), "users": 1}
                 conversation_locks[conversation_id] = reservation
         else:
