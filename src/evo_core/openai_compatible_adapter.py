@@ -246,7 +246,7 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, None, _utc_now(),
                 "openai_compatible:model_listing_http_error",
             )
-        except ProviderMalformedResponseError:
+        except (InvalidToolCallError, ProviderMalformedResponseError):
             return AvailabilityEvidence(
                 True, None, None, _utc_now(),
                 "openai_compatible:model_listing_malformed",
