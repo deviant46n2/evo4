@@ -402,3 +402,24 @@ Independent detached-worktree validation of the exact accepted SHA reported:
 - The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, with identical status; all 32 pre-existing worktrees were preserved. No tests were weakened or removed.
 
 Acceptance is limited to P3.4's deterministic verifier implementation, exact-revision runtime binding, and the tested inert/fail-closed behavior. It does not formally accept P3.2, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`.
+
+
+### P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
+
+**Disposition: ACCEPTED** at validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd` on `agent-plan-verification-hardening-v1`. Previous telemetry-fix candidate: `e13f3b2a3ee55a12d7c7afe16e0a35a29ed25810`; P3.4 accepted base: `ad04198b95708df58aae1ff07e0b38380671b574`; cumulative validation base: `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree validation of the exact SHA reported:
+- `python -m compileall -q src tests`: exit 0.
+- `python -m unittest tests.test_telemetry -v`: 5 tests passed.
+- `python -m unittest discover -s tests -v`: 879 tests passed, zero failures/errors/skips.
+- `git diff --check ad04198b95708df58aae1ff07e0b38380671b574..HEAD`: exit 0.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD`: exit 0.
+- GPU-path regression proves exact order: GPU probe, GPU-process probe, then timestamp. The fixture was manually verified to parse as an available NVIDIA GPU with VRAM values.
+- No-NVIDIA path retains valid CPU/RAM telemetry and a completion timestamp. The sampler assigns `sampled_at` after all collection probes and records nonnegative monotonic collection duration with UTC `Z` formatting.
+- Existing telemetry fields remain intact; only the additive duration field and timestamp placement changed.
+- No P3.5 admission or live dispatch was added or enabled. No unrelated behavior changed.
+- Original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees were preserved.
+
+The initial independent challenge findings were addressed: timestamp completion semantics, CPU-utilization pressure handling, reserve/thermal scaling caveats, residency-attestation risk, unsupported GPU behavior, CPU-count unknown handling, adapter contract versioning, and scheduler separation are documented in the accepted contract. The first telemetry test's impossible assertion and a documentation whitespace issue were corrected; the final exact-SHA validation reports no findings.
+
+Acceptance closes P3-R4's resource-admission design and telemetry-freshness prerequisite for P3.5 planning. It does **not** implement or accept P3.5, authorize live dispatch/provider calls, formally accept P3.2, or authorize merging into `local-demo-ready-v1`. P3.5 remains the first milestone that may enable live dispatch and still requires its authorization, budgets, durable atomic admission, and invocation lifecycle gates.
