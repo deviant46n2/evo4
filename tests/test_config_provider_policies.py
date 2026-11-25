@@ -77,8 +77,14 @@ class OperatorProviderPolicyConfigTests(unittest.TestCase):
 
     def test_operator_policy_tables_reject_unknown_fields(self):
         for text in (
-            BASE_CONFIG + "\n[security]\nallow_all = true\n",
-            BASE_CONFIG + "\n[secrets]\nallow_all = true\n",
+            BASE_CONFIG.replace(
+                'allowed_provider_origins = ["https://api.example.test"]',
+                'allowed_provider_origins = ["https://api.example.test"]\\nallow_all = true',
+            ),
+            BASE_CONFIG.replace(
+                'allowed_env_vars = ["EVO_TEST_KEY"]',
+                'allowed_env_vars = ["EVO_TEST_KEY"]\\nallow_all = true',
+            ),
         ):
             with self.subTest(text=text):
                 temp = tempfile.TemporaryDirectory()
