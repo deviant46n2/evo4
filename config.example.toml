@@ -98,7 +98,7 @@ enabled = false
 # requires an explicit budget. Loopback endpoints additionally require an
 # operator-owned resource profile. The integration_id is derived from the
 # exact adapter, normalized endpoint origin, and model identifier; obtain it
-# from the bound participant/runtime diagnostics rather than guessing.
+# from GET /api/v1/workspaces/{workspace_id}/runtime-binding rather than guessing.
 #
 # [[dispatch.provider_budgets]]
 # integration_id = "integration_<32-hex-character-id>"
