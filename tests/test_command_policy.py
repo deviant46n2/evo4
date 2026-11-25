@@ -105,7 +105,7 @@ class CommandPolicyTests(unittest.TestCase):
                             "max_history_chars": 8000, "memory_limit": 4,
                         },
                     },
-                    "command_policy": {
+                    "restrictions": {
                         "type": "command_policy", "component_version": 1,
                         "adapter": {"id": "evo_command_policy", "contract_version": 1},
                         "settings": {"allowed_commands": [["pytest"], ["python", "-m", "unittest"]]},
