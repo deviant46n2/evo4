@@ -675,5 +675,5 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
 
         run = self.store.get_agent_run(body["run_id"])
         self.assertEqual(run["status"], "failed")
-        self.assertIn("does not match", run.get("error", "") + run.get("result", ""))
+        self.assertIn("does not match", run["summary"])
         future.set_result(None)
