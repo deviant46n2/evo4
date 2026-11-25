@@ -74,11 +74,13 @@ The plan requires protecting interactive reserves and failing closed when requir
 
 This preserves the fail-closed principle without turning unrelated telemetry into an accidental global outage.
 
-## Phase 2 dependency
+## Phase 2 dependency and acceptance
 
-The Phase 3 plan correctly says Phase 2 must not be treated as complete merely because the isolation foundations exist. Keep the Phase 2 acceptance gate open until CLI/API equivalence, instruction trust/precedence, adversarial checkout paths, and task/plan scope continuity through approval, execution, cancellation, restart recovery, and resumption have evidence.
+Phase 2 was formally accepted on 2026-11-24 at candidate revision `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`; the authoritative evidence and exact acceptance scope are recorded in `ROADMAP.md`. The final independent detached-worktree regression check verified that exact SHA: compileall passed, all 824 tests passed with zero failures/errors/skips, and `git diff --check d11cb1de0b39d8a0367cb4d7098782da4354b006..HEAD` passed. The original checkout and 32 pre-existing worktrees were preserved.
 
-The current test files provide meaningful coverage for scope persistence, retrieval isolation, project instructions, API scope checks, and workspace execution. Their existence alone does not establish that the full Phase 2 gate has passed; local test execution and remaining cross-path review are still required.
+The user approved a clarification to the Phase 2 resumption criterion: Phase 2 requires scope/history continuity through interruption and restart recovery, not automatic replay. Unfinished work is marked interrupted; automatic resumption/replay remains disabled because external side effects may have completed immediately before a crash. Continuing requires a new task with fresh scope validation. Durable pause/resume remains a later Phase 5 orchestration capability. This explicit limitation is not an outstanding Phase 2 blocker.
+
+The review of CLI/API boundaries, instruction trust/precedence, adversarial checkout paths, command-policy intersection, task/plan scope, cancellation/recovery, and cross-project isolation is reconciled in the roadmap. Phase 2 is accepted; its acceptance does not enable Phase 3 live dispatch.
 
 ## Decisions and disposition
 
@@ -104,5 +106,10 @@ Acceptance evidence:
 
 Acceptance is deliberately limited to P3.1's executable configuration contract, participant contracts, configuration validation, provider endpoint/secret/approval foundations, and associated tests/documentation. It does **not** mean live Registry-bound dispatch exists or is enabled. The pinned transport is not wired into the legacy TOML provider path; a later Registry adapter must consume the secured transport. No P3.2 runtime factory/routing, P3.5 admission/lease service, provider invocation, or merge into `local-demo-ready-v1` is authorized by this acceptance.
 
-P3-R4 remains open and must be resolved before finalizing P3.5 admission. The Phase 2 acceptance gate also remains open. Proceeding to P3.2 requires separate explicit user authorization.
+P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 work remains subject to the user's previously granted implementation authorization and the roadmap's sequencing constraints; P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
 
+
+
+## Phase 2 formal acceptance record
+
+**ACCEPTED — 2026-11-24.** The user approved the clarification that Phase 2 resumption means preserving scope and history across interruption/restart, while automatic replay remains disabled and continuation requires a newly scope-validated task. Exact regression target: `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`. Validation: 824/824 tests passed; compileall and diff-check clean. See `ROADMAP.md` for the full acceptance record. This does not authorize live Registry-bound provider dispatch.
