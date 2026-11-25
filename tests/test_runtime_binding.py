@@ -241,6 +241,46 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         finally:
             os.environ.pop("EVO_SECONDARY_MODEL_KEY", None)
 
+    def test_secondary_model_receives_its_own_code_owned_dispatch_authorizer(self):
+        definition = schema2_definition()
+        definition["components"]["secondary_model"] = {
+            "type": "model",
+            "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {
+                "endpoint": "http://127.0.0.1:18997/v1",
+                "model": "model-b",
+                "timeout_seconds": 45,
+            },
+        }
+        definition["components"]["assistant_runtime"]["settings"]["additional_model_components"] = [
+            "secondary_model"
+        ]
+        created = create_configuration(self.store, definition, name="dispatch binding config")
+        workspace = create_workspace(
+            self.store, "Dispatch binding workspace", self.project["project_id"],
+            created["configuration"]["configuration_id"], created["revision"]["revision_id"],
+            checkout_id=self.checkout["checkout_id"],
+        )
+        config = replace(self.base_config, dispatch_enabled=True)
+        runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"])
+        secondary = next(
+            item for item in runtime.participants
+            if item.participant_type == "model" and item.component_key == "secondary_model"
+        )
+        selected = runtime.select_participant(secondary.participant_id)
+        primary_authorizer = runtime.participant_adapter._dispatch_authorizer
+        secondary_authorizer = selected.participant_adapter._dispatch_authorizer
+        self.assertIsNotNone(primary_authorizer)
+        self.assertIsNotNone(secondary_authorizer)
+        self.assertIsNot(primary_authorizer, secondary_authorizer)
+        self.assertIs(
+            runtime.assistant.provider.controller.runtime, runtime
+        )
+        self.assertFalse(
+            secondary_authorizer("not_an_invocation", selected.bound_participant, None)
+        )
+
     def test_schema_rejects_secondary_model_with_same_integration_as_primary(self):
         definition = schema2_definition()
         definition["components"]["secondary_model"] = copy.deepcopy(
