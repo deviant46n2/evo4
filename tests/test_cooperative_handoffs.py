@@ -191,7 +191,7 @@ class HandoffPersistenceTests(unittest.TestCase):
                     self.selected.participant.participant_id, self.selected.participant.integration_id,
                     self.selected.participant.adapter_id, self.runtime.configuration_id,
                     self.runtime.revision_id, self.runtime.revision_hash, snapshot["snapshot_hash"],
-                    "succeeded", json.dumps({"decision": "admitted"}), deadline, 128, "2026-11-25",
+                    "succeeded", json.dumps({"decision": "admitted"}), deadline, 1024, "2026-11-25",
                     deadline, deadline, deadline,
                 ),
             )
@@ -243,7 +243,7 @@ class HandoffPersistenceTests(unittest.TestCase):
             create_handoff(
                 self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
                 role="proposal", target_participant_id=self.runtime.participants[1].participant_id,
-                payload=self.payload, budget=HandoffBudget(1024, 257, self.deadline),
+                payload=self.payload, budget=HandoffBudget(7168, 1025, self.deadline),
             )
 
     def test_rejects_wrong_target_and_non_succeeded_invocation(self):
