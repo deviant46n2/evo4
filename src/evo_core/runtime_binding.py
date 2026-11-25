@@ -143,9 +143,8 @@ def _component(definition, component_key, expected_type):
 def build_workspace_runtime(store, base_config, workspace_id):
     """Build a complete assistant runtime from the exact workspace-pinned revision.
 
-    The assistant's provider is always non-network-capable before P3.5.
-    The separate participant adapter is bound for inspection/contract tests,
-    but has no dispatch authorizer installed.
+    The assistant receives a non-network-capable provider unless the operator
+    explicitly enables the P3.5 dispatch gate in local Evo configuration.
     """
     try:
         binding = workspaces.resolve_executable_workspace(store, workspace_id)
