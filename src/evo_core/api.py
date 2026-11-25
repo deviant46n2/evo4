@@ -966,7 +966,6 @@ def create_app(config_path="config.toml", provider_name=None):
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
         if plan_project_id != binding_project_id:
             raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
-        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
             effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
