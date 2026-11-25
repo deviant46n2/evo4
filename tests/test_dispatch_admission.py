@@ -3,6 +3,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -138,11 +139,21 @@ class ResourceAdmissionTests(unittest.TestCase):
                 memory_mode="persistent_incremental",
             )
 
-    def test_provider_budget_requires_positive_integer_limits(self):
+    def test_provider_budget_requires_bounded_positive_integer_limits(self):
         with self.assertRaises(ValueError):
             ProviderBudget("integration-1", 0, 1024, 4096)
+        with self.assertRaises(ValueError):
+            ProviderBudget("integration-1", 20, 10_000_001, 20_000_000)
         budget = ProviderBudget("integration-1", 20, 4096, 32768)
         self.assertEqual(budget.maximum_requests_per_utc_day, 20)
+
+    def test_resource_and_policy_bounds_reject_unusable_or_extreme_values(self):
+        with self.assertRaises(ValueError):
+            AdmissionPolicy(cpu_pressure_percent=0)
+        with self.assertRaises(ValueError):
+            ResourceDemand("remote_service", 4097, 64)
+        with self.assertRaises(ValueError):
+            ResourceDemand("remote_service", 1, 16_777_217)
 
 
 class ResourceDeclarationTests(unittest.TestCase):
@@ -186,7 +197,7 @@ class ResourceDeclarationTests(unittest.TestCase):
 
 
 class InvocationLifecycleTransitionTests(unittest.TestCase):
-    def _store_with_invocation(self, *, heartbeat_age_seconds=0):
+    def _store_with_invocation(self, *, heartbeat_age_seconds=0, status="running"):
         now = datetime.now(timezone.utc)
         connection = sqlite3.connect(":memory:", check_same_thread=False)
         connection.row_factory = sqlite3.Row
@@ -204,7 +215,7 @@ class InvocationLifecycleTransitionTests(unittest.TestCase):
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             ("inv-1","ws-1","project-1","participant-1","integration-1",
              "openai_compatible_chat","config-1","revision-1","revhash","snaphash",
-             "running",json.dumps({"decision":"admitted"}),
+             status,json.dumps({"decision":"admitted"}),
              (now + timedelta(minutes=2)).isoformat().replace("+00:00","Z"),
              100,"2026-11-25",now.isoformat().replace("+00:00","Z"),
              now.isoformat().replace("+00:00","Z")),
@@ -216,6 +227,12 @@ class InvocationLifecycleTransitionTests(unittest.TestCase):
             ) VALUES(?,?,?,?,?,?,?)""",
             ("global_provider_dispatch","inv-1","owner-1","active",heartbeat,heartbeat,
              (now + timedelta(minutes=2)).isoformat().replace("+00:00","Z")),
+        )
+        connection.execute(
+            """INSERT INTO provider_budget_usage(
+                integration_id,budget_day_utc,requests_reserved,output_tokens_reserved,output_tokens_used
+            ) VALUES(?,?,?,?,?)""",
+            ("integration-1","2026-11-25",1,100,0),
         )
         connection.commit()
         return store, now
@@ -272,6 +289,46 @@ class InvocationLifecycleTransitionTests(unittest.TestCase):
             lease = store.db.execute("SELECT state FROM dispatch_leases WHERE invocation_id='inv-1'").fetchone()
             self.assertEqual(lease["state"], "abandoned")
             self.assertIsNotNone(store.db.execute("SELECT 1 FROM dispatch_leases").fetchone())
+        finally:
+            store.db.close()
+
+    def test_admitted_invocation_cannot_be_finalized_as_success(self):
+        store, _ = self._store_with_invocation(status="admitted")
+        try:
+            self.assertFalse(finalize_invocation(store, "inv-1", "succeeded", provider_settled=True))
+            row = store.db.execute(
+                "SELECT status FROM participant_invocations WHERE invocation_id='inv-1'"
+            ).fetchone()
+            self.assertEqual(row["status"], "admitted")
+        finally:
+            store.db.close()
+
+    def test_admitted_invocation_can_only_be_cancelled_before_start_and_releases_reservations(self):
+        store, _ = self._store_with_invocation(status="admitted")
+        try:
+            self.assertTrue(finalize_invocation(store, "inv-1", "cancelled"))
+            self.assertIsNone(store.db.execute("SELECT 1 FROM dispatch_leases").fetchone())
+            budget = store.db.execute(
+                "SELECT requests_reserved,output_tokens_reserved FROM provider_budget_usage"
+            ).fetchone()
+            self.assertEqual((budget["requests_reserved"], budget["output_tokens_reserved"]), (0, 0))
+            self.assertFalse(mark_invocation_running(store, "inv-1"))
+        finally:
+            store.db.close()
+
+    def test_concurrent_worker_start_transition_has_single_winner(self):
+        store, _ = self._store_with_invocation(status="admitted")
+        barrier = threading.Barrier(3)
+        try:
+            def start():
+                barrier.wait()
+                return mark_invocation_running(store, "inv-1")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(start) for _ in range(2)]
+                barrier.wait()
+                results = [future.result() for future in futures]
+            self.assertEqual(results.count(True), 1)
+            self.assertEqual(results.count(False), 1)
         finally:
             store.db.close()
 
