@@ -29,6 +29,7 @@ class EvoConfig:
     allowed_secret_env_vars: tuple[str, ...] = ()
     provider_approvals: tuple = ()
     provider_budgets: tuple = ()
+    dispatch_enabled: bool = False
     local_resource_profiles: tuple = ()
 
 def load_config(path: str | Path = "config.toml", provider_name: str | None = None) -> EvoConfig:
@@ -46,7 +47,7 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     security = raw.get("security", {})
     secrets = raw.get("secrets", {})
     dispatch = raw.get("dispatch", {})
-    if not isinstance(dispatch, dict) or set(dispatch) - {"provider_budgets", "local_resource_profiles"}:
+    if not isinstance(dispatch, dict) or set(dispatch) - {"enabled", "provider_budgets", "local_resource_profiles"}:
         raise ValueError("dispatch must contain only provider_budgets and local_resource_profiles")
     if not isinstance(security, dict) or set(security) - {"allowed_provider_origins"}:
         raise ValueError("security must contain only allowed_provider_origins")
@@ -75,6 +76,9 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
         provider_approvals = parse_provider_approvals(provider_approvals_raw)
     except ProviderApprovalError as exc:
         raise ValueError(str(exc)) from exc
+    dispatch_enabled = dispatch.get("enabled", False)
+    if not isinstance(dispatch_enabled, bool):
+        raise ValueError("dispatch.enabled must be a boolean")
     raw_budgets = dispatch.get("provider_budgets", [])
     if not isinstance(raw_budgets, list) or len(raw_budgets) > 128:
         raise ValueError("dispatch.provider_budgets must be a bounded list of tables")
@@ -169,5 +173,6 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
         allowed_secret_env_vars=tuple(allowed_env_vars),
         provider_approvals=provider_approvals,
         provider_budgets=tuple(provider_budgets),
+        dispatch_enabled=dispatch_enabled,
         local_resource_profiles=tuple(local_resource_profiles),
     )
