@@ -181,12 +181,14 @@ The desktop API initializes/migrates the Evo Lab tables in the same SQLite datab
 
 ## Evo assistant commands
 
+The direct `chat` and `code` CLI commands are privileged local-only modes. They use global TOML settings and do not enforce Registry workspace scope; the explicit acknowledgement flag is required. Use the desktop API for Registry-bound workspace execution.
+
 ```bash
 evo doctor
 evo doctor --test-tools
-evo chat
-evo chat --conversation CONVERSATION_ID
-evo code --workspace /path/to/project
+evo chat --i-understand-local-only
+evo chat --conversation CONVERSATION_ID --i-understand-local-only
+evo code --workspace /path/to/project --i-understand-local-only
 evo conversations
 evo backup backups/evo.sqlite3
 evo memory add "The user prefers concise, evidence-based explanations" --category preferences --source user
