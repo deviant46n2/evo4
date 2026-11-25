@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization, budgets, durable admission, and invocation lifecycle are implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests); formal acceptance remains pending. P3.6 API/configuration inspection and P3.7 independent review/Phase 3 acceptance remain outstanding. `dispatch.enabled` remains false by default.
+**Status (2026-11-25):** P3.1–P3.5 and P3-R4 accepted. P3.5 was formally accepted at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests) and merged through PR #3 at `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 read-only API/configuration inspection is in progress; P3.7 independent review/Phase 3 acceptance remains outstanding. `dispatch.enabled` remains false by default.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
