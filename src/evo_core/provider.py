@@ -236,6 +236,9 @@ class OpenAICompatibleProvider:
                         continue
                     if not choices:
                         continue
+                    if len(choices) != 1:
+                        malformed_event = True
+                        continue
                     choice = choices[0]
                     if not isinstance(choice, dict):
                         malformed_event = True
@@ -342,6 +345,17 @@ class OpenAICompatibleProvider:
             for index in sorted(tool_call_parts):
                 secret = self.api_key if self.api_key != "no-key" else None
                 call = _redact_value(tool_call_parts[index], secret)
+                if (
+                    not isinstance(call.get("id"), str) or not call["id"]
+                    or call.get("type") != "function"
+                    or not isinstance(call.get("function"), dict)
+                    or not isinstance(call["function"].get("name"), str)
+                    or not call["function"]["name"]
+                ):
+                    raise InvalidToolCallError(
+                        "Model returned an incomplete tool call",
+                        finish_reason=finish_reason,
+                    )
                 try:
                     arguments = _strict_json_loads(call["function"]["arguments"] or "{}")
                     if not isinstance(arguments, dict):
