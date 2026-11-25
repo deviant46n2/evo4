@@ -312,8 +312,8 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.attach_run(self.db, self.plan["id"], "run-1")
         with self.db:
             self.db.execute(
-                "UPDATE agent_plan_steps SET status='completed',verification_status='passed',finished_at='now' WHERE id=?",
-                (step["id"],),
+                "UPDATE agent_plan_steps SET status='completed',verification_status='passed',finished_at='now' WHERE plan_id=?",
+                (self.plan["id"],),
             )
         with self.assertRaisesRegex(ValueError, "passing verification evidence"):
             orchestration.finish_plan(self.db, self.plan["id"], "completed")
