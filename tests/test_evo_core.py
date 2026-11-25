@@ -23,6 +23,16 @@ class StubProvider:
         return ["stub-model"]
 
 class EvoCoreTests(unittest.TestCase):
+    def test_interactive_cli_requires_local_only_acknowledgement(self):
+        parser = evo_cli.build_parser()
+        with self.assertRaises(SystemExit) as missing:
+            parser.parse_args(["chat"])
+        self.assertEqual(missing.exception.code, 2)
+        args = parser.parse_args(["chat", "--i-understand-local-only"])
+        self.assertTrue(args.i_understand_local_only)
+        code_args = parser.parse_args(["code", "--i-understand-local-only", "--workspace", "/tmp/work"])
+        self.assertEqual(code_args.workspace, "/tmp/work")
+
     def make_config(self,path):
         return EvoConfig("http://127.0.0.1:1","no-key","stub-model",3,Path(path),
                          64,0.0,"You are Evo.",8,10)
