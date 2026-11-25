@@ -197,7 +197,7 @@ class InvalidToolArgumentsSSEHandler(BaseHTTPRequestHandler):
             ]}}]},
             {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
         ]
-        body = "".join("data: " + json.dumps(event) + "\\n\\n" for event in events) + "data: [DONE]\\n\\n"
+        body = "".join("data: " + json.dumps(event) + "\n\n" for event in events) + "data: [DONE]\n\n"
         raw = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
