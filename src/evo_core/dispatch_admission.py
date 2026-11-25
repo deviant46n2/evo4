@@ -496,9 +496,9 @@ def admit_invocation(
             approval_result = {"decision": "denied", "reason": "resource_locality_does_not_match_endpoint"}
         elif (
             approval is None
-            or approval.status != expected_status
-            or approval.adapter_id != runtime.participant.adapter_id
-            or approval.origin != origin
+            or getattr(approval, "status", None) != expected_status
+            or getattr(approval, "adapter_id", None) != runtime.participant.adapter_id
+            or getattr(approval, "origin", None) != origin
             or "chat_completion" not in getattr(approval, "uses", ())
         ):
             approval_result = {"decision": "denied", "reason": "provider_compliance_not_approved"}
@@ -506,6 +506,8 @@ def admit_invocation(
             approval_result = {"decision": "admitted", "reason": "provider_compliance_approved"}
         if not isinstance(provider_budget, ProviderBudget):
             budget_result = {"decision": "denied", "reason": "provider_budget_not_configured"}
+        elif provider_budget.integration_id != runtime.participant.integration_id:
+            budget_result = {"decision": "denied", "reason": "provider_budget_integration_mismatch"}
         else:
             budget_result = {"decision": "admitted", "reason": "provider_budget_configured"}
     else:
@@ -666,8 +668,12 @@ def heartbeat_dispatch_lease(store, invocation_id):
 def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=None, error_message=None, provider_settled=False):
     if status not in TERMINAL_STATUSES - {"denied", "abandoned"}:
         raise ValueError("invocation terminal status is invalid")
-    if usage is not None and not isinstance(usage, dict):
-        raise ValueError("invocation usage must be an object or None")
+    if usage is not None:
+        if not isinstance(usage, dict) or set(usage) - {"input_tokens", "output_tokens", "total_tokens"}:
+            raise ValueError("invocation usage must contain only token counters")
+        for key, value in usage.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"invocation usage {key} must be a non-negative integer")
     if error_code is not None and (not isinstance(error_code, str) or len(error_code) > 128):
         raise ValueError("invocation error code is invalid")
     if error_message is not None and (not isinstance(error_message, str) or len(error_message) > 2000):
