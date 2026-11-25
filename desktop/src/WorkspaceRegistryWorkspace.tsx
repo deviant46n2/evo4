@@ -60,6 +60,8 @@ type ParticipantDescriptor = {
   resource_requirements: Record<string, string>;
   limits: Record<string, string | number>;
   configuration_revision_id: string;
+  component_key: string;
+  component_version: number;
 };
 
 type ParticipantAvailability = {
