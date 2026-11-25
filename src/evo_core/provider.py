@@ -182,7 +182,9 @@ class OpenAICompatibleProvider:
                             malformed_event = True
                             continue
                         usage = event["usage"]
-                    choices = event.get("choices") or []
+                    choices = event.get("choices", [])
+                    if choices is None:
+                        choices = []
                     if not isinstance(choices, list):
                         malformed_event = True
                         continue
@@ -206,13 +208,31 @@ class OpenAICompatibleProvider:
                         if not isinstance(call, dict):
                             malformed_event = True
                             continue
-                        index = call.get("index",0)
-                        part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
-                        if call.get("id"): part["id"] = call["id"]
-                        if call.get("type"): part["type"] = call["type"]
+                        index = call.get("index", 0)
+                        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                            malformed_event = True
+                            continue
                         function = call.get("function") or {}
-                        if function.get("name"): part["function"]["name"] += function["name"]
-                        if function.get("arguments"): part["function"]["arguments"] += function["arguments"]
+                        if not isinstance(function, dict):
+                            malformed_event = True
+                            continue
+                        call_id = call.get("id")
+                        call_type = call.get("type")
+                        name_fragment = function.get("name", "")
+                        argument_fragment = function.get("arguments", "")
+                        if (
+                            (call_id is not None and not isinstance(call_id, str))
+                            or (call_type is not None and not isinstance(call_type, str))
+                            or not isinstance(name_fragment, str)
+                            or not isinstance(argument_fragment, str)
+                        ):
+                            malformed_event = True
+                            continue
+                        part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
+                        if call_id: part["id"] = call_id
+                        if call_type: part["type"] = call_type
+                        if name_fragment: part["function"]["name"] += name_fragment
+                        if argument_fragment: part["function"]["arguments"] += argument_fragment
                     content = delta.get("content")
                     if isinstance(content,list):
                         content = "".join(part.get("text","") for part in content if isinstance(part,dict))
