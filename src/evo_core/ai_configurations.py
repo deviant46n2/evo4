@@ -95,6 +95,11 @@ def _check_sensitive_keys(obj):
 
 def _check_json_compatible(obj):
     if obj is None or isinstance(obj, (str, int, float, bool)):
+        if isinstance(obj, str):
+            try:
+                obj.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ConfigurationValidationError("strings must contain valid Unicode") from exc
         if isinstance(obj, float):
             if obj != obj or obj in (float("inf"), float("-inf")):
                 raise ConfigurationValidationError("non-finite number is not allowed")
@@ -103,6 +108,10 @@ def _check_json_compatible(obj):
         for key, value in obj.items():
             if not isinstance(key, str):
                 raise ConfigurationValidationError("object keys must be strings")
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ConfigurationValidationError("object keys must contain valid Unicode") from exc
             _check_json_compatible(value)
         return
     if isinstance(obj, list):
