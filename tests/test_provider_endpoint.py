@@ -94,6 +94,17 @@ class PinnedProviderTransportTests(unittest.TestCase):
             response.read()
         self.assertEqual(self.server.request_body, b'{"hello":"world"}')
 
+    def test_request_headers_reject_actual_crlf_injection(self):
+        transport = PinnedProviderTransport(EndpointPolicy(), resolver=self._local_resolver)
+        for header_value in ("application/json\\r\\nInjected: yes", "application/json\\nInjected: yes"):
+            with self.subTest(header_value=header_value):
+                with self.assertRaises(ProviderEndpointError):
+                    with transport.open_response(
+                        self.endpoint, "POST", "/chat/completions",
+                        headers={"Content-Type": header_value}, body=b"{}",
+                    ):
+                        pass
+
     def test_request_path_rejects_query_and_traversal(self):
         transport = PinnedProviderTransport(EndpointPolicy(), resolver=self._local_resolver)
         for route in ("/models?next=https://evil", "/../admin", "//evil.test/path"):
