@@ -241,7 +241,7 @@ def _validate_schema2_component(key, component):
     if unknown:
         raise ConfigurationValidationError(f"component {key!r} has unknown fields: {sorted(unknown)}")
     component_type = component.get("type")
-    if component_type not in {
+    if not isinstance(component_type, str) or component_type not in {
         "model", "assistant_runtime", "command_policy", "deterministic_verifier"
     }:
         raise ConfigurationValidationError(f"component {key!r} has an unsupported type")
