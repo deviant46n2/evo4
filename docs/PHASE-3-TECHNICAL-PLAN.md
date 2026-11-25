@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25):** P3.1–P3.5 and P3-R4 accepted. P3.5 was formally accepted at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests) and merged through PR #3 at `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 read-only API/configuration inspection is in progress; P3.7 independent review/Phase 3 acceptance remains outstanding. `dispatch.enabled` remains false by default.
+**Status (2026-11-25):** P3.1–P3.6 and P3-R4 are accepted. P3.6 was validated at exact corrective SHA `4e048af7978730890c47ee840d36e8d0b73866ea` (919/919 tests, compileall, diff-check, and desktop production build) and merged through PR #4 at `0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d`. P3.7 cumulative independent review and formal Phase 3 closure remain outstanding. `dispatch.enabled` remains false by default.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -370,7 +370,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Keep explicit participant invocation behind the P3.5 dispatch boundary. P3.6 inspection does not grant authority or enable dispatch.
 - Keep UI changes minimal: make binding and availability states inspectable; do not start the full Cyberdeck redesign. Ensure backend APIs, not frontend state, enforce authorization.
 
-**Current implementation slice:** backend read-only participant listing and metadata-only preflight routes have been added with focused API regression tests. The Workspace Registry now displays exact-revision participant descriptors and offers an explicit user-triggered metadata preflight, with stale-response guards. Independent validation and formal P3.6 acceptance remain outstanding.
+**Accepted implementation:** backend read-only participant listing and metadata-only preflight routes expose exact-revision participant descriptors. The Workspace Registry displays those descriptors and offers explicit user-triggered metadata preflight with stale-response guards. Corrective independent revalidation at exact SHA `4e048af7978730890c47ee840d36e8d0b73866ea` passed compileall, 43 focused API tests, the full 919-test suite, diff-check, and the desktop TypeScript/Vite production build. P3.6 was formally accepted and merged through PR #4 at `0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d`.
 
 **Exit:** API tests prove exact-revision binding, participant-ID scoping, bounded preflight, no completion-probe/dispatch side effects, and no secret leakage; frontend can inspect real participant/configuration status without inventing runtime state.
 
@@ -380,7 +380,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.5 and P3-R4 are accepted; P3.6 implementation/validation and independent review remain outstanding. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.6 and P3-R4 are accepted. P3.7 must complete the cumulative independent review, record the exact reviewed commit and all validation/live-test limitations, resolve material findings, and obtain formal Phase 3 acceptance. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
@@ -473,3 +473,12 @@ P3.5 implementation candidate `922051067fa41ecd75038714aafe96e514333f28` on `age
 - Original checkout and all 32 pre-existing worktrees were preserved.
 
 **Disposition: ACCEPTED — 2026-11-25.** The user formally accepted P3.5 at exact validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28`. Independent detached-worktree validation reported compileall exit 0, focused suite 117/117, full suite 916/916 with zero failures/errors/skips, diff-check exit 0, and no security/integration findings. No live provider calls were made; dispatch remains disabled by default. The accepted branch was merged through PR #3 into `agent-lifecycle-reconciliation-v1` at merge commit `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 and P3.7 remain outstanding.
+
+
+## P3.6 formal acceptance record (2026-11-25)
+
+**ACCEPTED** at exact corrective implementation SHA `4e048af7978730890c47ee840d36e8d0b73866ea`; merged into `agent-lifecycle-reconciliation-v1` through PR #4 at `0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d`.
+
+Independent detached-worktree corrective revalidation: compileall passed; focused API suite 43/43 passed; full unittest suite 919/919 passed with zero failures/errors/skips; desktop `npm run build` passed (`tsc -b && vite build`); cumulative `git diff --check ab01f90..HEAD` passed. Original checkout `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` remained unchanged and all 32 pre-existing worktrees were restored.
+
+The accepted UI type correction adds the backend descriptor fields `component_key` and `component_version` to the frontend `ParticipantDescriptor`. Backend and frontend security findings remained resolved: exact pinned runtime resolution, non-secret descriptors, unknown-ID rejection, bounded metadata-only preflight, no completion probe/invocation/lease/evidence side effects, completion remains unverified, safe provider errors, explicit user-triggered checks, and stale-response protection. Dispatch remains disabled by default; no live provider calls were performed.
