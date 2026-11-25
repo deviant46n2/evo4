@@ -274,7 +274,7 @@ class PinnedProviderTransport:
                     "content-length", "transfer-encoding",
                 }:
                     raise ProviderEndpointError("provider request contains a reserved header")
-                if any(ch in name + value for ch in "\\r\\n"):
+                if any(ch in name + value for ch in "\r\n"):
                     raise ProviderEndpointError("provider request header is malformed")
                 connection.putheader(name, value)
             if body is not None or method.upper() == "POST":
