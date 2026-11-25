@@ -106,7 +106,7 @@ Acceptance evidence:
 
 Acceptance is deliberately limited to P3.1's executable configuration contract, participant contracts, configuration validation, provider endpoint/secret/approval foundations, and associated tests/documentation. It does **not** mean live Registry-bound dispatch exists or is enabled. The pinned transport is not wired into the legacy TOML provider path; a later Registry adapter must consume the secured transport. No P3.2 runtime factory/routing, P3.5 admission/lease service, provider invocation, or merge into `local-demo-ready-v1` is authorized by this acceptance.
 
-P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 implementation and independent validation are complete and formally accepted. P3.3 adapter work is underway within the documented sequence. P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
+Phase 2, P3.2, and P3-R4 are accepted. P3.3 and P3.4 are also accepted. P3.5 dispatch remains disabled until its authorization, budget, admission, and invocation-lifecycle requirements are implemented and validated.
 
 
 
