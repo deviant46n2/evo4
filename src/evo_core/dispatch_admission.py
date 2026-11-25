@@ -36,6 +36,7 @@ class ResourceDemand:
     ram_mib: float
     gpu_vram_mib: float | None = None
     compute_mode: str | None = None
+    memory_mode: str | None = None
     maximum_gpu_temperature_c: float | None = 85.0
 
     def __post_init__(self):
@@ -58,8 +59,10 @@ class ResourceDemand:
                 raise ValueError("GPU/mixed local endpoint demand requires an explicit VRAM estimate")
             if self.compute_mode == "cpu" and self.gpu_vram_mib is not None:
                 raise ValueError("CPU-only local endpoint demand cannot declare GPU VRAM")
-        elif self.compute_mode is not None or self.gpu_vram_mib is not None:
-            raise ValueError("compute_mode and GPU VRAM are supported only for a local endpoint")
+            if self.memory_mode not in {"cold_load", "persistent_incremental"}:
+                raise ValueError("local endpoint demand requires an explicit memory_mode")
+        elif self.compute_mode is not None or self.memory_mode is not None or self.gpu_vram_mib is not None:
+            raise ValueError("compute_mode, memory_mode, and GPU VRAM are supported only for a local endpoint")
         if self.maximum_gpu_temperature_c is not None and (
             isinstance(self.maximum_gpu_temperature_c, bool)
             or not isinstance(self.maximum_gpu_temperature_c, (int, float))
@@ -106,6 +109,49 @@ class ProviderBudget:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+
+
+def derive_resource_demand(runtime, *, local_profile=None):
+    """Derive locality from the bound endpoint; never accept workspace locality claims.
+
+    Remote and local-process estimates are code-owned. A loopback model endpoint
+    requires an operator-owned profile; there are intentionally no guessed VRAM
+    or cold-load defaults.
+    """
+    adapter_id = runtime.participant.adapter_id
+    if adapter_id == "evo_deterministic_verifier":
+        return ResourceDemand("local_process", 0.10, 64.0)
+    if adapter_id != "openai_compatible_chat":
+        raise AdmissionError("participant adapter has no registered resource declaration")
+    from urllib.parse import urlsplit
+    from .provider_endpoint import is_loopback_provider_origin, normalize_provider_origin
+    endpoint = getattr(runtime.bound_participant, "endpoint", None)
+    try:
+        parsed = urlsplit(endpoint)
+        origin = normalize_provider_origin(f"{parsed.scheme}://{parsed.netloc}")
+        is_local = is_loopback_provider_origin(origin)
+    except Exception as exc:
+        raise AdmissionError("bound provider endpoint locality cannot be established") from exc
+    if not is_local:
+        return ResourceDemand("remote_service", 0.05, 64.0)
+    if not isinstance(local_profile, dict):
+        raise AdmissionError("loopback model endpoint requires an operator-owned resource profile")
+    required = {"compute_mode", "cpu_cores", "ram_mib", "memory_mode"}
+    allowed = required | {"gpu_vram_mib", "maximum_gpu_temperature_c"}
+    if required - set(local_profile) or set(local_profile) - allowed:
+        raise AdmissionError("local resource profile has missing or unsupported fields")
+    try:
+        return ResourceDemand(
+            locality="local_endpoint",
+            cpu_cores=local_profile["cpu_cores"],
+            ram_mib=local_profile["ram_mib"],
+            gpu_vram_mib=local_profile.get("gpu_vram_mib"),
+            compute_mode=local_profile["compute_mode"],
+            memory_mode=local_profile["memory_mode"],
+            maximum_gpu_temperature_c=local_profile.get("maximum_gpu_temperature_c", 85.0),
+        )
+    except (TypeError, ValueError) as exc:
+        raise AdmissionError("operator-owned local resource profile is invalid") from exc
 
 
 def _parse_utc(value, field):
@@ -422,7 +468,12 @@ def admit_invocation(
     is_provider = runtime.participant.adapter_id == "openai_compatible_chat"
     if is_provider:
         expected_status = "local_only" if resource_demand.locality == "local_endpoint" else "approved"
-        if approval is None or approval.status != expected_status or approval.adapter_id != runtime.participant.adapter_id:
+        if (
+            approval is None
+            or approval.status != expected_status
+            or approval.adapter_id != runtime.participant.adapter_id
+            or approval.origin != origin
+        ):
             approval_result = {"decision": "denied", "reason": "provider_compliance_not_approved"}
         else:
             approval_result = {"decision": "admitted", "reason": "provider_compliance_approved"}
@@ -467,6 +518,10 @@ def admit_invocation(
         "provider_origin": origin,
         "requested_output_tokens": requested_tokens,
     }
+    if is_provider:
+        expected_locality = "local_endpoint" if approval is not None and approval.status == "local_only" else "remote_service"
+        if resource_demand.locality != expected_locality:
+            resource_result = {"decision": "denied", "reason": "resource_locality_does_not_match_endpoint"}
     if approval_result["decision"] != "admitted":
         decision.update(approval_result)
     elif budget_result["decision"] != "admitted":
