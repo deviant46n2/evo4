@@ -200,6 +200,17 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         self.assertEqual(result.status, "rate_limited")
         self.assertEqual(result.error_code, "provider_rate_limited")
 
+    def test_real_pinned_transport_preserves_http_status_for_normalization(self):
+        self.server.status_code = 429
+        adapter = OpenAICompatibleParticipantAdapter(
+            resolver=self.resolver,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        result = list(adapter.invoke(participant, envelope("p")))[-1]
+        self.assertEqual(result.status, "rate_limited")
+        self.assertEqual(result.error_code, "provider_rate_limited")
+
     def test_provider_timeout_is_normalized(self):
         class TimedOut(FakeProvider):
             def chat(self, *args, **kwargs):
