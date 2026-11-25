@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status (2026-11-25):** P3.1 and P3.3 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending; P3.4 implementation in progress. No live Registry-bound dispatch is enabled.
+**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization/admission/lifecycle implementation remains outstanding. No live Registry-bound dispatch is enabled.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
@@ -106,7 +106,7 @@ Acceptance evidence:
 
 Acceptance is deliberately limited to P3.1's executable configuration contract, participant contracts, configuration validation, provider endpoint/secret/approval foundations, and associated tests/documentation. It does **not** mean live Registry-bound dispatch exists or is enabled. The pinned transport is not wired into the legacy TOML provider path; a later Registry adapter must consume the secured transport. No P3.2 runtime factory/routing, P3.5 admission/lease service, provider invocation, or merge into `local-demo-ready-v1` is authorized by this acceptance.
 
-P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 implementation and independent validation are complete; formal phase acceptance remains pending. P3.3 adapter work is underway within the documented sequence. P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
+P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 implementation and independent validation are complete and formally accepted. P3.3 adapter work is underway within the documented sequence. P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
 
 
 
@@ -148,7 +148,7 @@ The validation specifically exercised actual CR/LF header injection, ordinary JS
 
 The first corrective validation had exposed two implementation defects and incomplete test fixtures; these were corrected. A subsequent test-literal defect and trailing whitespace were also corrected. The exact final candidate passed all validation with no findings.
 
-This acceptance is only for P3.3. P3.2 formal acceptance remains a separate disposition. P3-R4 remains open. P3.5 dispatch remains disabled; no merge into `local-demo-ready-v1` is authorized.
+This acceptance is only for P3.3. P3.2 and P3-R4 are separately accepted. P3.5 dispatch remains disabled.
 
 
 ## P3.4 deterministic verifier — formal acceptance
@@ -161,7 +161,7 @@ Review confirmed that the verifier is a distinct local-only deterministic partic
 
 The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` with identical status, and all 32 pre-existing worktrees were preserved. No live provider calls or dispatch occurred.
 
-Acceptance is limited to P3.4. P3.2 formal acceptance remains pending; P3-R4 remains open and must be resolved before finalizing P3.5 admission; P3.5 remains the first milestone permitted to enable live dispatch. No merge into `local-demo-ready-v1` is authorized.
+Acceptance is limited to P3.4. P3.2 and P3-R4 are separately accepted. P3.5 remains the first milestone permitted to enable live dispatch.
 
 
 ## P3-R4 resource-admission contract — proposed for independent challenge
@@ -209,4 +209,13 @@ The accepted decision matrix is: all participants require fresh completion-times
 
 **Disposition: ACCEPTED (2026-11-25)** at exact validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd`. Independent detached-worktree validation: compileall exit 0; focused telemetry tests 5/5; full suite 879/879 with zero failures/errors/skips; diff checks against both `ad04198b95708df58aae1ff07e0b38380671b574` and `6c12cf467cde61166be74e1e501e58de1c8decf6` exit 0. The GPU test proves probe/process/timestamp ordering and its fixture parses as a valid NVIDIA result. The no-NVIDIA path, completion timestamp after all probes, monotonic nonnegative duration, UTC `Z` format, and unchanged telemetry fields were verified. Original checkout `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` and all 32 worktrees were preserved. No findings remain.
 
-P3-R4 is closed as the resource-admission design and telemetry-freshness prerequisite. This does not implement or accept P3.5, authorize live dispatch/provider calls, formally accept P3.2, or authorize a merge. P3.5 still requires its own authorization, budget, durable atomic admission, and invocation lifecycle implementation and validation.
+P3-R4 is closed as the resource-admission design and telemetry-freshness prerequisite. P3.2 is separately accepted. This does not implement or accept P3.5 or authorize live dispatch/provider calls. P3.5 still requires its own authorization, budget, durable atomic admission, and invocation lifecycle implementation and validation.
+
+
+## P3.2 Registry-driven runtime binding — formal acceptance
+
+**ACCEPTED — 2026-11-25.** Exact implementation validation target: `7c50ff666b7cd684cf21f373a82badc3dad5627c`; documentation-only whitespace correction: `11b173d7d7405c80f1ec6c5acb9087b5e1382646`.
+
+Independent detached-worktree validation: compileall passed; full unittest suite passed (843 tests, zero failures/errors/skips); focused runtime, workspace-boundary, invocation-snapshot, and orchestration tests passed (100 tests). The sole finding was trailing whitespace in documentation, corrected in the docs-only follow-up. No application code or tests changed in that cleanup. Later cumulative P3.3, P3.4, and P3-R4 validation passed 863, 877, and 879 tests respectively, with cumulative diff checks clean.
+
+Review found no remaining implementation blocker: all workspace-bound entrypoints create typed invocation snapshots; worker continuity re-resolves and verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert. This acceptance does not implement P3.5 or enable live dispatch/provider calls.
