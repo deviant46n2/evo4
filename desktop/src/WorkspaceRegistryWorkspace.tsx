@@ -150,6 +150,8 @@ export function WorkspaceRegistryWorkspace() {
   const dependencyGeneration = useRef(0);
   const checkoutGeneration = useRef(0);
   const revisionGeneration = useRef(0);
+  const participantGeneration = useRef(0);
+  const availabilityGeneration = useRef(0);
   const savingRef = useRef(false);
 
   const fetchList = useCallback(async (status: "active" | "archived") => {
@@ -443,6 +445,7 @@ export function WorkspaceRegistryWorkspace() {
 
   const loadParticipants = useCallback(async () => {
     if (!selected || selected.status !== "active") return;
+    const token = ++participantGeneration.current;
     setParticipantLoading(true);
     setParticipantError("");
     try {
@@ -452,39 +455,52 @@ export function WorkspaceRegistryWorkspace() {
         dispatch_enabled: boolean;
         participants: ParticipantDescriptor[];
       }>(`/workspaces/${encodeURIComponent(selected.workspace_id)}/participants`);
+      if (token !== participantGeneration.current) return;
       if (result.configuration_revision_id !== selected.configuration_revision_id) {
         throw new Error("Runtime inspection returned a different pinned configuration revision.");
       }
       setParticipants(result.participants);
       setAvailability({});
     } catch (e) {
-      setParticipantError(errorText(e));
-      setParticipants([]);
+      if (token === participantGeneration.current) {
+        setParticipantError(errorText(e));
+        setParticipants([]);
+      }
     } finally {
-      setParticipantLoading(false);
+      if (token === participantGeneration.current) setParticipantLoading(false);
     }
   }, [selected]);
 
   useEffect(() => {
+    participantGeneration.current += 1;
+    availabilityGeneration.current += 1;
     setParticipants([]);
     setAvailability({});
+    setAvailabilityLoadingId(null);
     setParticipantError("");
     if (selected?.status === "active") void loadParticipants();
+    return () => {
+      participantGeneration.current += 1;
+      availabilityGeneration.current += 1;
+    };
   }, [loadParticipants, selected?.workspace_id, selected?.status]);
 
   async function checkParticipantAvailability(participantId: string) {
     if (!selected || availabilityLoadingId) return;
+    const token = ++availabilityGeneration.current;
     setAvailabilityLoadingId(participantId);
     setParticipantError("");
     try {
       const result = await api<ParticipantAvailability>(
         `/workspaces/${encodeURIComponent(selected.workspace_id)}/participants/${encodeURIComponent(participantId)}/availability?timeout_seconds=4`,
       );
-      setAvailability(previous => ({ ...previous, [participantId]: result }));
+      if (token === availabilityGeneration.current) {
+        setAvailability(previous => ({ ...previous, [participantId]: result }));
+      }
     } catch (e) {
-      setParticipantError(errorText(e));
+      if (token === availabilityGeneration.current) setParticipantError(errorText(e));
     } finally {
-      setAvailabilityLoadingId(null);
+      if (token === availabilityGeneration.current) setAvailabilityLoadingId(null);
     }
   }
 
