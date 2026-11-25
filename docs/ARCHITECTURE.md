@@ -289,3 +289,10 @@ Target conceptual mapping:
 
 Before adding new cooperative task schemas, map existing records and lifecycle transitions to these concepts, identify authoritative fields and migration paths, and avoid creating duplicate sources of truth. A future single-connection/transaction boundary may be preferable, but consolidation is a design decision requiring migration/recovery analysis; the current reconciliation ledger must not be silently discarded.
 
+
+
+## CLI execution boundary
+
+The direct `evo chat` and `evo code` commands are privileged local-only modes. They use the global TOML provider/configuration and a caller-selected local workspace path; they do not resolve a Platform Registry workspace, enforce Registry project/workspace scope, or load the API's scoped repository-instruction context. They are not equivalent to workspace-scoped API execution and must not be presented as such.
+
+Both commands require the explicit `--i-understand-local-only` acknowledgement and print a warning before starting. Use the loopback desktop API for Registry-bound workspace operations. A future Registry-aware CLI mode may add an explicit workspace identifier and reuse the same runtime-binding and authorization boundary; it must not silently change the semantics of the existing local-only mode.
