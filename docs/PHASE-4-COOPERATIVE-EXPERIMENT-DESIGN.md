@@ -44,9 +44,11 @@ A participant must be:
 - declared in the exact immutable configuration revision;
 - supported by a code-owned adapter and contract version;
 - bound to the exact project/workspace/revision;
-- separately approved for its provider and intended use;
+- separately covered by the provider approval record for its origin, adapter, and supported invocation use;
 - admitted against current resource and provider budgets before invocation;
 - available through an explicitly supported endpoint and compliant access method.
+
+For this first slice, every model invocation is still an OpenAI-compatible `chat_completion` transport operation. Proposal, critique, and synthesis are task roles carried inside that operation; they are not new provider-approval use categories. The current approval vocabulary intentionally accepts only `chat_completion`. If a future adapter introduces a genuinely different provider operation, its approval-use vocabulary and validation must be extended explicitly before that operation can run.
 
 If no compliant second model is available, Evo may implement and test orchestration with inert/fake adapters, but it must label live heterogeneous evaluation **blocked**, not passed. Paid cloud access is not a dependency. A free tier may be used only where its terms permit the intended use and data handling.
 
@@ -66,6 +68,8 @@ Conditions C and D require distinct model participants. Conditions A and B shoul
 ### Budget matching and interpretation
 
 No single scalar perfectly measures compute across different model architectures or local/cloud providers. Therefore:
+- Define a pre-registered aggregate input-token ceiling, aggregate output-token ceiling, and wall-clock deadline for each scored run. Count every participant invocation, synthesis/revision pass, retry (currently prohibited), and coordination prompt against the same condition-level ceilings.
+- Condition B must not receive a larger revision allowance than the combined proposal/challenge/synthesis allowance available to C or D. Where exact matching is impossible, record the mismatch and classify the comparison as observational; do not attribute an outcome difference to coordination.
 - First compare within a fixed participant/runtime where possible, matching aggregate input/output token ceilings and task deadlines across B, C, and D.
 - Record actual prompt/input tokens, output tokens, reported provider usage, wall time, time-to-first-token where available, retries, and per-invocation limits.
 - For local inference, record GPU/VRAM and host RAM samples, runtime/model fingerprints, and elapsed time. Samples are approximate and may miss short peaks.
@@ -125,10 +129,10 @@ The first implementation must add only what this vertical slice requires:
 
 1. **Revision-pinned model participant set.** Resolve each configured model participant from the same immutable configuration revision. Reject duplicate/ambiguous participant identities and unsupported adapters.
 2. **Generic per-participant invocation path.** Every model invocation must use the existing snapshot, authorization, provider approval, resource admission, budget reservation, atomic start, heartbeat, cancellation, and conservative settlement controls. No coordinator may call an adapter directly to bypass these controls.
-3. **Authorization generalization.** The current P3.5 controller authorizes only the runtime's primary bound participant. Before additional model participants can run, authorization/admission must bind to the exact participant and integration being invoked, while preserving workspace/revision identity and per-integration policy. This is a required security change, not an implementation detail to work around.
+3. **Authorization, snapshot, and admission generalization — implementation blocker.** The current P3.5 path is primary-participant-bound end to end: snapshot creation reads `runtime.participant` and the assistant's primary runtime config; envelope validation and admission compare against `runtime.participant`; the controller accepts only `runtime.bound_participant` and selects approval, budget, and local resource profile from the primary integration. Before a second model can run, introduce an explicit selected-participant invocation context (or an equivalently strong per-participant runtime object) that carries the exact descriptor, adapter, bound instance, endpoint/model configuration, integration identity, and revision provenance. Snapshot payloads must describe that selected participant and its effective invocation configuration—not the primary assistant participant by accident. Admission must validate the envelope against the selected descriptor, derive resource demand from the selected bound instance, and select approval/budget/profile by that participant's integration. The controller must reject any descriptor/adapter/bound-instance mismatch and preserve workspace, project, checkout, immutable revision, and current-binding revalidation. These checks must remain inside the existing atomic admission/lease lifecycle; do not create a parallel weaker path. Add positive tests for a valid non-primary participant and negative tests for participant substitution, descriptor/bound-instance mismatch, wrong integration budget/approval, snapshot/envelope disagreement, revision drift, and direct adapter invocation without authorization.
 4. **Typed, bounded handoffs.** Define versioned input/output contracts for proposal, critique, synthesis, and adjudication. Enforce size, deadline, context-reference, and token limits. Treat participant output as untrusted data, never executable policy.
 5. **Durable experiment/task record.** Persist experiment identity, frozen task/revision, condition, participant identities, invocation IDs, handoff references, budgets, verification evidence, adjudication, and terminal status. Preserve append-only lifecycle events or equivalent audit history.
-6. **Sequential lifecycle.** Start with one active participant invocation per experiment. Cancellation, timeout, restart, and unknown settlement must not create duplicate work or release uncertain reservations.
+6. **Sequential lifecycle and global lease.** The current provider admission implementation uses one global provider lease (`GLOBAL_PROVIDER_LEASE`), so provider invocations are serialized across integrations, not merely within an experiment. The first slice must remain strictly sequential and must not promise per-integration concurrency. Preserve the global lease and its conservative cancellation, timeout, restart, and unknown-settlement behavior. Per-integration leases or parallel provider execution are deferred until separately designed, tested, and accepted.
 7. **Deterministic verification boundary.** Invoke only predeclared verification commands through the existing scoped command-policy boundary in the isolated checkout. The verifier's current JSON/evidence-shape checks do not prove code correctness and must not be described as doing so.
 8. **Inspection.** Expose enough state to understand who ran, on which revision, under which budgets, what was handed off, what was verified, and what remains unknown. No broad Cyberdeck redesign is required.
 
@@ -150,7 +154,7 @@ The implementation must reuse existing contracts where they fit and explicitly v
 
 Phase 4 is not accepted merely because a multi-model demo runs. All of the following are required:
 
-1. **Contract and security tests:** exact-revision binding, participant identity, per-integration approval/budget, admission failure, cancellation, timeout, lease loss, unknown settlement, and no direct adapter bypass.
+1. **Contract and security tests:** exact-revision binding; schema-level declaration of multiple model participants; distinct stable participant identities; duplicate/ambiguous identity rejection; selected-participant snapshot integrity; per-integration approval/budget; admission failure; cancellation; timeout; global-lease contention; lease loss; unknown settlement; and no direct adapter bypass.
 2. **Isolation tests:** all task inputs, handoffs, outputs, artifacts, and verification commands remain within the benchmark project's authorized scope.
 3. **Lifecycle tests:** interruption/restart cannot silently replay an invocation or claim completion; every terminal state and unknown state is inspectable.
 4. **End-to-end test:** at least two distinct model participants complete the proposal/challenge/synthesis flow through Evo's own runtime, with deterministic verification evidence and a complete provenance record.
