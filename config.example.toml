@@ -90,7 +90,11 @@ allowed_env_vars = []
 # api_key_env = "EXAMPLE_CLOUD_API_KEY"
 # timeout_seconds = 600
 
-# P3.5 dispatch admission is opt-in. Every Registry-bound model integration
+# P3.5 dispatch admission is opt-in. Leave disabled until the P3.5 acceptance gate closes.
+[dispatch]
+enabled = false
+
+# Every Registry-bound model integration
 # requires an explicit budget. Loopback endpoints additionally require an
 # operator-owned resource profile. The integration_id is derived from the
 # exact adapter, normalized endpoint origin, and model identifier; obtain it
