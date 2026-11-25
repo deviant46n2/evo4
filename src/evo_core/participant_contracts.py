@@ -182,7 +182,14 @@ class ParticipantAdapter(Protocol):
 
     def validate_component(self, component: Mapping[str, Any]) -> None: ...
 
-    def bind_component(self, component: Mapping[str, Any], provenance: Mapping[str, str]) -> Any: ...
+    def bind_component(
+        self,
+        component: Mapping[str, Any],
+        provenance: Mapping[str, str],
+        *,
+        secret_values: Mapping[str, str] | None = None,
+        runtime_settings: Mapping[str, Any] | None = None,
+    ) -> Any: ...
 
     def preflight(self, participant: Any, *, timeout_seconds: int) -> "AvailabilityEvidence": ...
 
