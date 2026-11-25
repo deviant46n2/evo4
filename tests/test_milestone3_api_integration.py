@@ -22,6 +22,35 @@ def make_config(root):
     return config
 
 
+
+def schema2_workspace_definition():
+    return {
+        "schema_version": 2,
+        "components": {
+            "primary_model": {
+                "type": "model", "component_version": 1,
+                "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+                "settings": {"endpoint": "http://127.0.0.1:18997/v1", "model": "test-model", "timeout_seconds": 30},
+            },
+            "assistant_runtime": {
+                "type": "assistant_runtime", "component_version": 1,
+                "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+                "settings": {
+                    "model_component": "primary_model", "persona_prompt": "",
+                    "max_output_tokens": 256, "temperature": 0.0,
+                    "context_window_tokens": 4096, "history_messages": 4,
+                    "max_history_chars": 4000, "memory_limit": 2,
+                },
+            },
+            "project_policy": {
+                "type": "command_policy", "component_version": 1,
+                "adapter": {"id": "evo_command_policy", "contract_version": 1},
+                "settings": {"allowed_commands": [["python", "-c"]]},
+            },
+        },
+        "entrypoints": {"assistant": "assistant_runtime"},
+    }
+
 def asgi_request(app, method, path, body=None):
     if "?" in path:
         path_part, query_part = path.split("?", 1)
@@ -187,7 +216,7 @@ class RunMetadataValidationTests(unittest.TestCase):
         self.directory = self.root / "checkout"
         self.directory.mkdir()
         self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
-        cfg = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        cfg = create_configuration(self.store, schema2_workspace_definition(), name="cfg")
         self.workspace = create_workspace(self.store, "Workspace", self.project["project_id"],
                                          cfg["configuration"]["configuration_id"], cfg["revision"]["revision_id"],
                                          checkout_id=self.checkout["checkout_id"])
@@ -238,14 +267,15 @@ class RunMetadataValidationTests(unittest.TestCase):
         self.assertEqual(run["status"], "failed")
         self.assertFalse(created["called"])
 
-    def test_valid_metadata_passes(self):
+    def test_valid_metadata_reaches_disabled_dispatch_gate(self):
         metadata = {"workspace_id": self.workspace["workspace_id"], "project_id": self.project["project_id"], "request": "r"}
         run_id, created = self._run(metadata)
         run = self.store.get_agent_run(run_id)
-        # validation passes; execution may fail later due to no approval etc but conversation created
-        self.assertTrue(created["called"])
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+        self.assertIn("dispatchable", run["summary"] or "")
 
-    def test_valid_approved_plan_metadata_passes(self):
+    def test_valid_approved_plan_metadata_reaches_disabled_dispatch_gate(self):
         from evo_core.orchestration import initialize, create_plan, approve_plan
         initialize(self.app.state.lab_db.connection)
         plan = create_plan(self.app.state.lab_db.connection, "request", self.workspace["workspace_id"],
@@ -268,7 +298,10 @@ class RunMetadataValidationTests(unittest.TestCase):
         import threading
         self.app.state.run_agent(run_id, "request", self.workspace["workspace_id"], threading.Event(), plan["id"])
         self.app.state.assistant.new_conversation = orig_new
-        self.assertTrue(created["called"])
+        run = self.store.get_agent_run(run_id)
+        self.assertEqual(run["status"], "failed")
+        self.assertFalse(created["called"])
+        self.assertIn("dispatchable", run["summary"] or "")
 
 
 class ConversationScopeValidationTests(unittest.TestCase):
