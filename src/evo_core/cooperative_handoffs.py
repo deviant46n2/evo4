@@ -125,10 +125,17 @@ def validate_context_references(references):
             "context reference source_type",
         )
         scope = _text(item["scope"], "context reference scope", maximum=256)
+        expected_trust = {
+            "task_statement": "untrusted_input",
+            "repository_revision": "untrusted_input",
+            "artifact": "derived_output",
+            "verification": "verified_evidence",
+            "handoff": "derived_output",
+        }[source_type]
         trust_label = _enum(
             item["trust_label"],
-            {"trusted_policy", "untrusted_input", "derived_output", "verified_evidence"},
-            "context reference trust_label",
+            {expected_trust},
+            "context reference trust_label for its source type",
         )
         if reference_id in seen:
             raise HandoffError("context references must be unique")
@@ -367,7 +374,11 @@ def create_handoff(
             raise HandoffError("handoff source snapshot is malformed") from exc
         if sha256(snapshot["snapshot_json"].encode("utf-8")).hexdigest() != snapshot["snapshot_hash"]:
             raise HandoffError("handoff source snapshot integrity check failed")
-        snapshot_participant = snapshot_payload.get("participant", {})
+        if not isinstance(snapshot_payload, dict):
+            raise HandoffError("handoff source snapshot must be a JSON object")
+        snapshot_participant = snapshot_payload.get("participant")
+        if not isinstance(snapshot_participant, dict):
+            raise HandoffError("handoff source snapshot participant descriptor is invalid")
         if (
             snapshot_payload.get("invocation_kind") != "participant_completion"
             or snapshot_participant.get("participant_id") != selected.participant.participant_id
@@ -397,7 +408,12 @@ def create_handoff(
         except (KeyError, TypeError) as exc:
             raise HandoffError("source snapshot is missing its bounded context window") from exc
         if (
-            budget.output_tokens > invocation["requested_output_tokens"]
+            isinstance(snapshot_context, bool)
+            or not isinstance(snapshot_context, int)
+            or snapshot_context < 1
+            or isinstance(invocation["requested_output_tokens"], bool)
+            or not isinstance(invocation["requested_output_tokens"], int)
+            or budget.output_tokens > invocation["requested_output_tokens"]
             or budget.input_tokens + budget.output_tokens > snapshot_context
         ):
             raise HandoffError("handoff token ceilings exceed the source invocation or context-window limits")

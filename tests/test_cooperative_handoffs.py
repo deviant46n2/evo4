@@ -134,7 +134,12 @@ class HandoffContractTests(unittest.TestCase):
         with self.assertRaises(HandoffError):
             validate_context_references([{
                 "reference_id": "x", "source_type": "task_statement",
-                "scope": "workspace:ws-1", "trust_label": "trusted",
+                "scope": "workspace:ws-1", "trust_label": "trusted_policy",
+            }])
+        with self.assertRaises(HandoffError):
+            validate_context_references([{
+                "reference_id": "x", "source_type": "verification",
+                "scope": "workspace:ws-1", "trust_label": "untrusted_input",
             }])
 
     def test_budget_rejects_boolean_and_naive_deadline(self):
