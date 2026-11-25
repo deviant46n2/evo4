@@ -20,6 +20,8 @@ def initialize(connection):
       status TEXT NOT NULL,
       cancel_requested INTEGER NOT NULL DEFAULT 0,
       worker_token TEXT,
+      project_id TEXT,
+      workspace_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -35,14 +37,77 @@ def initialize(connection):
     CREATE INDEX IF NOT EXISTS idx_background_events_run
       ON background_agent_events(run_id,id);
     """)
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(background_agent_tasks)").fetchall()}
+    for column in ("project_id", "workspace_id"):
+        if column not in existing:
+            connection.execute(f"ALTER TABLE background_agent_tasks ADD COLUMN {column} TEXT")
+    # Backfill scope for tasks created by earlier versions. Missing or malformed
+    # legacy metadata remains explicitly unscoped rather than being guessed.
+    rows = connection.execute(
+        """SELECT task.run_id, run.metadata_json
+           FROM background_agent_tasks AS task
+           JOIN agent_runs AS run ON run.id=task.run_id
+           WHERE task.project_id IS NULL AND task.workspace_id IS NULL"""
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row[1] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        project_id = metadata.get("project_id")
+        workspace_id = metadata.get("workspace_id")
+        if (
+            isinstance(project_id, str) and project_id.strip()
+            and (workspace_id is None or isinstance(workspace_id, str) and workspace_id.strip())
+        ):
+            connection.execute(
+                "UPDATE background_agent_tasks SET project_id=?,workspace_id=? WHERE run_id=?",
+                (project_id.strip(), workspace_id.strip() if isinstance(workspace_id, str) else None, row[0]),
+            )
     connection.commit()
+
+def _run_scope(connection, run_id, *, tolerate_malformed_metadata=False):
+    row = connection.execute(
+        "SELECT metadata_json FROM agent_runs WHERE id=?", (run_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError("Agent run not found")
+    try:
+        metadata = json.loads(row[0] or "{}")
+    except (TypeError, ValueError) as exc:
+        if tolerate_malformed_metadata:
+            return None, None
+        raise ValueError("Agent run scope metadata is malformed") from exc
+    if not isinstance(metadata, dict):
+        if tolerate_malformed_metadata:
+            return None, None
+        raise ValueError("Agent run scope metadata must be an object")
+    project_id = metadata.get("project_id")
+    workspace_id = metadata.get("workspace_id")
+    if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+        raise ValueError("Agent run project_id metadata is invalid")
+    if workspace_id is not None and (not isinstance(workspace_id, str) or not workspace_id.strip()):
+        raise ValueError("Agent run workspace_id metadata is invalid")
+    if workspace_id is not None and project_id is None:
+        raise ValueError("Agent run workspace_id requires project_id")
+    return (project_id.strip() if isinstance(project_id, str) else None,
+            workspace_id.strip() if isinstance(workspace_id, str) else None)
 
 def create(connection, run_id):
     stamp = now()
+    project_id, workspace_id = _run_scope(
+        connection, run_id, tolerate_malformed_metadata=True
+    )
     connection.execute(
-        "INSERT INTO background_agent_tasks(run_id,status,created_at,updated_at) VALUES(?,?,?,?)",
-        (run_id, "queued", stamp, stamp))
-    _event(connection, run_id, "queued", {})
+        """INSERT INTO background_agent_tasks
+           (run_id,status,project_id,workspace_id,created_at,updated_at)
+           VALUES(?,?,?,?,?,?)""",
+        (run_id, "queued", project_id, workspace_id, stamp, stamp))
+    _event(connection, run_id, "queued", {
+        "project_id": project_id, "workspace_id": workspace_id
+    })
     connection.commit()
     return get(connection, run_id)
 
@@ -182,11 +247,12 @@ def reconstruct_terminal(connection, run_id, outcome, *, decided_at=None,
         raise ValueError("Invalid terminal background task status")
 
     stamp = decided_at or now()
+    project_id, workspace_id = _run_scope(connection, run_id)
     cursor = connection.execute(
         """INSERT OR IGNORE INTO background_agent_tasks
-           (run_id,status,cancel_requested,worker_token,created_at,updated_at)
-           VALUES(?,?,0,NULL,?,?)""",
-        (run_id, outcome, stamp, stamp),
+           (run_id,status,cancel_requested,worker_token,project_id,workspace_id,created_at,updated_at)
+           VALUES(?,?,0,NULL,?,?,?,?)""",
+        (run_id, outcome, project_id, workspace_id, stamp, stamp),
     )
     created = cursor.rowcount == 1
     if created:

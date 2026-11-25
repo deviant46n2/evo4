@@ -90,6 +90,13 @@ class ConfigurationRevisionResult(BaseModel):
     revision: RevisionRecord
 
 
+class SchemaMigrationPreviewResponse(BaseModel):
+    configuration_id: str
+    revision_id: str
+    configuration_version: int
+    preview: dict[str, Any]
+
+
 class ArchiveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -253,6 +260,28 @@ def build_configuration_router(store):
         return ConfigurationRevisionResult(
             configuration=_to_configuration_record(config),
             revision=_to_revision_record(revision),
+        )
+
+    @router.get(
+        "/configurations/{configuration_id}/revisions/{revision_id}/migration-preview",
+        response_model=SchemaMigrationPreviewResponse,
+    )
+    def preview_schema_migration(configuration_id: str, revision_id: str):
+        try:
+            revision = ai_configurations.get_revision(store, configuration_id, revision_id)
+            configuration = ai_configurations.get_configuration(store, configuration_id)
+            preview = ai_configurations.preview_schema1_migration(revision["definition"])
+        except ai_configurations.ConfigurationNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ai_configurations.ConfigurationValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="internal error") from exc
+        return SchemaMigrationPreviewResponse(
+            configuration_id=configuration_id,
+            revision_id=revision_id,
+            configuration_version=configuration["version"],
+            preview=preview,
         )
 
     @router.patch("/configurations/{configuration_id}", response_model=ConfigurationRecord)

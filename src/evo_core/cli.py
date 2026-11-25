@@ -18,12 +18,17 @@ def build_parser():
     doctor=sub.add_parser("doctor",parents=[config_parent],help="Check the configured model endpoint")
     sub.add_parser("serve",parents=[config_parent],help="Start the loopback desktop API server")
     doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
-    for name,help_text in (("chat","Start an interactive conversation"),
-                           ("code","Start an approval-gated coding-agent session")):
+    for name,help_text in (("chat","Privileged local-only interactive conversation (not Registry-scoped)"),
+                           ("code","Privileged local-only coding session (not Registry-scoped)")):
         command=sub.add_parser(name,parents=[config_parent],help=help_text)
+        command.add_argument(
+            "--i-understand-local-only", action="store_true", required=True,
+            help=("Required acknowledgement: this command uses global TOML settings and a local path; "
+                  "it does not enforce Registry project/workspace scope or API instruction boundaries."),
+        )
         command.add_argument("--conversation",help="Resume an existing conversation ID")
         if name=="code":
-            command.add_argument("--workspace",help="Project root (overrides [workspace].root)")
+            command.add_argument("--workspace",help="Unregistered local project root (overrides [workspace].root)")
     mem=sub.add_parser("memory",parents=[config_parent],help="Manage persistent memories")
     ms=mem.add_subparsers(dest="memory_command",required=True)
     add=ms.add_parser("add"); add.add_argument("content"); add.add_argument("--category",default="general")
@@ -84,6 +89,11 @@ def build_parser():
     return parser
 
 def _interactive(args,config):
+    print(
+        "WARNING: privileged local-only mode. This CLI path uses global TOML settings "
+        "and does not enforce Registry project/workspace scope or API instruction boundaries.",
+        file=sys.stderr,
+    )
     assistant=EvoAssistant(config)
     try:
         cid=args.conversation or assistant.new_conversation()

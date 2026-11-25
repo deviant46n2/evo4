@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status: proposed technical plan; implementation not started.**  
+**Status (2026-11-25): P3.1, P3.2, P3.3, P3.4, and P3-R4 accepted. P3.5 authorization, budgets, durable atomic admission, and invocation-lifecycle implementation remain outstanding. Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -38,7 +38,7 @@ The following observations are from the current implementation on `agent-lifecyc
 
 Important distinction: the current assistant provider profile and Registry AI Configurations are two separate configuration paths. Phase 3 must make the Registry configuration executable without accidentally breaking the existing CLI/chat path. Migration or replacement of the legacy path is not a prerequisite unless implementation proves it necessary.
 
-**Phase 2 status caveat:** the roadmap still labels Phase 2 partially implemented. The accepted isolation audit and accepted Project Provisioning v1 are meaningful completed milestones, but they do not by themselves prove every Phase 2 acceptance item is closed. Phase 3 must call the existing workspace resolver and preserve its boundaries, while any uncovered Phase 2 prerequisite remains explicitly tracked. Do not describe Phase 2 as fully complete until the roadmap's complete acceptance gate has been reconciled and accepted.
+**Phase 2 dependency status:** Phase 2 was formally accepted on 2026-11-24 at candidate revision `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`; see `ROADMAP.md` for the full evidence and scope. Its restart semantics are intentionally interruption-only: unfinished tasks retain scope/history and become interrupted; automatic replay/resumption remains disabled, and continuation requires a new task with fresh scope validation. Durable pause/resume is deferred to Phase 5. Phase 3 must continue to call the existing workspace resolver and preserve all accepted isolation boundaries. Phase 2 acceptance does not authorize live dispatch.
 
 **Participant-count caveat:** two configuration instances that point to the same endpoint/model are not two independent participants for cooperation testing. Likewise, the current CodingAgent wraps the assistant's provider; it is not an independent model implementation. Phase 3 must demonstrate two genuinely distinct participant implementations or runtime kinds through the common contract, and Phase 4 must identify exactly which independent participants are contributing. A fake test adapter does not satisfy production acceptance. A second adapter may be a distinct non-model runtime (for example, a deterministic verifier) if it has a real bounded contract and useful contribution. If the chosen Phase 4 cooperation pattern requires two independent model judgments, that requires two independently addressable model participants and must be tested as such.
 
@@ -205,6 +205,75 @@ Resource estimates are not guarantees or OS isolation. The existing hardware adm
 
 For the local-first deployment, do not invent token/cost estimates when the endpoint does not report usage. Track configured maximums and actual usage when returned; label unavailable measurements as unknown. Remote-provider request/token budgets must be operator-configured and enforced conservatively; if quota is unknown and no conservative local limit is configured, fail closed. The first version need not implement sophisticated forecasting or dynamic model loading.
 
+### 6.1 P3-R4 — resource semantics and telemetry contract (proposal; independent challenge pending)
+
+This section proposes the resolution of P3-R4. It is a design decision only: it does not implement admission, reserve capacity, authorize invocation, or enable dispatch. P3.5 must implement and test the accepted contract before any participant can be invoked.
+
+#### Execution locality is code-derived, not user-asserted
+
+Use three runtime locality classes:
+
+- `local_process`: the participant executes inside Evo's local process. The deterministic verifier is in this class.
+- `local_endpoint`: the configured model endpoint is statically loopback (`localhost`, IPv4 loopback, or IPv6 loopback), meaning the inference service runs on this same host.
+- `remote_service`: every non-loopback endpoint, including a private/LAN address, is external to this host for local-resource accounting. It consumes provider-side resources, not this host's inference VRAM.
+
+For the OpenAI-compatible adapter, derive endpoint locality from the validated endpoint's static loopback classification (the same policy used by `provider_endpoint.py`). Do not infer locality from provider brand, model name, DNS answers, process-name heuristics, or a workspace-supplied boolean. The pinned transport already rejects a non-local hostname resolving to loopback and a loopback hostname resolving elsewhere. A LAN inference server is remote for this machine's CPU/RAM/GPU budget even if it is physically nearby.
+
+#### Code-owned resource declarations
+
+Each invokable adapter must return an immutable, validated resource declaration for its bound participant. A declaration identifies locality and bounded peak incremental demand in explicit units:
+
+- host CPU cores (fractional cores);
+- host RAM MiB;
+- host GPU VRAM MiB, only when the participant consumes this host's GPU;
+- optional hard safety constraints such as maximum GPU temperature.
+
+The declaration is an estimate and admission bound, not an OS quota or guarantee. It must not be a free-form dictionary supplied by configuration. The common participant descriptor exposes the resolved declaration for inspection.
+
+Initial declarations:
+
+| Participant | Locality | Required local dimensions | Initial code-owned demand |
+|---|---|---|---|
+| OpenAI-compatible remote endpoint | remote_service | CPU, RAM | 0.05 CPU cores; 64 MiB RAM for bounded client/request handling; no local GPU requirement |
+| OpenAI-compatible loopback endpoint | local_endpoint | CPU, RAM, plus GPU VRAM when configured compute mode uses GPU | Operator-owned resource profile required; no guessed model size or VRAM demand |
+| Deterministic verifier | local_process | CPU, RAM | 0.10 CPU cores; 64 MiB RAM; no GPU requirement |
+
+The local model profile is selected by a reference in the model component, but its contents and reserve policy are operator-owned in the local Evo configuration—not writable by the AI Configuration. Persistent-residency attestation is a material safety assumption: if an operator labels a cold/unloaded model as already resident, admission can undercount cold-load memory and cause an OOM. The UI and profile documentation must warn about this explicitly; when uncertain, select cold-load demand. Do not treat process-name or GPU-process-memory observation as proof of model identity or preload state. It declares `compute_mode` (`cpu`, `gpu`, or `mixed`), bounded peak CPU cores and RAM MiB, and VRAM MiB when GPU is used. It also declares whether the supplied memory estimate covers a persistent/preloaded model's incremental invocation demand or a possible cold load. A cold-load estimate must include model/runtime load plus peak request-time allocation; a persistent/preloaded estimate covers peak incremental invocation allocation beyond memory already reflected in telemetry. Persistent residency is an operator assertion, not something inferred from a model-list response or process name. Missing profile, unknown compute mode, or missing required estimate yields unknown and denies/defer dispatch; no default GPU estimate is invented. The adapter contract version must advance from 1 to 2 when the local resource-profile reference becomes executable adapter configuration. The version-2 local component requires a non-empty `resource_profile_id`; the version-1 component remains readable but is non-dispatchable for loopback/local inference until explicitly migrated. Remote service components remain valid under version 1 and do not require this field. Do not reinterpret an existing version-1 local component as having a default profile. Existing schema-2 local endpoint definitions without a profile remain readable but non-dispatchable until explicitly migrated. Remote schema-2 definitions do not need a local inference profile.
+
+The initial GPU telemetry backend is NVIDIA `nvidia-smi`; GPU/mixed local inference on AMD/Intel or unsupported devices remains unknown and fails closed until a separately implemented and validated backend exists. The 85°C default is not a universal hardware throttle limit; expose it as an operator-configurable conservative ceiling and document that vendors/models have different thermal limits. `os.cpu_count()` may be unavailable; missing logical-core count is unknown and fails closed. The existing advisory workload scheduler still has its own interactive-priority behavior and is intentionally not participant admission; do not imply that this P3-R4 contract retroactively changes that scheduler.
+
+The deterministic verifier's fixed declaration is code-owned and bounded by its existing 1 MiB input/output limits. The fixed estimate is deliberately conservative for its small structured-validation workload; if implementation measurements later show it inadequate, revise the adapter implementation/version and tests rather than letting configuration enlarge its authority.
+
+#### Required telemetry by locality
+
+All dimensions use the same UTC `sampled_at` from `evo_experiments.monitor.sample_nvidia_smi()`. The sampler records `sampled_at` only after all RAM, CPU, NVIDIA, and GPU-process probes complete, and includes `collection_duration_seconds` measured with a monotonic clock. P3.5 must parse `sampled_at` as timezone-aware, reject future/invalid timestamps, and require age no greater than the operator-configured freshness window (initial default: 10 seconds). A stale sample is unknown. A missing individual field is unknown only when that field is required by the participant declaration. The timestamp represents snapshot completion, not the age of each individual metric at its exact collection instant; the bounded collection duration is retained for diagnostics.
+
+- **All invocations:** host RAM available bytes and host CPU logical-core count plus 1-minute load average. RAM headroom is `ram_available_bytes / 1 MiB`. Conservative CPU headroom is `max(0, logical_cores - load_average_1m)`; this is an admission heuristic, not a scheduler guarantee. Missing required RAM/CPU telemetry fails closed. If `cpu_utilization_percent` is available and is at or above the operator-configured CPU pressure ceiling (initial default: 90%), admission defers even when load-average headroom otherwise clears. Utilization is unavailable on the first counter sample; in that case this secondary pressure check is skipped, not treated as zero utilization. Load average includes uninterruptible I/O wait and can therefore conservatively defer CPU work during storage/network stalls; utilization helps distinguish saturation but does not fully resolve that limitation.
+- **local_endpoint with CPU compute:** host CPU and RAM only; NVIDIA telemetry is irrelevant and must not block the invocation.
+- **local_endpoint with GPU or mixed compute:** additionally require `gpu_available=true`, GPU memory used/total, and GPU temperature. Free VRAM is total minus used. Missing NVIDIA telemetry or required GPU fields is unknown and fails closed.
+- **remote_service:** never require GPU VRAM, GPU utilization, GPU temperature, or NVIDIA process discovery for local admission. Provider-side rate/token/spend/concurrency budgets and compliance are separate mandatory provider gates in P3.5; local GPU telemetry cannot substitute for them.
+- **local_process verifier:** CPU and RAM only; GPU telemetry is irrelevant.
+
+#### Operator reserves and decision semantics
+
+Initial code defaults should preserve the existing advisory policy's 2,048 MiB host-RAM reserve, 1,024 MiB GPU-VRAM reserve, 90% maximum RAM-used pressure threshold, and 85°C GPU-temperature ceiling. Add a 1.0 CPU-core reserve and 90% CPU-utilization pressure ceiling. These are conservative starting defaults, not hardware-optimal constants: fixed absolute reserves can consume a large fraction of small systems and a small fraction of large systems. Make thresholds and the 10-second freshness window operator-owned settings in local Evo configuration, with validated bounds and documented defaults; permit operator tuning without allowing AI Configuration to lower reserves or raise ceilings/freshness. AI Configuration definitions may select a resource profile but cannot lower reserves, increase freshness, or supply telemetry values.
+
+For each required dimension, admission requires:
+
+- CPU: `cpu_headroom_cores - declared_cpu_cores >= reserve_cpu_cores`.
+- RAM: `ram_available_mib - declared_ram_mib >= reserve_ram_mib`, and RAM-used percentage below the configured pressure ceiling.
+- GPU (only for local GPU/mixed inference): `gpu_free_vram_mib - declared_gpu_vram_mib >= reserve_vram_mib`, and GPU temperature below the configured ceiling.
+
+Any missing, malformed, stale, or unknown required input produces `unknown` (not allow). A known reserve violation produces `defer`. Only all-known dimensions clearing all reserves can produce `allow`. Interactive priority affects queue ordering only; it does not bypass protected reserves or permit preemption. No automatic process killing, GPU clock/power changes, or service reconfiguration is part of admission.
+
+The sample is an observation, not a lock on resources owned by other processes. P3.5's SQLite single-flight lease prevents overlapping Evo participant invocations; it cannot reserve GPU/RAM against unrelated desktop applications. Admission must re-sample immediately before dispatch and record the exact sample timestamp, declared demand, reserve policy version, and per-dimension decision. The result is a bounded best-effort decision, not a guarantee against external workload races.
+
+#### Boundaries with existing hardware features
+
+Reuse the existing telemetry sampler and its allowlisted metrics. The existing `assess_workload` and hardware scheduler remain advisory workload-management features; they do not become participant admission. In particular, the workload scheduler's expiring queue reservations and process-control-free lifecycle are not substitutes for P3.5's durable provider-dispatch lease, whose abandoned state must remain blocking until safe recovery. Do not merge the two lease models.
+
+This proposal resolves the P3-R4 design questions if independently accepted. It does not implement P3.5, provider budgets, authorization, invocation persistence, or dispatch.
+
 ## 7. Security, isolation, and failure requirements
 
 - Resolve the exact workspace-pinned configuration revision at dispatch time. Reject missing/mismatched revisions and archived/inactive workspace, project, or configuration relationships. Do not reject an older pinned revision merely because the configuration's current revision has advanced.
@@ -246,6 +315,9 @@ The following order minimizes speculative framework work.
 - Make the first runtime slice a concrete factory that takes the resolved workspace binding and exact immutable AI Configuration revision and constructs the complete assistant runtime actually used by the invocation, not just a replacement provider.
 - Route every registered-workspace entrypoint through this factory: workspace-scoped chat turns, agent-plan proposal generation, and CodingAgent/approved-plan execution. Keep the legacy global assistant path only for calls without a registered workspace binding.
 - Add explicit, version-checked workspace configuration rebind with append-only binding history. Rebind creates no revision and changes no in-flight invocation; it only changes which already-existing immutable revision future invocations resolve.
+- Persist a secret-safe immutable runtime snapshot for each caller-assigned invocation ID. The snapshot records exact workspace/version/configuration revision, revision hash, checkout, participant and adapter identity, effective runtime settings, command policy, invocation kind, and provenance; it excludes resolved credential values. Snapshot creation revalidates the workspace binding inside the same SQLite write transaction, and snapshot rows are append-only with integrity hashes. Snapshot persistence does not itself authorize dispatch or prove execution.
+- Consume snapshots at every workspace invocation boundary: workspace chat, plan proposal, plan execution, and coding-agent start. Use distinct invocation IDs for proposal and execution; retain the proposal ID on the plan, the execution ID plus proposal ID in the run metadata, and the chat invocation ID in both turn messages. Coding-agent workers must verify the stored snapshot's invocation kind, workspace/version/revision identity, and full non-secret runtime payload before proceeding; a rebind or runtime drift fails closed rather than silently changing the run's revision.
+- Record the snapshot before the existing dispatch gate so a valid but currently disabled workspace request leaves an auditable binding attempt. Such a snapshot is not an executed invocation, is not a lifecycle record, and does not enable dispatch. Rejected scope/configuration requests must not create snapshots. P3.5 remains responsible for durable admission decisions and invocation lifecycle state. Runs created before invocation-snapshot integration have no invocation reference and therefore fail closed if a worker attempts to process them; they are not silently rebound or resumed. Recovery requires a new task with a fresh workspace binding and snapshot. This is an intentional compatibility boundary, not automatic migration of in-flight work.
 - Binding order is fixed: authorized workspace → active configuration relationship → exact workspace-pinned immutable revision → schema/entrypoint validation → explicit logical-entrypoint-to-component resolution → assistant-runtime/model-reference validation → code-controlled adapter registry → resolved secret references → immutable participant and assistant-runtime instances.
 - A newer configuration current revision does not invalidate an older revision pinned by a workspace. Reject missing/mismatched revisions and inactive/archived relationships, not merely revisions that are no longer current.
 - The selected revision must determine provider/model, generation settings, context/memory/history budgets, persona guidance, and project command policy. Operator-owned global command ceilings and code-owned safety policy remain outside user configuration and cannot be overridden. Record exact provenance in the participant and invocation.
@@ -257,7 +329,7 @@ The following order minimizes speculative framework work.
 
 ### P3.3 — First provider participant
 - Wrap/reuse the existing OpenAI-compatible transport behind the new adapter boundary.
-- Preserve current assistant/CLI compatibility.
+- Preserve the global TOML assistant path for non-Registry callers. The direct `evo chat` and `evo code` CLI modes are explicitly privileged local-only operations, require an acknowledgement flag, and are not represented as Registry-scoped API equivalents. Any future Registry-aware CLI mode must reuse the same runtime-binding and authorization boundary.
 - Normalize streaming, usage, errors, timeout, cancellation, and malformed responses.
 - Record adapter/config/provider/model provenance without exposing credentials.
 
@@ -271,6 +343,8 @@ The following order minimizes speculative framework work.
 - If no second production runtime can be integrated safely, report the blocker and seek an explicit Phase 3/4 acceptance revision rather than weakening boundaries.
 
 **Exit:** two genuinely distinct production participant implementations can be bound and contract-tested through the common contract, with deterministic tests and documented contributions. Live dispatch of either participant remains gated on P3.5. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
+
+P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574` (2026-11-25). The `evo_deterministic_verifier` is a distinct local-only participant. It checks bounded JSON-object output, required/extra fields, and the shape of evidence-reference strings, with a maximum of 128 valid returned references. It does not resolve references, establish that referenced artifacts exist, verify factual claims, execute arbitrary tools, use network access, or receive secrets. Registry runtime construction binds configured verifier components from the exact pinned revision and exposes model plus verifier descriptors/bindings through one inspection surface. The verifier adapter is immutable after construction; production runtime installs no invocation authorizer. Independent validation of the exact accepted SHA passed compileall, 14 focused verifier tests, 21 participant/runtime-binding tests, and the full 877-test suite with zero failures/errors/skips. Diff checks against both P3.4 and cumulative bases passed. The local self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`. Original checkout and all 32 pre-existing worktrees were preserved. No live dispatch or provider calls occurred. Formal acceptance is limited to P3.4; P3.2 and P3-R4 are separately accepted. P3.5 remains gated and no live dispatch is enabled.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - This is the first milestone that may enable live participant dispatch. Until its gate is complete, P3.2–P3.4 may construct, inspect, and test participants with inert/fake adapters, but must not expose a live Registry-bound invocation path.
@@ -297,7 +371,7 @@ The following order minimizes speculative framework work.
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.4 and P3-R4 are accepted; P3.5 implementation and remaining Phase 3 criteria are still outstanding. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
@@ -350,4 +424,29 @@ The precise Python names and persistence details remain implementation choices, 
 
 ---
 
-**Implementation boundary:** This plan is ready for technical review. Phase 3 code changes should begin only after the plan and P3.1 contract proposal are explicitly authorized.
+**Implementation boundary:** P3.1 contract foundations are accepted and P3.2 implementation is authorized. Continue only within the documented phase sequence. Do not enable live dispatch before P3.5 authorization/admission. P3-R4 is accepted as the resource-admission design prerequisite; implement its contract only within P3.5's authorization, budget, and durable lease boundary.
+
+
+## P3.3 acceptance checkpoint (2026-11-25)
+
+P3.3 OpenAI-compatible participant adapter is **accepted** at exact candidate `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1` (parent `9227983befe938b9bd605acd9f54400861869def`). Independent detached-worktree validation: compileall passed; 148 focused tests passed; full suite 863/863 passed with zero failures/errors/skips; cumulative diff-check from `6c12cf467cde61166be74e1e501e58de1c8decf6` passed. Checkout/worktree preservation was confirmed.
+
+The adapter uses the pinned Registry transport, strict bounded parsing, secret redaction, immutable runtime-bound settings, and cooperative cancellation with bounded request timeouts. Actual CR/LF injection, worker ordering, pre-cancel behavior, provenance completeness, and the transport/security boundaries were verified. No live provider calls or live dispatch occurred; the API/worker dispatch gate remains closed.
+
+P3.2 and P3-R4 are separately accepted. This does not accept P3.5 or authorize live dispatch. P3.5 remains the first milestone that may enable live dispatch.
+
+
+## P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
+
+Accepted at exact validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd`. Independent detached-worktree validation: compileall passed; focused telemetry suite 5/5 passed; full unittest suite 879/879 passed with zero failures/errors/skips; diff checks against both P3.4 base `ad04198b95708df58aae1ff07e0b38380671b574` and cumulative base `6c12cf467cde61166be74e1e501e58de1c8decf6` passed. The GPU regression proves probe/process/timestamp ordering, and the GPU fixture was confirmed valid. The no-NVIDIA path and UTC completion timestamp/nonnegative monotonic duration were verified. Original checkout and 32 pre-existing worktrees were preserved.
+
+This closes the P3-R4 design/freshness prerequisite only. P3.2 is separately accepted. It does not implement P3.5 or authorize live dispatch/provider calls. P3.5 must still implement authorization, budgets, durable atomic admission, and invocation lifecycle before any live dispatch.
+
+
+## P3.2 formal acceptance record
+
+**ACCEPTED — 2026-11-25.** Exact implementation validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; documentation-only whitespace correction `11b173d7d7405c80f1ec6c5acb9087b5e1382646`.
+
+Independent validation: compileall passed; full suite 843/843 passed; focused runtime/workspace/snapshot/orchestration tests 100/100 passed. The only finding was trailing whitespace in documentation, fixed in the docs-only follow-up. No source or tests changed in that cleanup. Later cumulative P3.3/P3.4/P3-R4 validations passed 863/863, 877/877, and 879/879 respectively, with cumulative diff checks clean.
+
+The accepted implementation constructs workspace runtimes from exact pinned revisions, records invocation snapshots at workspace-bound entrypoints, and verifies the pinned runtime again in the worker before any execution. Assistant messages retain the invocation ID. Runtime dispatch remains inert and fail-closed until P3.5. No live provider calls were made.

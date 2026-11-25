@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .store import utc_now
 from . import project_checkouts
+from .ai_configurations import _decode_row
 
 
 class WorkspaceNotFoundError(Exception):
@@ -100,7 +101,7 @@ def _revision_row(db, configuration_id, revision_id):
         raise WorkspaceRelationshipError(
             f"revision not found: {revision_id} for configuration {configuration_id}"
         )
-    return dict(row)
+    return _decode_row(row)
 
 
 def _checkout_row(db, checkout_id):

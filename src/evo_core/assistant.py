@@ -304,21 +304,23 @@ class EvoAssistant:
                     return self.store.propose_memory(content,category,source="conversation:user",conversation_id=conversation_id,confidence=confidence)
         return None
 
-    def turn(self, conversation_id, user_text, on_token=None, project_id=None, workspace_id=None):
+    def turn(self, conversation_id, user_text, on_token=None, project_id=None, workspace_id=None, invocation_id=None):
         if not user_text.strip():
             raise ValueError("Message cannot be empty")
         # Build context before persisting this turn so the current user message is not duplicated.
         project_id, workspace_id = self._resolve_conversation_scope(
             conversation_id, project_id=project_id, workspace_id=workspace_id)
         messages = self._build_messages(conversation_id, user_text, project_id=project_id, workspace_id=workspace_id)
-        self.store.add_message(conversation_id,"user",user_text,project_id=project_id,workspace_id=workspace_id)
+        user_metadata = {"runtime_invocation_id": invocation_id} if invocation_id else None
+        self.store.add_message(conversation_id,"user",user_text,metadata=user_metadata,project_id=project_id,workspace_id=workspace_id)
         self._capture_memory_candidate(conversation_id,user_text)
         result = self.provider.chat(messages,max_tokens=self.config.max_tokens,
                                     temperature=self.config.temperature,on_token=on_token)
         self.store.add_message(conversation_id,"assistant",result["content"],metadata={
             "elapsed_seconds":result["elapsed_seconds"],"ttft_seconds":result["ttft_seconds"],
             "prompt_tokens":result["prompt_tokens"],"completion_tokens":result["completion_tokens"],
-            "finish_reason":result.get("finish_reason"),"truncated":bool(result.get("truncated",False))},
+            "finish_reason":result.get("finish_reason"),"truncated":bool(result.get("truncated",False)),
+            **({"runtime_invocation_id": invocation_id} if invocation_id else {})},
             project_id=project_id,workspace_id=workspace_id)
         return result
 

@@ -123,8 +123,8 @@ Current verified implementation:
 - Conversations carry `project_id` and `workspace_id`; messages inherit that scope through their parent conversation rather than storing duplicate scope columns. Store/API access applies scope visibility checks. Source: `src/evo_core/store.py`, `src/evo_core/api.py`.
 - Memories, memory candidates, lessons, research documents, and tasks carry project/workspace scope fields and scope-aware retrieval/listing paths. Source: `src/evo_core/store.py`, `src/evo_core/assistant.py`, `src/evo_core/api.py`.
 - Assistant context assembly resolves the conversation scope and filters repository instructions, memories, lessons, research, and message history by the authorized project/workspace scope. This is not evidence that every task, background-agent, or tool-execution path has passed the full isolation gate. Source: `src/evo_core/assistant.py`.
-- Agent plans carry nullable `project_id` and `workspace_id` fields and validate supplied scope; legacy/global plans remain possible. Full scope propagation and mismatch rejection through every approval, execution, interruption, recovery, and resumption path still require acceptance evidence. Source: `src/evo_core/orchestration.py`.
-- **Phase 2 remains partially implemented pending full acceptance reconciliation.** The bullets above describe current source behavior, not a claim that every Phase 2 acceptance criterion has passed. In particular, retain the full isolation test gate and verify CLI/API equivalence, instruction trust boundaries, checkout overlap/symlink protections, and scope continuity across all task/background execution paths before closing Phase 2.
+- Agent plans carry nullable `project_id` and `workspace_id` fields and validate supplied scope; legacy/global plans remain possible. Scope continuity is accepted through approval/execution boundaries, cancellation, and restart recovery. Recovery preserves scope/history and marks unfinished work interrupted; automatic replay/resumption is intentionally unsupported. Continuing requires a new task with fresh scope validation. Source: `src/evo_core/orchestration.py`, `src/evo_core/background_agent.py`.
+- **Phase 2 implementation and regression validation are complete; formal acceptance is recorded below.** The exact candidate revision `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31` passed the full 824-test suite, compileall, and diff-check. Independent review reconciled scope continuity: interruption and restart recovery preserve scope and history, but automatic resumption/replay is intentionally unsupported. Continuing work requires a new task with fresh scope validation. This is a documented capability boundary, not an acceptance failure.
 
 Original milestones and current source status (implementation presence is not the same as acceptance):
 
@@ -132,19 +132,23 @@ Original milestones and current source status (implementation presence is not th
 |---|---|---|
 | Scope and authority contract | Shared scope validation and visibility helpers; scope integrity/persistence tests. | Implemented in source; retain as part of the full isolation gate. |
 | Project-scoped conversations | Conversation rows carry project/workspace scope; messages inherit through the parent conversation; API filters reads and mutations. | Implemented in source; covered by backend tests. |
-| Task and agent-plan scope | Tasks and plans carry scope fields; plans validate supplied scope; API applies scope visibility and workspace checks. | Partially implemented/accepted only in part; continuity through every approval, execution, interruption, recovery, and resumption path still needs explicit evidence. |
-| Command-policy enforcement | Project command prefixes are intersected with the operator's global allowlist for coding-agent execution; missing project policy fails closed; per-action approvals remain. Agent-plan proposal generation still uses the global allowlist and does not yet apply the project-specific intersection. | Implemented in source and tests for execution; consistent enforcement across proposal, approval, and execution remains an acceptance requirement. This is an allowlist boundary, not an OS sandbox. |
+| Task and agent-plan scope | Tasks and plans carry scope fields; plans validate supplied scope; API applies scope visibility and workspace checks. Background tasks persist first-class project/workspace scope through cancellation and restart recovery; malformed metadata is never used to infer scope. | Accepted for Phase 2: scope is preserved through approval/execution boundaries, cancellation, and restart recovery. Interrupted work is not automatically resumed or replayed; a new task must revalidate scope. Durable pause/resume remains a later orchestration capability. |
+| Command-policy enforcement | Project command prefixes are intersected with the operator's global allowlist. Workspace plan proposal generation and validation receive the effective workspace runtime allowlist; missing project policy fails closed; per-action approvals remain. | Accepted for Phase 2: the effective project/global intersection is applied to workspace plan proposals and validation as well as execution. This is an allowlist boundary, not an OS sandbox. |
 | Project-scoped memory and retrieval | Memories, candidates, lessons, research, and retrieval paths carry/filter project/workspace scope. | Implemented in source; keep cross-scope leakage tests in the acceptance gate. |
 | Project instructions and configuration | Trusted Evo-managed instructions are resolved by scope; repository instruction files remain untrusted; Registry configurations/workspaces pin revisions. | Implemented in source; full precedence/trust-boundary evidence remains part of acceptance. |
 | Project selection and switching UX | Projects and Workspaces UI components exist in the desktop app. | UI implementation exists; end-to-end selection/uncertain-scope behavior still needs review. No dedicated frontend test framework is currently present. |
-| Isolation verification | Scope, retrieval, workspace execution, and provisioning test suites exist; the prior isolation audit and Project Provisioning v1 were accepted. | Partial acceptance only. The full Phase 2 gate remains open until the remaining cross-path checks below are reconciled. |
+| Isolation verification | Scope, retrieval, workspace execution, provisioning, background-task lifecycle, and API integration tests; Project Provisioning v1 previously accepted. | Accepted on candidate revision `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`: 824 tests passed; compileall and diff-check passed; independent regression review found no remaining blockers. |
 
-Remaining Phase 2 acceptance checks:
-- CLI/API equivalence for scope-sensitive operations.
-- Instruction trust boundaries and precedence across assistant, plan, and coding-agent paths.
-- Checkout overlap, symlink, and canonical-path protections under adversarial cases.
-- Scope continuity and mismatch rejection across all task/background execution paths, including approval, cancellation, restart recovery, and resumption.
-- Cross-project retrieval and execution leakage tests across the full set of scoped records and API operations.
+Phase 2 acceptance reconciliation (2026-11-24):
+- CLI/API scope-sensitive behavior: accepted through the explicitly privileged and documented local-only CLI mode (`--i-understand-local-only`); it is not represented as Registry-scoped equivalence.
+- Instruction trust/precedence: accepted by source review and existing tests; repository-provided instructions remain untrusted and cannot override global policy.
+- Checkout overlap, symlink, and canonical-path protections: accepted by adversarial-path tests and source review.
+- Task/plan scope continuity: accepted through approval/execution boundaries, cancellation, and restart recovery. Recovery preserves scope/history and marks unfinished work interrupted. **Automatic resumption or replay is explicitly unsupported and disabled** because external side effects may have completed immediately before interruption. A user who wants to continue must create a new task, which undergoes fresh scope validation. Durable pause/resume is deferred to Phase 5.
+- Cross-project retrieval and execution isolation: accepted by the scoped-record, API, and execution-boundary regression tests.
+
+**Phase 2 formal acceptance — ACCEPTED (2026-11-24).** Exact candidate revision: `b0d21835ead18825cd0ebb6fe7a95d32d4df5c31`. Independent detached-worktree validation reported `python -m compileall -q src tests` exit 0; `python -m unittest discover -s tests -v` passed 824 tests with zero failures, errors, or skips; `git diff --check d11cb1de0b39d8a0367cb4d7098782da4354b006..HEAD` exit 0. The regression count improved from 823 tests with 8 failures and 3 errors to 824 passing tests. The original user checkout remained unchanged at `local-demo-ready-v1` / `a8ab59324caceab5b6fb2e5c674276c5ba96d072`; 32 pre-existing worktrees were preserved.
+
+Acceptance scope is limited to Phase 2 project/workspace/instruction/context isolation and its documented privileged local-only CLI boundary. It does not imply durable task resumption: unfinished tasks are interrupted on restart, never silently replayed, and continuation requires a new scope-validated task. It does not authorize Phase 3 live dispatch or merge into the user's original checkout.
 
 Original milestones and design detail:
 1. Scope and authority contract.
@@ -213,6 +217,14 @@ Risks and unresolved decisions:
 Command policy is settled: effective permissions are the intersection of global and project permissions. Project policy can only restrict global permissions and cannot expand them. Missing, invalid, or ambiguous project policy must not silently grant broader access. Milestone 2b implements and enforces this model; milestone 4 tests instruction precedence and command-policy behavior against the already settled model.
 
 **Phase 3 — Participant contracts and runtime binding**
+**Phase 3 implementation status (2026-11-25; updated after P3.3 acceptance):**
+- P3.1 executable configuration/contract foundations: accepted.
+- P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: **accepted**. Exact implementation validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; 843 tests passed, compileall passed, and the only documentation whitespace finding was corrected in `11b173d7d7405c80f1ec6c5acb9087b5e1382646`. Later cumulative P3.3/P3.4/P3-R4 validations also passed.
+- P3.3 OpenAI-compatible participant adapter: accepted at exact candidate 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; independent validation passed 863/863 tests, compileall, and cumulative diff-check. Formal evidence is recorded below.
+- P3.4 deterministic verifier: implementation in progress. A bounded local-only verifier adapter is being integrated into revision-pinned Registry runtime construction; independent validation and acceptance are pending.
+- P3.5 remains the first milestone permitted to enable live Registry-bound dispatch. No production dispatch authorizer is installed; no live provider dispatch or external provider calls are enabled.
+- P3-R4 resource-admission design and telemetry freshness: accepted as the P3.5 design prerequisite; implementation belongs to P3.5.
+
 - Runnable AI Configuration components use an explicit, versioned typed schema; legacy opaque schema-version 1 definitions remain readable but are not executable by default. Existing schema-1 workspaces require explicit migration preview, a new immutable schema-2 revision, and version-checked workspace rebind; no silent auto-migration.
 - The first runtime integration proves that the exact immutable workspace-pinned configuration revision constructs and controls the complete assistant runtime for every workspace-bound entrypoint: chat turns, agent-plan proposal generation, and coding-agent/approved-plan execution. Creating a newer configuration revision does not invalidate an older revision already pinned by a workspace. The global TOML assistant remains a separate legacy path only for callers without a Registry-bound workspace; no silent fallback is permitted.
 - The pinned revision determines provider/model, generation settings, context/memory/history budgets, persona guidance, and project command policy. Operator-owned global command ceilings and code-owned safety policy remain authoritative.
@@ -297,7 +309,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5, but configuration-to-runtime binding, project-scoped context, common participant dispatch, and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are accepted at validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; P3.3 participant adapter is accepted at `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; P3.4 deterministic verifier is accepted at `ad04198b95708df58aae1ff07e0b38380671b574`. P3-R4 resource-admission design and telemetry freshness are accepted at `85b9f933a32dc45b72492dfee136edaad5c882fd`. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission. P3.5 admission and dispatch remain unimplemented. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
@@ -353,3 +365,70 @@ None. Residual limitations for accepted priorities are documented in `docs/GEMIN
 ### False positives
 - Evaluation false positive: disproved by `evaluate_task`.
 - Unbudgeted context: disproved by `_fit_context`.
+
+
+### P3.3 OpenAI-compatible participant adapter — ACCEPTED (2026-11-25)
+
+**Disposition: ACCEPTED at candidate `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`.** Independent detached-worktree validation verified the exact SHA, its parent `9227983befe938b9bd605acd9f54400861869def`, and cumulative base `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Acceptance evidence supplied by the independent local validator:
+- `python -m compileall -q src tests`: exit 0.
+- Focused adapter, endpoint, provider/runtime/workspace/API/contract tests: 148 passed, zero failures/errors.
+- `python -m unittest discover -s tests -v`: 863 passed, zero failures/errors/skips.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD`: exit 0, no findings.
+- The CRLF regression test contains actual CR/LF control characters; injection is rejected and ordinary JSON content type is accepted. Worker start ordering, pre-cancel behavior, cancellation event suppression, timeout bounds, and complete provenance fixtures were verified.
+- Security review confirmed pinned Registry transport, TLS/peer/origin/DNS/redirect/proxy protections, bounded parsing and timeouts, secret non-disclosure, no Registry provider-factory injection, and no network activity during runtime construction.
+- No API or worker path reaches live provider dispatch. No live provider calls were made.
+- Original checkout remains `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees preserved.
+
+GPT-6 reviewed the cumulative change inventory and the current adapter/transport sources. The two defects found by the first independent validation (literal CR/LF validation and worker start after generator yield), plus the incomplete test fixtures, were corrected. The follow-up regression-test literal defect and whitespace finding were also corrected before this clean validation. No remaining P3.3 acceptance finding is recorded.
+
+Acceptance is limited to P3.3 adapter implementation and its tested security/contract behavior. P3.2 and P3-R4 are separately accepted. P3.5 remains the first milestone permitted to enable live dispatch; no live dispatch or external provider calls are enabled.
+
+
+### P3.4 deterministic verifier — formal acceptance (2026-11-25)
+
+**Disposition: ACCEPTED** at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574`, on `agent-plan-verification-hardening-v1`. P3.4 base: `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; previous validation target: `781a0459d358532a3c71faa679d10128127207b5`; cumulative diff base: `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree validation of the exact accepted SHA reported:
+- `python -m compileall -q src tests`: exit 0.
+- `python -m unittest tests.test_deterministic_verifier -v`: 14 tests passed.
+- `python -m unittest tests.test_participant_contracts tests.test_runtime_binding -v`: 21 tests passed.
+- `python -m unittest discover -s tests -v`: 877 tests passed, zero failures, errors, or skips.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD` and `git diff --check 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1..HEAD`: both exit 0.
+- The final semantic correction was verified: the deterministic verifier's local completion self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`.
+- Source review confirmed bounded local JSON validation, shape-only evidence references (maximum 128 valid references), no reference resolution or truth claims, no shell/network/secret capability, immutable revision-specific binding, and no production invocation authorizer. Invocation fails closed without authorization; workspace configurations without a verifier remain compatible.
+- No API or worker route can invoke either participant before P3.5. P3-R4 design is accepted; P3.5 implementation remains outstanding. No live provider calls or dispatch were enabled.
+- The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, with identical status; all 32 pre-existing worktrees were preserved. No tests were weakened or removed.
+
+Acceptance is limited to P3.4's deterministic verifier implementation, exact-revision runtime binding, and the tested inert/fail-closed behavior. P3.2 and P3-R4 are separately accepted. P3.5 remains the first milestone permitted to enable live dispatch; no external provider calls are enabled.
+
+
+### P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
+
+**Disposition: ACCEPTED** at validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd` on `agent-plan-verification-hardening-v1`. Previous telemetry-fix candidate: `e13f3b2a3ee55a12d7c7afe16e0a35a29ed25810`; P3.4 accepted base: `ad04198b95708df58aae1ff07e0b38380671b574`; cumulative validation base: `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree validation of the exact SHA reported:
+- `python -m compileall -q src tests`: exit 0.
+- `python -m unittest tests.test_telemetry -v`: 5 tests passed.
+- `python -m unittest discover -s tests -v`: 879 tests passed, zero failures/errors/skips.
+- `git diff --check ad04198b95708df58aae1ff07e0b38380671b574..HEAD`: exit 0.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD`: exit 0.
+- GPU-path regression proves exact order: GPU probe, GPU-process probe, then timestamp. The fixture was manually verified to parse as an available NVIDIA GPU with VRAM values.
+- No-NVIDIA path retains valid CPU/RAM telemetry and a completion timestamp. The sampler assigns `sampled_at` after all collection probes and records nonnegative monotonic collection duration with UTC `Z` formatting.
+- Existing telemetry fields remain intact; only the additive duration field and timestamp placement changed.
+- No P3.5 admission or live dispatch was added or enabled. No unrelated behavior changed.
+- Original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees were preserved.
+
+The initial independent challenge findings were addressed: timestamp completion semantics, CPU-utilization pressure handling, reserve/thermal scaling caveats, residency-attestation risk, unsupported GPU behavior, CPU-count unknown handling, adapter contract versioning, and scheduler separation are documented in the accepted contract. The first telemetry test's impossible assertion and a documentation whitespace issue were corrected; the final exact-SHA validation reports no findings.
+
+Acceptance closes P3-R4's resource-admission design and telemetry-freshness prerequisite for P3.5 planning. It does **not** implement or accept P3.5 or authorize live dispatch/provider calls. P3.5 remains the first milestone that may enable live dispatch and still requires its authorization, budgets, durable atomic admission, and invocation lifecycle gates.
+
+
+## P3.2 Registry-driven runtime binding — formal acceptance
+
+**ACCEPTED — 2026-11-25.** Exact implementation validation target: `7c50ff666b7cd684cf21f373a82badc3dad5627c`; documentation-only whitespace correction: `11b173d7d7405c80f1ec6c5acb9087b5e1382646`.
+
+Independent detached-worktree validation of the exact implementation target: compileall passed; full unittest suite passed (843 tests, zero failures/errors/skips); focused runtime, workspace-boundary, invocation-snapshot, and orchestration tests passed (100 tests). The sole review finding was trailing whitespace in documentation, corrected in the documentation-only follow-up; no application code or tests changed in that cleanup. Subsequent cumulative validation for P3.3 (863 tests), P3.4 (877 tests), and P3-R4 (879 tests) also passed, with cumulative diff checks clean.
+
+Source review found no remaining P3.2 implementation blocker: workspace chat, plan proposal, plan execution, and coding-agent entrypoints create typed invocation snapshots; worker continuity verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert and cannot dispatch to a live provider before P3.5. This acceptance covers P3.2 runtime binding and invocation-snapshot continuity only; it does not implement or accept P3.5, enable live dispatch, or imply that external provider calls occurred.

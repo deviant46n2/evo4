@@ -2,6 +2,7 @@ import json
 import threading
 from .workspace import Workspace, WorkspaceError, is_test_path
 from .provider import InvalidToolCallError
+from . import workspaces as workspace_registry
 
 MAX_RUN_INSTRUCTION_FILES = 16
 MAX_RUN_INSTRUCTION_BYTES = 64_000
@@ -63,6 +64,10 @@ class AgentCancelled(Exception):
     """Raised at a safe boundary after a user cancellation request."""
 
 
+class WorkspaceBindingInvalidatedError(RuntimeError):
+    """Raised when a running agent's registered workspace binding changes."""
+
+
 class CodingAgent:
     """Bounded tool-using coding assistant. Writes and commands require per-action approval."""
     def __init__(self, assistant, workspace_root=None, allowed_commands=(), max_tool_rounds=8):
@@ -70,8 +75,69 @@ class CodingAgent:
         root=workspace_root if workspace_root is not None else "."
         self.workspace=Workspace(root,allowed_commands=allowed_commands)
         self.max_tool_rounds=max(1,min(int(max_tool_rounds),20))
+        self._workspace_binding_id = None
+        self._workspace_binding_snapshot = None
+        original_workspace_run = self.workspace.run
+
+        def guarded_workspace_run(argv, timeout_seconds=120):
+            self.assert_workspace_binding()
+            return original_workspace_run(argv, timeout_seconds)
+
+        # Plan verification invokes workspace.run outside the normal tool dispatcher.
+        # Keep that path under the same per-action binding check.
+        self.workspace.run = guarded_workspace_run
+
+    def _workspace_binding_identity(self, binding):
+        workspace = binding["workspace"]
+        checkout = binding["checkout"]
+        return (
+            binding["workspace_id"],
+            binding["project_id"],
+            binding["configuration_id"],
+            binding["configuration_revision_id"],
+            binding["checkout_id"],
+            workspace["version"],
+            str(binding["canonical_path"]),
+            checkout["availability_status"],
+            checkout["canonical_path"],
+        )
+
+    def _initialize_workspace_binding(self, workspace_id):
+        if not isinstance(workspace_id, str) or not workspace_id.strip():
+            raise WorkspaceBindingInvalidatedError("Agent run has no registered workspace binding")
+        workspace_id = workspace_id.strip()
+        if self._workspace_binding_id is not None:
+            if self._workspace_binding_id != workspace_id:
+                raise WorkspaceBindingInvalidatedError("Agent workspace identity changed during the run")
+            self.assert_workspace_binding()
+            return
+        try:
+            binding = workspace_registry.resolve_executable_workspace(self.assistant.store, workspace_id)
+        except Exception as exc:
+            raise WorkspaceBindingInvalidatedError(f"Workspace binding is no longer executable: {exc}") from exc
+        if str(binding["canonical_path"]) != str(self.workspace.root):
+            raise WorkspaceBindingInvalidatedError("Resolved workspace path does not match the agent's bound directory")
+        self._workspace_binding_id = workspace_id
+        self._workspace_binding_snapshot = self._workspace_binding_identity(binding)
+
+    def assert_workspace_binding(self):
+        if self._workspace_binding_id is None:
+            return
+        try:
+            binding = workspace_registry.resolve_executable_workspace(
+                self.assistant.store, self._workspace_binding_id
+            )
+        except Exception as exc:
+            raise WorkspaceBindingInvalidatedError(
+                f"Workspace binding was invalidated during execution: {exc}"
+            ) from exc
+        if self._workspace_binding_identity(binding) != self._workspace_binding_snapshot:
+            raise WorkspaceBindingInvalidatedError(
+                "Workspace binding changed during execution; refusing further workspace actions"
+            )
 
     def _execute(self, name, args, test_approval=None):
+        self.assert_workspace_binding()
         if name=="inspect_project":
             return self.workspace.project_overview()
         if name=="list_files":
@@ -173,6 +239,8 @@ class CodingAgent:
             instruction_target=None, target_path=None, target=None, path=None):
         if not isinstance(request, str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
+        if workspace_id is not None:
+            self._initialize_workspace_binding(workspace_id)
         if not callable(approval):
             raise ValueError("An approval callback is required")
 
@@ -357,8 +425,7 @@ class CodingAgent:
                                 "tool calls from either response were executed."
                             )
                             update_execution_metadata(
-                                completion_state="failed",
-                                successful_file_writes=successful_writes,
+                                completion_state="failed",                                successful_file_writes=successful_writes,
                             )
                             store.add_message(
                                 conversation_id,
@@ -538,7 +605,6 @@ class CodingAgent:
                         store.finish_agent_run(
                             run_id, "completed", final_text[:1000]
                         )
-
                     return {
                         "content": final_text,
                         "run_id": run_id,
@@ -610,6 +676,7 @@ class CodingAgent:
                         )
 
                     if isinstance(args, dict) and isinstance(args.get("path"), str):
+                        self.assert_workspace_binding()
                         collect_instructions_for_path(args.get("path"))
 
                     try:
@@ -648,7 +715,7 @@ class CodingAgent:
                             output = self._execute(name, args)
                             status = "completed"
 
-                    except AgentCancelled:
+                    except (AgentCancelled, WorkspaceBindingInvalidatedError):
                         raise
                     except Exception as exc:
                         output = {
@@ -717,8 +784,7 @@ class CodingAgent:
 
             verification = self._verification_state(
                 successful_writes,
-                last_write_call,
-                last_verification,
+                last_write_call,                last_verification,
             )
             final_text = (
                 "Stopped after reaching the maximum tool-call rounds. "

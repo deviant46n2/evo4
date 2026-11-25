@@ -69,7 +69,36 @@ class AgentPlanScopeTests(unittest.TestCase):
         self.directory = self.root / "checkout"
         self.directory.mkdir()
         self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
-        config_result = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        config_result = create_configuration(
+            self.store,
+            {
+                "schema_version": 2,
+                "components": {
+                    "primary_model": {
+                        "type": "model", "component_version": 1,
+                        "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+                        "settings": {"endpoint": "http://127.0.0.1:18997/v1", "model": "test-model", "timeout_seconds": 30},
+                    },
+                    "assistant_runtime": {
+                        "type": "assistant_runtime", "component_version": 1,
+                        "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+                        "settings": {
+                            "model_component": "primary_model", "persona_prompt": "",
+                            "max_output_tokens": 256, "temperature": 0.0,
+                            "context_window_tokens": 4096, "history_messages": 4,
+                            "max_history_chars": 4000, "memory_limit": 2,
+                        },
+                    },
+                    "project_policy": {
+                        "type": "command_policy", "component_version": 1,
+                        "adapter": {"id": "evo_command_policy", "contract_version": 1},
+                        "settings": {"allowed_commands": [["python", "-c"]]},
+                    },
+                },
+                "entrypoints": {"assistant": "assistant_runtime"},
+            },
+            name="cfg",
+        )
         self.configuration = config_result["configuration"]
         self.revision = config_result["revision"]
         self.workspace = create_workspace(
@@ -84,24 +113,24 @@ class AgentPlanScopeTests(unittest.TestCase):
         self.app.state.lab_db.close()
         self.temp.cleanup()
 
-    def test_matching_scope_executes(self):
+    def test_matching_scope_is_validated_before_disabled_dispatch(self):
         with self.app.state.lab_db.lock:
             plan = create_plan(
                 self.app.state.lab_db.connection,
                 "request",
                 self.workspace["workspace_id"],
                 str(self.directory),
-                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d", "verification_commands": [["python", "-c", "print('ok')"]]}]},
                 project_id=self.project["project_id"],
                 store=self.store,
             )
             approve_plan(self.app.state.lab_db.connection, plan["id"])
+        before = len(self.store.list_agent_runs(limit=1000))
         status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}", {})
-        self.assertEqual(status, 202)
-        run = self.store.get_agent_run(body["run_id"])
-        metadata = _json.loads(run["metadata_json"])
-        self.assertEqual(metadata.get("project_id"), self.project["project_id"])
-        self.assertEqual(metadata.get("workspace_id"), self.workspace["workspace_id"])
+        self.assertEqual(status, 503)
+        self.assertIn("P3.5", body["detail"])
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), before)
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
 
     def test_list_plans_filters_before_limit(self):
         from evo_core.orchestration import create_plan, list_plans

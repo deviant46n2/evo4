@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit, urlunsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,16 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
+from .runtime_binding import (
+    RegistryDispatchDisabledError,
+    RuntimeBindingError,
+    build_workspace_runtime,
+)
+from .runtime_invocation_snapshots import (
+    RuntimeSnapshotError,
+    assert_runtime_matches_snapshot,
+    create_runtime_invocation_snapshot,
+)
 from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
@@ -228,6 +238,32 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except workspace_registry.WorkspaceValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _build_workspace_runtime_for_request(workspace_id):
+        try:
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+        except workspace_registry.WorkspaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeBindingError, workspace_registry.WorkspaceValidationError,
+                workspace_registry.WorkspaceRelationshipError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return runtime
+
+    def _record_workspace_invocation(runtime, invocation_kind):
+        try:
+            return create_runtime_invocation_snapshot(
+                store, runtime, invocation_id=str(uuid4()),
+                invocation_kind=invocation_kind,
+            )
+        except (RuntimeBindingError, RuntimeSnapshotError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def _require_workspace_dispatch(runtime):
+        try:
+            runtime.require_dispatch_enabled()
+        except RegistryDispatchDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
@@ -860,22 +896,24 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
-        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
-            effective_allowed_commands = effective_project_command_prefixes(config.allowed_commands, revision)
+            effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        invocation = _record_workspace_invocation(runtime, "plan_proposal")
+        _require_workspace_dispatch(runtime)
         try:
             proposal = orchestration.propose_with_model(
-                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
+                runtime.assistant.provider, payload.request, str(workspace), max_tokens=min(runtime.assistant.config.max_tokens, 3000),
                 allowed_commands=effective_allowed_commands)
             with lab_db.lock:
                 plan = orchestration.create_plan(
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
                     allowed_commands=effective_allowed_commands,
                     project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                    store=store)
+                    store=store, proposal_invocation_id=invocation["invocation_id"])
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -937,26 +975,44 @@ def create_app(config_path="config.toml", provider_name=None):
         if not workspace_id:
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
         plan_project_id = plan.get("project_id")
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
         if plan_project_id != binding_project_id:
             raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
-        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
-            effective_project_command_prefixes(config.allowed_commands, revision)
+            effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from evo_experiments.execution import command_allowed
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
             if plan is None:
                 raise HTTPException(status_code=404, detail="Agent plan not found")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
+            for step in plan["steps"]:
+                commands = step.get("verification_commands") or []
+                if not commands:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' has no configured verification command and cannot be executed safely.",
+                    )
+                if any(not command_allowed(command, effective_allowed_commands) for command in commands):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
+                    )
+            invocation = _record_workspace_invocation(runtime, "plan_execution")
+            _require_workspace_dispatch(runtime)
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
+                "invocation_id": invocation["invocation_id"],
+                "proposal_invocation_id": plan.get("proposal_invocation_id"),
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
+                "workspace": str(workspace_path), "model": runtime.assistant.config.model,
+                "base_url": runtime.assistant.config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -992,10 +1048,15 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        invocation = _record_workspace_invocation(runtime, "coding_agent")
+        _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
+            "invocation_id": invocation["invocation_id"],
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "workspace": str(workspace), "model": runtime.assistant.config.model,
+            "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
@@ -1083,13 +1144,20 @@ def create_app(config_path="config.toml", provider_name=None):
             return
 
         try:
-            effective_allowed_commands = effective_project_command_prefixes(
-                config.allowed_commands,
-                binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None),
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+            invocation_id = run_metadata.get("invocation_id")
+            if not isinstance(invocation_id, str) or not invocation_id:
+                raise RuntimeSnapshotError("Agent run has no runtime invocation snapshot reference")
+            assert_runtime_matches_snapshot(
+                store, runtime, invocation_id,
+                expected_kind="plan_execution" if plan_id else "coding_agent",
             )
-        except CommandPolicyError as exc:
+            runtime.require_dispatch_enabled()
+            effective_allowed_commands = runtime.effective_allowed_commands
+        except (RuntimeBindingError, RuntimeSnapshotError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
             _finalize_agent_run(
-                run_id, "failed", f"Command policy could not be resolved: {exc}", plan_id)
+                run_id, "failed", f"Workspace runtime binding is not dispatchable: {exc}", plan_id)
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
                 agent_futures.pop(run_id, None)
@@ -1138,13 +1206,13 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
-            conversation_id = assistant.new_conversation(
+            conversation_id = runtime.assistant.new_conversation(
                 "Agent: " + request_text[:80],
                 project_id=conversation_project_id,
                 workspace_id=conversation_workspace_id,
             )
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
-            agent = CodingAgent(assistant, workspace, effective_allowed_commands)
+            agent = CodingAgent(runtime.assistant, workspace, effective_allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
                           stop_event=stop_event, on_progress=progress,
@@ -1409,13 +1477,29 @@ def create_app(config_path="config.toml", provider_name=None):
             validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if validated_workspace_id is not None and payload.conversation_id is not None:
+            with locks_guard:
+                if store.get_conversation(
+                    payload.conversation_id,
+                    project_id=validated_project_id,
+                    workspace_id=validated_workspace_id,
+                ) is None:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+        runtime = None
+        invocation_id = None
+        if validated_workspace_id is not None:
+            runtime = _build_workspace_runtime_for_request(validated_workspace_id)
+            invocation = _record_workspace_invocation(runtime, "workspace_chat")
+            invocation_id = invocation["invocation_id"]
+            _require_workspace_dispatch(runtime)
+        turn_assistant = runtime.assistant if runtime is not None else assistant
 
         conversation_id = payload.conversation_id
         if conversation_id is None:
             # Create and reserve in the same critical section too, so even a
             # second local client cannot delete the new conversation in between.
             with locks_guard:
-                conversation_id = assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
+                conversation_id = turn_assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
                 reservation = {"lock": threading.Lock(), "users": 1}
                 conversation_locks[conversation_id] = reservation
         else:
@@ -1455,13 +1539,14 @@ def create_app(config_path="config.toml", provider_name=None):
                     with reservation["lock"]:
                         if shutting_down.is_set():
                             raise RuntimeError("Evo is shutting down")
-                        result = assistant.turn(
+                        result = turn_assistant.turn(
                             conversation_id, text,
                             on_token=lambda token: publish(
                                 {"event": "token", "data": token}
                             ),
                             project_id=validated_project_id,
                             workspace_id=validated_workspace_id,
+                            invocation_id=invocation_id,
                         )
                     publish({
                         "event": "complete",
