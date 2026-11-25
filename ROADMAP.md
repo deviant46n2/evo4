@@ -309,7 +309,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant adapter is accepted at 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; P3.4 deterministic verifier implementation is in progress. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission and P3-R4. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant adapter is accepted at 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; P3.4 deterministic verifier is accepted at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574`. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission and P3-R4. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
@@ -384,3 +384,21 @@ Acceptance evidence supplied by the independent local validator:
 GPT-6 reviewed the cumulative change inventory and the current adapter/transport sources. The two defects found by the first independent validation (literal CR/LF validation and worker start after generator yield), plus the incomplete test fixtures, were corrected. The follow-up regression-test literal defect and whitespace finding were also corrected before this clean validation. No remaining P3.3 acceptance finding is recorded.
 
 Acceptance is limited to P3.3 adapter implementation and its tested security/contract behavior. It does not accept P3.2 formally, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`. P3-R4 remains open and must be resolved before finalizing P3.5 admission. P3.5 remains the first milestone permitted to enable live dispatch.
+
+
+### P3.4 deterministic verifier — formal acceptance (2026-11-25)
+
+**Disposition: ACCEPTED** at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574`, on `agent-plan-verification-hardening-v1`. P3.4 base: `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1`; previous validation target: `781a0459d358532a3c71faa679d10128127207b5`; cumulative diff base: `6c12cf467cde61166be74e1e501e58de1c8decf6`.
+
+Independent detached-worktree validation of the exact accepted SHA reported:
+- `python -m compileall -q src tests`: exit 0.
+- `python -m unittest tests.test_deterministic_verifier -v`: 14 tests passed.
+- `python -m unittest tests.test_participant_contracts tests.test_runtime_binding -v`: 21 tests passed.
+- `python -m unittest discover -s tests -v`: 877 tests passed, zero failures, errors, or skips.
+- `git diff --check 6c12cf467cde61166be74e1e501e58de1c8decf6..HEAD` and `git diff --check 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1..HEAD`: both exit 0.
+- The final semantic correction was verified: the deterministic verifier's local completion self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`.
+- Source review confirmed bounded local JSON validation, shape-only evidence references (maximum 128 valid references), no reference resolution or truth claims, no shell/network/secret capability, immutable revision-specific binding, and no production invocation authorizer. Invocation fails closed without authorization; workspace configurations without a verifier remain compatible.
+- No API or worker route can invoke either participant before P3.5. P3-R4 remains open. No live provider calls or dispatch were enabled.
+- The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, with identical status; all 32 pre-existing worktrees were preserved. No tests were weakened or removed.
+
+Acceptance is limited to P3.4's deterministic verifier implementation, exact-revision runtime binding, and the tested inert/fail-closed behavior. It does not formally accept P3.2, resolve P3-R4, authorize P3.5 dispatch, authorize external provider calls, or authorize merging into `local-demo-ready-v1`.
