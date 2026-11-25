@@ -236,6 +236,12 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             "adapter_id": model_adapter["id"],
             "adapter_contract_version": model_adapter["contract_version"],
             "canonical_path": str(binding["canonical_path"]),
+            # Persist reference identifiers only; resolved secret values are
+            # intentionally absent from provenance and snapshot material.
+            "secret_reference_names": tuple(sorted(
+                (str(key), str(reference))
+                for key, reference in model_component.get("secret_refs", {}).items()
+            )),
         })
         return RegistryBoundRuntime(
             workspace_id=binding["workspace_id"],
