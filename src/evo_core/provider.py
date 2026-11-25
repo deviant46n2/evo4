@@ -3,6 +3,8 @@ import time
 import urllib.error
 import urllib.request
 
+from .provider_endpoint import ProviderEndpointError
+
 class _StreamingSecretRedactor:
     """Withhold partial secret prefixes so chunk boundaries cannot leak a key."""
 
@@ -116,10 +118,10 @@ class OpenAICompatibleProvider:
             raise ProviderTimeoutError("Model-list request timed out")
         except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
             raise ProviderError("Model-list request failed") from exc
-        except Exception as exc:
-            if exc.__class__.__name__ == "ProviderEndpointError":
-                raise ProviderError("Model-list request failed endpoint policy") from exc
-            raise
+        except ProviderEndpointError as exc:
+            if "timed out" in str(exc):
+                raise ProviderTimeoutError("Model-list request timed out") from exc
+            raise ProviderError("Model-list request failed endpoint policy") from exc
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None, *, timeout_seconds=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
@@ -207,10 +209,10 @@ class OpenAICompatibleProvider:
             raise ProviderTimeoutError("Chat completion request timed out") from exc
         except (urllib.error.URLError, OSError) as exc:
             raise ProviderError("Chat completion request failed") from exc
-        except Exception as exc:
-            if exc.__class__.__name__ == "ProviderEndpointError":
-                raise ProviderError("Chat completion endpoint policy failed") from exc
-            raise
+        except ProviderEndpointError as exc:
+            if "timed out" in str(exc):
+                raise ProviderTimeoutError("Chat completion request timed out") from exc
+            raise ProviderError("Chat completion endpoint policy failed") from exc
         final_safe_content = redactor.finish()
         if final_safe_content:
             pieces.append(final_safe_content)
