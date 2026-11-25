@@ -157,7 +157,16 @@ class OpenAICompatibleProvider:
                 payload = _strict_json_loads(raw_payload.decode("utf-8"))
             if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
                 raise ProviderMalformedResponseError("Model-list response is malformed")
-            return [item.get("id") for item in payload["data"] if isinstance(item, dict) and item.get("id")]
+            model_ids = []
+            for item in payload["data"]:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("id"), str)
+                    or not item["id"]
+                ):
+                    raise ProviderMalformedResponseError("Model-list response contains an invalid model entry")
+                model_ids.append(item["id"])
+            return model_ids
         except urllib.error.HTTPError as exc:
             # Provider bodies are untrusted and may echo credentials; discard by default.
             raise ProviderHTTPError(exc.code, "Model-list") from exc
