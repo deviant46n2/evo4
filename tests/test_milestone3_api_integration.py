@@ -877,3 +877,96 @@ class ApiCancellationIntegrationTests(unittest.TestCase):
             task = background_agent.get(self.app.state.lab_db.connection, run_id)
         self.assertEqual(task["status"], "cancelled")
         self.assertEqual([event["type"] for event in task_events].count("cancel_requested"), 1)
+
+
+
+class WorkspaceParticipantInspectionApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.store = self.app.state.store
+        project = register_project(self.store, "Participant inspection project")
+        checkout_path = self.root / "participant-checkout"
+        checkout_path.mkdir()
+        checkout = register_checkout(self.store, project["project_id"], checkout_path)
+        created = create_configuration(
+            self.store, schema2_workspace_definition(), name="Participant inspection config"
+        )
+        self.workspace = create_workspace(
+            self.store, "Participant inspection workspace", project["project_id"],
+            created["configuration"]["configuration_id"], created["revision"]["revision_id"],
+            checkout_id=checkout["checkout_id"],
+        )
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_participant_listing_is_revision_pinned_and_secret_safe(self):
+        status, body = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["configuration_revision_id"], self.workspace["configuration_revision_id"])
+        self.assertFalse(body["dispatch_enabled"])
+        self.assertEqual(len(body["participants"]), 1)
+        participant = body["participants"][0]
+        self.assertEqual(participant["adapter_id"], "openai_compatible_chat")
+        self.assertIn("text_generation", participant["capabilities"])
+        self.assertNotIn("endpoint", participant)
+        self.assertNotIn("secret", _json.dumps(body).lower())
+        self.assertNotIn("api_key", _json.dumps(body).lower())
+
+    def test_model_availability_uses_metadata_preflight_only(self):
+        from unittest.mock import patch
+        from evo_core.participant_contracts import AvailabilityEvidence
+        from evo_core.openai_compatible_adapter import OpenAICompatibleParticipantAdapter
+
+        listed = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants",
+        )[1]["participants"][0]
+        with patch.object(
+            OpenAICompatibleParticipantAdapter, "preflight",
+            return_value=AvailabilityEvidence(
+                True, True, None, "2026-11-25T00:00:00Z", "test:model-list",
+            ),
+        ) as preflight, patch.object(
+            OpenAICompatibleParticipantAdapter, "probe_completion",
+            side_effect=AssertionError("completion probe must never run"),
+        ):
+            status, body = asgi_request(
+                self.app, "GET",
+                f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants/"
+                f"{listed['participant_id']}/availability?timeout_seconds=4",
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["availability"], "available")
+        self.assertTrue(body["transport_reachable"])
+        self.assertTrue(body["model_advertised"])
+        self.assertIsNone(body["completion_verified"])
+        self.assertEqual(body["probe_kind"], "metadata_only")
+        self.assertTrue(body["ephemeral"])
+        preflight.assert_called_once()
+
+    def test_unknown_participant_and_unbounded_timeout_are_rejected(self):
+        status, _ = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants/not-bound/availability",
+        )
+        self.assertEqual(status, 404)
+        listed = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants",
+        )[1]["participants"][0]
+        status, _ = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/participants/"
+            f"{listed['participant_id']}/availability?timeout_seconds=11",
+        )
+        self.assertEqual(status, 422)
