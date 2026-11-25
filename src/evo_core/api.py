@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit, urlunsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +21,11 @@ from .runtime_binding import (
     RegistryDispatchDisabledError,
     RuntimeBindingError,
     build_workspace_runtime,
+)
+from .runtime_invocation_snapshots import (
+    RuntimeSnapshotError,
+    assert_runtime_matches_snapshot,
+    create_runtime_invocation_snapshot,
 )
 from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
@@ -244,6 +249,15 @@ def create_app(config_path="config.toml", provider_name=None):
                 workspace_registry.WorkspaceRelationshipError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return runtime
+
+    def _record_workspace_invocation(runtime, invocation_kind):
+        try:
+            return create_runtime_invocation_snapshot(
+                store, runtime, invocation_id=str(uuid4()),
+                invocation_kind=invocation_kind,
+            )
+        except (RuntimeBindingError, RuntimeSnapshotError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     def _require_workspace_dispatch(runtime):
         try:
@@ -888,6 +902,7 @@ def create_app(config_path="config.toml", provider_name=None):
             effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        invocation = _record_workspace_invocation(runtime, "plan_proposal")
         _require_workspace_dispatch(runtime)
         try:
             proposal = orchestration.propose_with_model(
@@ -989,9 +1004,12 @@ def create_app(config_path="config.toml", provider_name=None):
                         status_code=409,
                         detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
                     )
+            invocation = _record_workspace_invocation(runtime, "plan_execution")
             _require_workspace_dispatch(runtime)
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
+                "invocation_id": invocation["invocation_id"],
+                "proposal_invocation_id": plan.get("proposal_invocation_id"),
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
                 "workspace": str(workspace_path), "model": runtime.assistant.config.model,
                 "base_url": runtime.assistant.config.base_url,
@@ -1031,9 +1049,11 @@ def create_app(config_path="config.toml", provider_name=None):
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
         runtime = _build_workspace_runtime_for_request(workspace_id)
+        invocation = _record_workspace_invocation(runtime, "coding_agent")
         _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
+            "invocation_id": invocation["invocation_id"],
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
             "workspace": str(workspace), "model": runtime.assistant.config.model,
             "base_url": runtime.assistant.config.base_url,
@@ -1126,9 +1146,13 @@ def create_app(config_path="config.toml", provider_name=None):
         try:
             runtime = build_workspace_runtime(store, config, workspace_id)
             runtime.assert_current(store)
+            invocation_id = run_metadata.get("invocation_id")
+            if not isinstance(invocation_id, str) or not invocation_id:
+                raise RuntimeSnapshotError("Agent run has no runtime invocation snapshot reference")
+            assert_runtime_matches_snapshot(store, runtime, invocation_id)
             runtime.require_dispatch_enabled()
             effective_allowed_commands = runtime.effective_allowed_commands
-        except (RuntimeBindingError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
+        except (RuntimeBindingError, RuntimeSnapshotError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
             _finalize_agent_run(
                 run_id, "failed", f"Workspace runtime binding is not dispatchable: {exc}", plan_id)
             with agent_registry_guard:
@@ -1451,8 +1475,11 @@ def create_app(config_path="config.toml", provider_name=None):
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         runtime = None
+        invocation_id = None
         if validated_workspace_id is not None:
             runtime = _build_workspace_runtime_for_request(validated_workspace_id)
+            invocation = _record_workspace_invocation(runtime, "workspace_chat")
+            invocation_id = invocation["invocation_id"]
             _require_workspace_dispatch(runtime)
         turn_assistant = runtime.assistant if runtime is not None else assistant
 
@@ -1508,6 +1535,7 @@ def create_app(config_path="config.toml", provider_name=None):
                             ),
                             project_id=validated_project_id,
                             workspace_id=validated_workspace_id,
+                            invocation_id=invocation_id,
                         )
                     publish({
                         "event": "complete",
