@@ -240,7 +240,7 @@ def list_plans(connection, limit=50, project_id=None, workspace_id=None, store=N
         scope_sql = "(project_id = ? AND (workspace_id IS NULL OR workspace_id = ?))"
         scope_params = [project_id, workspace_id]
     rows = connection.execute(
-        "SELECT id,title,summary,status,workspace,workspace_id,project_id,created_at,updated_at,run_id,error FROM agent_plans WHERE " +
+        "SELECT id,title,summary,status,workspace,workspace_id,project_id,proposal_invocation_id,created_at,updated_at,run_id,error FROM agent_plans WHERE " +
         scope_sql + " ORDER BY created_at DESC LIMIT ?",
         scope_params + [min(max(int(limit), 1), 100)]).fetchall()
     return [dict(row) for row in rows]
