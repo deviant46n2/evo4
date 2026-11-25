@@ -451,10 +451,14 @@ def admit_invocation(
     """
     initialize_invocation_lifecycle(store)
     now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        raise ValueError("now must be timezone-aware")
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise ValueError("now must be a timezone-aware datetime")
     now = now.astimezone(timezone.utc)
     deadline, requested_tokens = _validate_envelope(runtime, envelope, now)
+    if not isinstance(resource_demand, ResourceDemand):
+        raise AdmissionError("a code-owned resource demand is required")
+    if not isinstance(policy, AdmissionPolicy):
+        raise AdmissionError("an explicit admission policy is required")
     participant_limits = dict(runtime.participant.limits)
     pinned_output_limit = participant_limits.get("max_output_tokens")
     if (
@@ -463,20 +467,23 @@ def admit_invocation(
         or requested_tokens > pinned_output_limit
     ):
         raise AdmissionError("requested output tokens exceed the pinned participant limit")
-    if not isinstance(resource_demand, ResourceDemand):
-        raise AdmissionError("a code-owned resource demand is required")
     if owner_id is None:
         owner_id = str(uuid.uuid4())
     if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
         raise AdmissionError("lease owner identity is invalid")
 
-    # The deterministic verifier is local and does not consume provider quota or
-    # the provider-dispatch lease. Model adapters require both exact compliance
-    # approval and an explicit operator-configured daily budget.
     is_provider = runtime.participant.adapter_id == "openai_compatible_chat"
+    endpoint = getattr(runtime.bound_participant, "endpoint", None)
+    origin = None
     if is_provider:
-        from .provider_endpoint import is_loopback_provider_origin
-        endpoint_is_local = is_loopback_provider_origin(origin)
+        from urllib.parse import urlsplit
+        from .provider_endpoint import is_loopback_provider_origin, normalize_provider_origin
+        try:
+            parsed_endpoint = urlsplit(endpoint)
+            origin = normalize_provider_origin(f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}")
+            endpoint_is_local = is_loopback_provider_origin(origin)
+        except Exception as exc:
+            raise AdmissionError("bound provider origin is invalid") from exc
         expected_locality = "local_endpoint" if endpoint_is_local else "remote_service"
         expected_status = "local_only" if endpoint_is_local else "approved"
         if resource_demand.locality != expected_locality:
@@ -490,7 +497,7 @@ def admit_invocation(
             approval_result = {"decision": "denied", "reason": "provider_compliance_not_approved"}
         else:
             approval_result = {"decision": "admitted", "reason": "provider_compliance_approved"}
-        if provider_budget is None:
+        if not isinstance(provider_budget, ProviderBudget):
             budget_result = {"decision": "denied", "reason": "provider_budget_not_configured"}
         else:
             budget_result = {"decision": "admitted", "reason": "provider_budget_configured"}
@@ -499,28 +506,13 @@ def admit_invocation(
         budget_result = {"decision": "admitted", "reason": "not_a_provider_integration"}
 
     resource_result = evaluate_resource_admission(telemetry, resource_demand, policy, now=now)
-    output_limit = requested_tokens
-    if provider_budget is not None:
-        output_limit = min(output_limit, provider_budget.maximum_output_tokens_per_invocation)
-    if requested_tokens > output_limit:
-        budget_result = {"decision": "denied", "reason": "per_invocation_output_token_limit"}
+    if is_provider and isinstance(provider_budget, ProviderBudget):
+        if requested_tokens > provider_budget.maximum_output_tokens_per_invocation:
+            budget_result = {"decision": "denied", "reason": "per_invocation_output_token_limit"}
 
-    endpoint = getattr(runtime.bound_participant, "endpoint", None)
-    if is_provider:
-        from urllib.parse import urlsplit
-        from .provider_endpoint import normalize_provider_origin
-        try:
-            parsed_endpoint = urlsplit(endpoint)
-            origin = normalize_provider_origin(f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}")
-        except Exception as exc:
-            raise AdmissionError("bound provider origin is invalid") from exc
-        if approval is not None and approval.origin != origin:
-            approval_result = {"decision": "denied", "reason": "provider_compliance_origin_mismatch"}
-            decision["approval"] = approval_result
-            decision.update(approval_result)
-    else:
-        origin = None
     integration_id = runtime.participant.integration_id
+    if not isinstance(integration_id, str) or not integration_id:
+        raise AdmissionError("participant integration identity is invalid")
     budget_day = now.date().isoformat()
     decision = {
         "decision": "admitted",
@@ -550,8 +542,7 @@ def admit_invocation(
         state = decision["decision"]
         if state == "unknown":
             state = "denied"
-        lease_required = is_provider
-        if state == "admitted" and lease_required:
+        if state == "admitted" and is_provider:
             lease = db.execute(
                 "SELECT * FROM dispatch_leases WHERE lease_key=?",
                 (GLOBAL_PROVIDER_LEASE,),
@@ -559,10 +550,15 @@ def admit_invocation(
             if lease is not None:
                 state = "deferred" if lease["state"] == "active" else "denied"
                 decision["decision"] = state
-                decision["reason"] = "global_provider_dispatch_busy" if lease["state"] == "active" else "global_provider_lease_abandoned"
+                decision["reason"] = (
+                    "global_provider_dispatch_busy"
+                    if lease["state"] == "active"
+                    else "global_provider_lease_abandoned"
+                )
         if state == "admitted" and is_provider:
             row = db.execute(
-                "SELECT requests_reserved,output_tokens_reserved,output_tokens_used FROM provider_budget_usage WHERE integration_id=? AND budget_day_utc=?",
+                """SELECT requests_reserved,output_tokens_reserved,output_tokens_used
+                   FROM provider_budget_usage WHERE integration_id=? AND budget_day_utc=?""",
                 (integration_id, budget_day),
             ).fetchone()
             requests = row["requests_reserved"] if row else 0
