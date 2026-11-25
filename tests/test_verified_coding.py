@@ -287,6 +287,14 @@ class VerifiedCodingTests(unittest.TestCase):
                 self.db, self.plan["id"], step["id"], ["pytest"], "passed", 0, "OK", ""
             )
 
+    def test_passed_verification_requires_zero_exit_code(self):
+        step = self.plan["steps"][0]
+        with self.assertRaisesRegex(ValueError, "exit code 0"):
+            orchestration.record_verification(
+                self.db, self.plan["id"], step["id"],
+                ["python", "-m", "unittest"], "passed", 1, "", "failed",
+            )
+
     def test_finish_step_cannot_mark_configured_verification_not_required(self):
         step = self.plan["steps"][0]
         orchestration.approve_plan(self.db, self.plan["id"])
