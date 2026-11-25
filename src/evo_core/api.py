@@ -883,13 +883,12 @@ def create_app(config_path="config.toml", provider_name=None):
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
         runtime = _build_workspace_runtime_for_request(workspace_id)
-        _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
-        revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
             effective_allowed_commands = runtime.effective_allowed_commands
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _require_workspace_dispatch(runtime)
         try:
             proposal = orchestration.propose_with_model(
                 runtime.assistant.provider, payload.request, str(workspace), max_tokens=min(runtime.assistant.config.max_tokens, 3000),
@@ -962,7 +961,6 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
         runtime = _build_workspace_runtime_for_request(workspace_id)
-        _require_workspace_dispatch(runtime)
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
         plan_project_id = plan.get("project_id")
         binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
@@ -992,10 +990,11 @@ def create_app(config_path="config.toml", provider_name=None):
                         status_code=409,
                         detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
                     )
+            _require_workspace_dispatch(runtime)
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
+                "workspace": str(workspace_path), "model": runtime.assistant.config.model,\n                "base_url": runtime.assistant.config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -1036,7 +1035,7 @@ def create_app(config_path="config.toml", provider_name=None):
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "workspace": str(workspace), "model": runtime.assistant.config.model,\n            "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
