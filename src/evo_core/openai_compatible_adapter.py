@@ -449,11 +449,11 @@ class OpenAICompatibleParticipantAdapter:
                     tools=tools, on_token=lambda token: publish("text_delta", {"text": token}),
                     timeout_seconds=request_timeout,
                 )
+                provider_completed.set()
                 publish("terminal", result)
-                provider_completed.set()
             except Exception as exc:
-                publish("error", exc)
                 provider_completed.set()
+                publish("error", exc)
             finally:
                 publish("finished", finished)
 
