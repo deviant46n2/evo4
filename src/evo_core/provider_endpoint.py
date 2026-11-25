@@ -167,7 +167,12 @@ class PinnedProviderTransport:
         addresses = []
         for answer in answers:
             try:
-                raw = answer[4][0]
+                sockaddr = answer[4]
+                # Scoped IPv6 destinations are interface-dependent and must
+                # never be accepted as globally pinned provider addresses.
+                if len(sockaddr) >= 4 and sockaddr[3] != 0:
+                    raise ProviderEndpointError("provider DNS returned a scoped address")
+                raw = sockaddr[0]
                 address = _normalized_ip(raw)
             except (IndexError, TypeError, KeyError) as exc:
                 raise ProviderEndpointError("provider DNS returned a malformed answer") from exc
@@ -240,7 +245,14 @@ class PinnedProviderTransport:
                     raw_socket.close()
                     raise ProviderEndpointError("TLS hostname and certificate verification must remain enabled")
                 try:
-                    wrapped = context.wrap_socket(raw_socket, server_hostname=normalized_host)
+                    # URL authorities bracket IPv6 literals; TLS reference
+                    # identities must use the unbracketed IP address.
+                    tls_server_name = (
+                        normalized_host[1:-1]
+                        if normalized_host.startswith("[")
+                        else normalized_host
+                    )
+                    wrapped = context.wrap_socket(raw_socket, server_hostname=tls_server_name)
                 except Exception:
                     raw_socket.close()
                     raise
