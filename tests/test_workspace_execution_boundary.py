@@ -22,7 +22,10 @@ from evo_core.workspaces import (
     WorkspaceNotExecutableError,
 )
 
-VALID_DEFINITION = {"schema_version": 1, "components": {}}
+VALID_DEFINITION = {
+    "schema_version": 1,
+    "components": {"command_policy": {"allowed_commands": [["python", "-c"]]}},
+}
 
 
 def make_config(root):
@@ -239,7 +242,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
                         "description": "Do work",
                         "expected_outcome": "Done",
                         "verification": "Check",
-                        "verification_commands": [],
+                        "verification_commands": [["python", "-c", "print('verified')"]],
                     }
                 ],
             }),
@@ -353,7 +356,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
                         "description": "Do work",
                         "expected_outcome": "Done",
                         "verification": "Check",
-                        "verification_commands": [],
+                        "verification_commands": [["python", "-c", "print('verified')"]],
                     }
                 ],
             }
