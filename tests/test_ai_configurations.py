@@ -245,12 +245,12 @@ class Schema2ValidationTests(unittest.TestCase):
 
     def test_schema2_rejects_invalid_unicode_in_component_and_extension_data(self):
         value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
-        value["components"]["assistant"]["settings"]["persona_prompt"] = "\\ud800"
+        value["components"]["assistant"]["settings"]["persona_prompt"] = "\ud800"
         with self.assertRaises(ConfigurationValidationError):
             validate_definition(value)
 
         value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
-        value["extensions"] = {"vendor:feature": {"version": 1, "data": {"label": "\\ud800"}}}
+        value["extensions"] = {"vendor:feature": {"version": 1, "data": {"label": "\ud800"}}}
         with self.assertRaises(ConfigurationValidationError):
             validate_definition(value)
 
