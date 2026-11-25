@@ -38,7 +38,7 @@ _ADAPTERS = {
     ),
     "evo_deterministic_verifier": AdapterContract(
         "evo_deterministic_verifier", 1, "deterministic_verifier", IMPLEMENTATION_VERSION,
-        ("structured_output_validation", "evidence_reference_validation"), "local_process",
+        ("structured_output_validation", "evidence_reference_shape_validation"), "local_process",
     ),
 }
 ADAPTER_CONTRACTS: Mapping[str, AdapterContract] = MappingProxyType(_ADAPTERS)
