@@ -121,11 +121,12 @@ def _component(definition, component_key, expected_type):
     return value
 
 
-def build_workspace_runtime(store, base_config, workspace_id, *, provider_factory=None):
+def build_workspace_runtime(store, base_config, workspace_id):
     """Build a complete assistant runtime from the exact workspace-pinned revision.
 
-    provider_factory is a test seam for inert fake adapters. Production default
-    is intentionally non-network-capable until P3.5.
+    The assistant's provider is always non-network-capable before P3.5.
+    The separate participant adapter is bound for inspection/contract tests,
+    but has no dispatch authorizer installed.
     """
     try:
         binding = workspaces.resolve_executable_workspace(store, workspace_id)
@@ -236,16 +237,8 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
             memory_limit=assistant_settings["memory_limit"],
             allowed_commands=effective_commands,
         )
-        factory = provider_factory or (
-            lambda endpoint, api_key, model, timeout: _DisabledRegistryProvider(
-                endpoint, model, timeout
-            )
-        )
-        provider = factory(
-            endpoint,
-            secret_values.get("api_key", "no-key"),
-            model_settings["model"],
-            model_settings["timeout_seconds"],
+        provider = _DisabledRegistryProvider(
+            endpoint, model_settings["model"], model_settings["timeout_seconds"]
         )
         assistant = EvoAssistant(runtime_config, store=store, provider=provider)
         revision_hash = revision.get("content_hash") or content_hash(definition)
