@@ -24,6 +24,10 @@ from .participant_contracts import (
 )
 from .provider_endpoint import normalize_provider_origin
 from .openai_compatible_adapter import OpenAICompatibleParticipantAdapter, ParticipantAdapterError
+from .deterministic_verifier import (
+    DeterministicVerifierError,
+    DeterministicVerifierParticipantAdapter,
+)
 from .secret_references import SecretResolutionError, resolve_secret_references
 
 
@@ -69,6 +73,8 @@ class RegistryBoundRuntime:
     bound_participant: object
     effective_allowed_commands: tuple[tuple[str, ...], ...]
     provenance: object
+    additional_participants: tuple[ParticipantDescriptor, ...] = ()
+    additional_participant_bindings: tuple[tuple[object, object], ...] = ()
 
     @property
     def dispatch_enabled(self):
@@ -211,6 +217,44 @@ def build_workspace_runtime(store, base_config, workspace_id):
             secret_values=secret_values,
             runtime_settings=assistant_settings,
         )
+
+        # Bind any configured deterministic verifier components from this exact
+        # immutable revision. These are local-only, inert until P3.5, and never
+        # receive secrets or arbitrary tool/network capabilities.
+        additional_participants = []
+        additional_participant_bindings = []
+        for verifier_key, verifier_component in sorted(definition["components"].items()):
+            if verifier_component.get("type") != "deterministic_verifier":
+                continue
+            verifier_adapter = DeterministicVerifierParticipantAdapter()
+            verifier_contract = resolve_adapter_contract(
+                verifier_adapter.adapter_id, verifier_adapter.contract_version,
+                "deterministic_verifier",
+            )
+            verifier_integration_id = stable_integration_id(
+                verifier_adapter.adapter_id, "local://evo", "structured-output-verifier"
+            )
+            verifier_participant_id = stable_participant_id(
+                verifier_integration_id,
+                binding["configuration_id"],
+                binding["configuration_revision_id"],
+                verifier_key,
+                verifier_component["component_version"],
+            )
+            verifier_bound = verifier_adapter.bind_component(
+                verifier_component,
+                {
+                    "participant_id": verifier_participant_id,
+                    "project_id": binding["project_id"],
+                    "workspace_id": binding["workspace_id"],
+                    "configuration_id": binding["configuration_id"],
+                    "configuration_revision_id": binding["configuration_revision_id"],
+                    "component_key": verifier_key,
+                    "component_version": verifier_component["component_version"],
+                },
+            )
+            additional_participants.append(verifier_adapter.describe(verifier_bound))
+            additional_participant_bindings.append((verifier_adapter, verifier_bound))
         # User-authored persona guidance is explicitly delimited as untrusted
         # behavior guidance. It cannot replace the operator's global policy.
         persona = assistant_settings["persona_prompt"]
@@ -274,8 +318,10 @@ def build_workspace_runtime(store, base_config, workspace_id):
             bound_participant=bound_participant,
             effective_allowed_commands=effective_commands,
             provenance=provenance,
+            additional_participants=tuple(additional_participants),
+            additional_participant_bindings=tuple(additional_participant_bindings),
         )
-    except (ConfigurationValidationError, CommandPolicyError, SecretResolutionError, ParticipantAdapterError) as exc:
+    except (ConfigurationValidationError, CommandPolicyError, SecretResolutionError, ParticipantAdapterError, DeterministicVerifierError) as exc:
         raise RuntimeBindingError("workspace configuration cannot be bound to an executable runtime") from exc
     except workspaces.WorkspaceNotFoundError:
         raise
