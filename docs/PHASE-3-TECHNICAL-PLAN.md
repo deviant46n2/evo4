@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25):** P3.1–P3.6 and P3-R4 are accepted. P3.6 was validated at exact corrective SHA `4e048af7978730890c47ee840d36e8d0b73866ea` (919/919 tests, compileall, diff-check, and desktop production build) and merged through PR #4 at `0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d`. P3.7 cumulative independent review and formal Phase 3 closure remain outstanding. `dispatch.enabled` remains false by default.
+**Status (2026-11-25):** Phase 3 (P3.1–P3.7, including P3-R4) is formally accepted and closed by the user. P3.7 cumulative independent review target: `e65e69afa8e074e52d73b7949b8702eaecd653b5`; 919/919 full-suite tests and 78 migration/persistence tests passed, compileall and desktop production build passed, cumulative diff-check passed, and no material findings were reported. The bounded local model-list preflight returned HTTP 200; no completion or remote provider calls were made. `dispatch.enabled` remains false by default.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -482,3 +482,21 @@ P3.5 implementation candidate `922051067fa41ecd75038714aafe96e514333f28` on `age
 Independent detached-worktree corrective revalidation: compileall passed; focused API suite 43/43 passed; full unittest suite 919/919 passed with zero failures/errors/skips; desktop `npm run build` passed (`tsc -b && vite build`); cumulative `git diff --check ab01f90..HEAD` passed. Original checkout `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` remained unchanged and all 32 pre-existing worktrees were restored.
 
 The accepted UI type correction adds the backend descriptor fields `component_key` and `component_version` to the frontend `ParticipantDescriptor`. Backend and frontend security findings remained resolved: exact pinned runtime resolution, non-secret descriptors, unknown-ID rejection, bounded metadata-only preflight, no completion probe/invocation/lease/evidence side effects, completion remains unverified, safe provider errors, explicit user-triggered checks, and stale-response protection. Dispatch remains disabled by default; no live provider calls were performed.
+
+
+## P3.7 cumulative independent review and Phase 3 formal acceptance (2026-11-25)
+
+**USER ACCEPTED — PHASE 3 CLOSED.** The independent cumulative review was performed against exact branch target `e65e69afa8e074e52d73b7949b8702eaecd653b5` on `agent-lifecycle-reconciliation-v1`, with accepted P3.6 merge `0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d` as an ancestor. The review verdict was PASS.
+
+Validation evidence reported by the independent reviewer:
+- `python -m compileall -q src tests`: exit 0.
+- `python -m unittest discover -s tests -v`: 919 tests passed; zero failures, errors, or skips.
+- Separate migration/persistence suite: 78 tests passed, including upgrade of existing databases, idempotent migrations, registry idempotence, learning-table migration, and runtime invocation snapshot coverage.
+- Desktop `npm run build`: passed (`tsc -b && vite build`).
+- `git diff --check 0fde8e812efc79edc6cc20aa5d99b05fe1fcd51d..HEAD`: exit 0.
+- Local metadata-only `GET http://127.0.0.1:18997/v1/models`: HTTP 200 with model list. This proves metadata reachability only, not completion capability.
+- No local completion invocation, remote provider calls, dispatch enablement, or configuration changes. Dispatch remained disabled by default.
+- Cumulative source/security review reported no confirmed material security or correctness defects.
+- Temporary review worktree was removed; worktree count returned to 32. Original checkout `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` and its complete working-tree status were unchanged; all 32 pre-existing worktrees were preserved.
+
+The user explicitly granted formal acceptance on 2026-11-25. Phase 3 is closed. The Phase 4 dependency gate is satisfied, but Phase 4 remains not started until its first bounded cooperative vertical-slice scope is selected and authorized. Phase 3 acceptance does not enable live dispatch or assert that external provider completions were tested.
