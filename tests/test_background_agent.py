@@ -3,7 +3,7 @@ import unittest
 
 from evo_core.background_agent import (
     claim, create, events, initialize, is_cancelled, recover,
-    request_cancel, transition,
+    request_cancel, transition, reconstruct_terminal,
 )
 
 class BackgroundAgentLedgerTests(unittest.TestCase):
@@ -48,6 +48,19 @@ class BackgroundAgentLedgerTests(unittest.TestCase):
             ('{"workspace_id":"workspace-1"}',))
         with self.assertRaisesRegex(ValueError, "requires project_id"):
             create(self.db, "run-1")
+
+    def test_reconstructed_terminal_task_retains_run_scope(self):
+        self.db.execute(
+            """INSERT INTO agent_runs(id,kind,status,started_at,metadata_json)
+               VALUES('run-2','coding','failed','now',?)""",
+            ('{"project_id":"project-2","workspace_id":"workspace-2"}',))
+        self.assertTrue(reconstruct_terminal(self.db, "run-2", "failed", reason="reconciled"))
+        task = self.db.execute(
+            "SELECT project_id,workspace_id,status FROM background_agent_tasks WHERE run_id='run-2'"
+        ).fetchone()
+        self.assertEqual(task["project_id"], "project-2")
+        self.assertEqual(task["workspace_id"], "workspace-2")
+        self.assertEqual(task["status"], "failed")
 
     def test_atomic_claim_only_once(self):
         self.assertTrue(claim(self.db, "run-1", "worker-a"))
