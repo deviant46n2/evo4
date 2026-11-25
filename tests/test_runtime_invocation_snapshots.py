@@ -11,6 +11,7 @@ from evo_core.project_checkouts import register_checkout, register_project
 from evo_core.runtime_binding import build_workspace_runtime, RuntimeBindingError
 from evo_core.runtime_invocation_snapshots import (
     RuntimeSnapshotError,
+    assert_runtime_matches_snapshot,
     create_runtime_invocation_snapshot,
     get_runtime_invocation_snapshot,
     list_runtime_invocation_snapshots,
@@ -151,6 +152,45 @@ class RuntimeInvocationSnapshotTests(unittest.TestCase):
                 "DELETE FROM runtime_invocation_snapshots WHERE invocation_id='inv-unique'"
             )
         self.store.db.rollback()
+
+    def test_invocation_kind_and_exact_runtime_continuity_are_enforced(self):
+        runtime = self.build()
+        create_runtime_invocation_snapshot(
+            self.store, runtime, invocation_id="inv-kind",
+            invocation_kind="coding_agent",
+        )
+        record = assert_runtime_matches_snapshot(
+            self.store, runtime, "inv-kind", expected_kind="coding_agent"
+        )
+        self.assertEqual(record["snapshot"]["invocation_kind"], "coding_agent")
+        with self.assertRaises(RuntimeSnapshotError):
+            assert_runtime_matches_snapshot(
+                self.store, runtime, "inv-kind", expected_kind="plan_execution"
+            )
+
+    def test_rebound_workspace_cannot_silently_adopt_new_revision(self):
+        original = self.build()
+        create_runtime_invocation_snapshot(
+            self.store, original, invocation_id="inv-before-rebind",
+            invocation_kind="coding_agent",
+        )
+        replacement = create_configuration(
+            self.store, definition(), name="Replacement snapshot config"
+        )
+        from evo_core.workspace_binding_history import rebind_workspace
+        rebind_workspace(
+            self.store, self.workspace["workspace_id"],
+            configuration_id=replacement["configuration"]["configuration_id"],
+            configuration_revision_id=replacement["revision"]["revision_id"],
+            checkout_id=self.workspace["checkout_id"], expected_version=1,
+            actor="test", reason="verify invocation revision continuity",
+        )
+        rebound_runtime = self.build()
+        with self.assertRaises(RuntimeSnapshotError):
+            assert_runtime_matches_snapshot(
+                self.store, rebound_runtime, "inv-before-rebind",
+                expected_kind="coding_agent",
+            )
 
     def test_read_detects_snapshot_tampering(self):
         runtime = self.build()
