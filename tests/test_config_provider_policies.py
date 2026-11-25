@@ -74,6 +74,22 @@ class OperatorProviderPolicyConfigTests(unittest.TestCase):
                 finally:
                     temp.cleanup()
 
+
+    def test_operator_policy_tables_reject_unknown_fields(self):
+        for text in (
+            BASE_CONFIG + "\n[security]\nallow_all = true\n",
+            BASE_CONFIG + "\n[secrets]\nallow_all = true\n",
+        ):
+            with self.subTest(text=text):
+                temp = tempfile.TemporaryDirectory()
+                path = Path(temp.name) / "config.toml"
+                path.write_text(text, encoding="utf-8")
+                try:
+                    with self.assertRaises(ValueError):
+                        load_config(path)
+                finally:
+                    temp.cleanup()
+
     def test_loads_explicit_remote_compliance_approval(self):
         text = BASE_CONFIG + """
 [[provider_approvals]]
