@@ -128,7 +128,7 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("model identifier is invalid")
         if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
             raise ParticipantAdapterError("model timeout is invalid")
-        if component.get("component_version") != 1:
+        if isinstance(component.get("component_version"), bool) or component.get("component_version") != 1:
             raise ParticipantAdapterError("model component version is unsupported")
         if set(component) - {"type", "component_version", "adapter", "settings", "secret_refs"}:
             raise ParticipantAdapterError("model component contains unsupported fields")
@@ -180,6 +180,8 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("resolved provider credential is invalid")
         if bool(component.get("secret_refs")) != ("api_key" in secrets):
             raise ParticipantAdapterError("resolved provider credentials do not match declared secret references")
+        if assistant_settings is not None and not isinstance(assistant_settings, Mapping):
+            raise ParticipantAdapterError("assistant generation settings are invalid")
         generation = assistant_settings or {}
         max_output_tokens = generation.get("max_output_tokens", 32768)
         temperature = generation.get("temperature", 0.2)
@@ -318,6 +320,10 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("invocation deadline is invalid") from exc
         if deadline.tzinfo is None or deadline <= datetime.now(timezone.utc):
             raise ParticipantAdapterError("invocation deadline is expired or lacks a timezone")
+        remaining_seconds = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if remaining_seconds <= 0:
+            raise ParticipantAdapterError("invocation deadline has expired")
+        request_timeout = min(float(participant.timeout_seconds), remaining_seconds)
         request = _strict_json_object(envelope.input_json, "invocation input")
         if len(envelope.input_json.encode("utf-8")) > 1_048_576:
             raise ParticipantAdapterError("invocation input exceeds the size limit")
@@ -369,6 +375,7 @@ class OpenAICompatibleParticipantAdapter:
                 result = participant.provider.chat(
                     messages, max_tokens=max_tokens, temperature=float(temperature),
                     tools=tools, on_token=lambda token: publish("text_delta", {"text": token}),
+                    timeout_seconds=request_timeout,
                 )
                 publish("terminal", result)
             except Exception as exc:
@@ -387,7 +394,7 @@ class OpenAICompatibleParticipantAdapter:
         try:
             while True:
                 try:
-                    event_type, payload = events.get(timeout=participant.timeout_seconds + 2)
+                    event_type, payload = events.get(timeout=request_timeout + 2)
                 except Empty:
                     result = ParticipantResult(
                         envelope.invocation_id, participant.participant_id,
