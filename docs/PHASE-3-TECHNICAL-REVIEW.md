@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status:** P3.1 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3.3 OpenAI-compatible participant adapter implementation is underway. No live Registry-bound dispatch is enabled.
+**Status (2026-11-25):** P3.1 and P3.3 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending; P3.4 implementation in progress. No live Registry-bound dispatch is enabled.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
@@ -149,3 +149,8 @@ The validation specifically exercised actual CR/LF header injection, ordinary JS
 The first corrective validation had exposed two implementation defects and incomplete test fixtures; these were corrected. A subsequent test-literal defect and trailing whitespace were also corrected. The exact final candidate passed all validation with no findings.
 
 This acceptance is only for P3.3. P3.2 formal acceptance remains a separate disposition. P3-R4 remains open. P3.5 dispatch remains disabled; no merge into `local-demo-ready-v1` is authorized.
+
+
+## P3.4 deterministic verifier — implementation checkpoint, validation pending
+
+A second production runtime kind is being added as a local deterministic verifier. It validates bounded structured JSON output, required fields, unexpected fields, and evidence-reference string shape. It deliberately does not resolve references, prove claims, run shell or arbitrary tools, access the network, or consume credentials. The Registry runtime binds configured verifier components from the exact immutable workspace revision and exposes descriptor/binding metadata for inspection. Runtime construction does not install an invocation authorizer; verifier invocation therefore remains disabled until P3.5. The deterministic self-test is local and bounded. Independent validation and formal acceptance remain pending.
