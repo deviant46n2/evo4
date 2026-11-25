@@ -83,9 +83,11 @@ The current test files provide meaningful coverage for scope persistence, retrie
 ## Decisions and disposition
 
 1. Retain the core Phase 3 architecture: exact pinned revision, complete assistant-runtime binding across all workspace entrypoints, no global fallback for Registry-bound workspaces, inert adapters before live dispatch, and explicit authorization/admission.
-2. Resolve P3-R1 through P3-R3 before declaring P3.1 contract review complete.
-3. Resolve P3-R4 before finalizing P3.5 admission implementation details.
-4. Keep all code changes and service/runtime activation behind the existing explicit authorization boundary.
-5. After these edits, obtain an independent challenge and reconcile it against this review before authorizing P3.1 implementation.
+2. **P3-R1 — addressed in the proposal, pending independent challenge.** Section 4 now requires connection-time IP pinning while preserving TLS hostname/SNI verification, rejects mixed permitted/prohibited DNS answer sets, revalidates every retry, disables implicit proxy discovery, and keeps redirects disabled by default. If redirects are later supported, each hop must be independently resolved, validated, and pinned. Acceptance tests must observe the actual peer address.
+3. **P3-R2 — addressed in the proposal, pending independent challenge.** Section 8 separates transport reachability, model advertisement, and completion verification. Dispatch requires an explicit operator-initiated, bounded completion probe for the exact model/interface, admitted under the same endpoint/compliance/budget/single-flight controls. No implicit first-request fallback is permitted. Probe evidence expires after the initial 60-second freshness window.
+4. **P3-R3 — addressed in the proposal, pending independent challenge.** Section 9 defines durable lease states and transactional transitions, rejects TTL-only recovery, distinguishes evidence-confirmed idleness from operator-acknowledged uncertain recovery, and specifies the privileged operator audit record and duplicate-work warning. Provider-side idleness is explicitly unprovable automatically where no reliable status mechanism exists.
+5. **P3-R4 — remains open.** Resolve adapter-specific local versus remote resource requirements, required telemetry dimensions, freshness, and operator reserves before finalizing P3.5 admission details.
+6. Keep all application-code changes and service/runtime activation behind the existing explicit authorization boundary. This documentation update does not authorize P3.1 implementation.
+7. Obtain an independent challenge of the revised P3.1 proposal and reconcile the result before declaring contract review complete or requesting implementation authorization.
 
 No application code, database schema, API behavior, provider calls, or services were changed as part of this review.
