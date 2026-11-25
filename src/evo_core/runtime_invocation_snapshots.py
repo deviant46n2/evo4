@@ -81,7 +81,7 @@ def initialize_runtime_invocation_snapshots(store):
             raise
 
 
-def _runtime_snapshot_payload(runtime):
+def _runtime_snapshot_payload(runtime, invocation_kind):
     config = runtime.assistant.config
     participant = runtime.participant
     if not is_dataclass(participant):
@@ -113,6 +113,7 @@ def _runtime_snapshot_payload(runtime):
     }
     payload = {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "invocation_kind": invocation_kind,
         "workspace_id": runtime.workspace_id,
         "project_id": runtime.project_id,
         "configuration_id": runtime.configuration_id,
@@ -135,7 +136,7 @@ def _runtime_snapshot_payload(runtime):
     return payload, encoded, sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None):
+def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None, invocation_kind="workspace_invocation"):
     """Persist one immutable snapshot after revalidating its workspace binding.
 
     invocation_id is supplied by the future invocation owner; this function
@@ -146,7 +147,10 @@ def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None):
     if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
         raise RuntimeSnapshotError("invocation_id must be a non-empty string of at most 128 characters")
     invocation_id = invocation_id.strip()
-    payload, encoded, digest = _runtime_snapshot_payload(runtime)
+    if not isinstance(invocation_kind, str) or not invocation_kind.strip() or len(invocation_kind) > 64:
+        raise RuntimeSnapshotError("invocation_kind must be a non-empty string of at most 64 characters")
+    invocation_kind = invocation_kind.strip()
+    payload, encoded, digest = _runtime_snapshot_payload(runtime, invocation_kind)
     created_at = utc_now()
 
     def operation(db):
@@ -227,3 +231,22 @@ def list_runtime_invocation_snapshots(store, workspace_id, *, limit=100):
             (workspace_id, limit),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def assert_runtime_matches_snapshot(store, runtime, invocation_id):
+    """Fail closed unless a runtime is identical to its immutable invocation snapshot."""
+    record = get_runtime_invocation_snapshot(store, invocation_id)
+    if record is None:
+        raise RuntimeSnapshotError("runtime invocation snapshot is missing")
+    expected = (
+        record["workspace_id"], record["project_id"], record["workspace_version"],
+        record["configuration_id"], record["revision_id"], record["revision_hash"],
+    )
+    actual = (
+        runtime.workspace_id, runtime.project_id, runtime.workspace_version,
+        runtime.configuration_id, runtime.revision_id, runtime.revision_hash,
+    )
+    if actual != expected:
+        raise RuntimeSnapshotError("runtime does not match the invocation's pinned snapshot")
+    runtime.assert_current(store)
+    return record
