@@ -370,7 +370,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Keep explicit participant invocation behind the P3.5 dispatch boundary. P3.6 inspection does not grant authority or enable dispatch.
 - Keep UI changes minimal: make binding and availability states inspectable; do not start the full Cyberdeck redesign. Ensure backend APIs, not frontend state, enforce authorization.
 
-**Current implementation slice:** backend read-only participant listing and metadata-only preflight routes have been added with focused API regression tests. Frontend inspection, independent validation, and formal P3.6 acceptance remain outstanding.
+**Current implementation slice:** backend read-only participant listing and metadata-only preflight routes have been added with focused API regression tests. The Workspace Registry now displays exact-revision participant descriptors and offers an explicit user-triggered metadata preflight, with stale-response guards. Independent validation and formal P3.6 acceptance remain outstanding.
 
 **Exit:** API tests prove exact-revision binding, participant-ID scoping, bounded preflight, no completion-probe/dispatch side effects, and no secret leakage; frontend can inspect real participant/configuration status without inventing runtime state.
 
