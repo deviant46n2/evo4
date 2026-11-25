@@ -68,7 +68,7 @@ def initialize(connection):
             )
     connection.commit()
 
-def _run_scope(connection, run_id):
+def _run_scope(connection, run_id, *, tolerate_malformed_metadata=False):
     row = connection.execute(
         "SELECT metadata_json FROM agent_runs WHERE id=?", (run_id,)
     ).fetchone()
@@ -77,8 +77,12 @@ def _run_scope(connection, run_id):
     try:
         metadata = json.loads(row[0] or "{}")
     except (TypeError, ValueError) as exc:
+        if tolerate_malformed_metadata:
+            return None, None
         raise ValueError("Agent run scope metadata is malformed") from exc
     if not isinstance(metadata, dict):
+        if tolerate_malformed_metadata:
+            return None, None
         raise ValueError("Agent run scope metadata must be an object")
     project_id = metadata.get("project_id")
     workspace_id = metadata.get("workspace_id")
@@ -93,7 +97,9 @@ def _run_scope(connection, run_id):
 
 def create(connection, run_id):
     stamp = now()
-    project_id, workspace_id = _run_scope(connection, run_id)
+    project_id, workspace_id = _run_scope(
+        connection, run_id, tolerate_malformed_metadata=True
+    )
     connection.execute(
         """INSERT INTO background_agent_tasks
            (run_id,status,project_id,workspace_id,created_at,updated_at)
