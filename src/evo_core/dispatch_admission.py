@@ -43,8 +43,15 @@ class ResourceDemand:
         if self.locality not in {"local_process", "local_endpoint", "remote_service"}:
             raise ValueError("resource locality is unsupported")
         for name, value in (("cpu_cores", self.cpu_cores), ("ram_mib", self.ram_mib)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-                raise ValueError(f"{name} must be a finite non-negative number")
+            maximum = 4096.0 if name == "cpu_cores" else 16_777_216.0
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or value > maximum
+            ):
+                raise ValueError(f"{name} is outside the supported finite resource range")
         if self.gpu_vram_mib is not None and (
             isinstance(self.gpu_vram_mib, bool)
             or not isinstance(self.gpu_vram_mib, (int, float))
@@ -553,6 +560,8 @@ def admit_invocation(
     the same BEGIN IMMEDIATE transaction as the lease and budget reservation.
     Denied/deferred decisions are persisted for audit and never acquire a lease.
     """
+    if runtime is None or not hasattr(runtime, "participant") or not callable(getattr(runtime, "assert_current", None)):
+        raise AdmissionError("a bound runtime is required")
     initialize_invocation_lifecycle(store)
     now = datetime.now(timezone.utc) if now is None else now
     if not isinstance(now, datetime) or now.tzinfo is None:
