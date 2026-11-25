@@ -35,6 +35,7 @@ class ResourceDemand:
     cpu_cores: float
     ram_mib: float
     gpu_vram_mib: float | None = None
+    compute_mode: str | None = None
     maximum_gpu_temperature_c: float | None = 85.0
 
     def __post_init__(self):
@@ -50,10 +51,15 @@ class ResourceDemand:
             or self.gpu_vram_mib <= 0
         ):
             raise ValueError("gpu_vram_mib must be a finite positive number or None")
-        if self.locality == "local_endpoint" and self.gpu_vram_mib is None:
-            raise ValueError("local endpoint demand requires an explicit GPU/CPU resource profile")
-        if self.locality != "local_endpoint" and self.gpu_vram_mib is not None:
-            raise ValueError("GPU VRAM demand is supported only for a local endpoint")
+        if self.locality == "local_endpoint":
+            if self.compute_mode not in {"cpu", "gpu", "mixed"}:
+                raise ValueError("local endpoint demand requires an explicit compute_mode")
+            if self.compute_mode in {"gpu", "mixed"} and self.gpu_vram_mib is None:
+                raise ValueError("GPU/mixed local endpoint demand requires an explicit VRAM estimate")
+            if self.compute_mode == "cpu" and self.gpu_vram_mib is not None:
+                raise ValueError("CPU-only local endpoint demand cannot declare GPU VRAM")
+        elif self.compute_mode is not None or self.gpu_vram_mib is not None:
+            raise ValueError("compute_mode and GPU VRAM are supported only for a local endpoint")
         if self.maximum_gpu_temperature_c is not None and (
             isinstance(self.maximum_gpu_temperature_c, bool)
             or not isinstance(self.maximum_gpu_temperature_c, (int, float))
@@ -309,7 +315,7 @@ def _snapshot_matches(db, runtime, envelope):
     if row is None:
         raise AdmissionError("runtime invocation snapshot is missing")
     digest = sha256(row["snapshot_json"].encode("utf-8")).hexdigest()
-    if digest != row["snapshot_hash"] or digest != row["snapshot_hash"]:
+    if digest != row["snapshot_hash"]:
         raise AdmissionError("runtime invocation snapshot integrity check failed")
     if (
         row["workspace_id"] != runtime.workspace_id
@@ -395,7 +401,13 @@ def admit_invocation(
         raise ValueError("now must be timezone-aware")
     now = now.astimezone(timezone.utc)
     deadline, requested_tokens = _validate_envelope(runtime, envelope, now)
-    if requested_tokens > runtime.participant.limits_dict.get("max_output_tokens", requested_tokens) if hasattr(runtime.participant, "limits_dict") else False:
+    participant_limits = dict(runtime.participant.limits)
+    pinned_output_limit = participant_limits.get("max_output_tokens")
+    if (
+        isinstance(pinned_output_limit, bool)
+        or not isinstance(pinned_output_limit, int)
+        or requested_tokens > pinned_output_limit
+    ):
         raise AdmissionError("requested output tokens exceed the pinned participant limit")
     if not isinstance(resource_demand, ResourceDemand):
         raise AdmissionError("a code-owned resource demand is required")
@@ -429,7 +441,21 @@ def admit_invocation(
     if requested_tokens > output_limit:
         budget_result = {"decision": "denied", "reason": "per_invocation_output_token_limit"}
 
-    origin = getattr(runtime.bound_participant, "endpoint", None)
+    endpoint = getattr(runtime.bound_participant, "endpoint", None)
+    if is_provider:
+        from urllib.parse import urlsplit
+        from .provider_endpoint import normalize_provider_origin
+        try:
+            parsed_endpoint = urlsplit(endpoint)
+            origin = normalize_provider_origin(f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}")
+        except Exception as exc:
+            raise AdmissionError("bound provider origin is invalid") from exc
+        if approval is not None and approval.origin != origin:
+            approval_result = {"decision": "denied", "reason": "provider_compliance_origin_mismatch"}
+            decision["approval"] = approval_result
+            decision.update(approval_result)
+    else:
+        origin = None
     integration_id = runtime.participant.integration_id
     budget_day = now.date().isoformat()
     decision = {
@@ -458,6 +484,8 @@ def admit_invocation(
         if existing:
             raise AdmissionError("invocation ID has already been used")
         state = decision["decision"]
+        if state == "unknown":
+            state = "denied"
         lease_required = is_provider
         if state == "admitted" and lease_required:
             lease = db.execute(
@@ -627,7 +655,8 @@ def mark_stale_dispatch_leases_abandoned(store, *, stale_after_seconds=15, now=N
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    cutoff = (now.astimezone(timezone.utc) - __import__("datetime").timedelta(seconds=stale_after_seconds)).isoformat().replace("+00:00", "Z")
+    from datetime import timedelta
+    cutoff = (now.astimezone(timezone.utc) - timedelta(seconds=stale_after_seconds)).isoformat().replace("+00:00", "Z")
 
     def operation(db):
         rows = db.execute(
