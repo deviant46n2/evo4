@@ -105,6 +105,10 @@ class ProviderTimeoutError(ProviderError):
     pass
 
 
+class ProviderTransportError(ProviderError):
+    pass
+
+
 class ProviderMalformedResponseError(ProviderError):
     pass
 
@@ -164,11 +168,11 @@ class OpenAICompatibleProvider:
         except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
             raise ProviderMalformedResponseError("Model-list response is malformed") from exc
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
-            raise ProviderError("Model-list request failed") from exc
+            raise ProviderTransportError("Model-list transport failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
                 raise ProviderTimeoutError("Model-list request timed out") from exc
-            raise ProviderError("Model-list request failed endpoint policy") from exc
+            raise ProviderTransportError("Model-list endpoint transport failed") from exc
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None, *, timeout_seconds=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
@@ -327,11 +331,11 @@ class OpenAICompatibleProvider:
                 raise ProviderError("Chat completion request failed") from exc
             raise ProviderTimeoutError("Chat completion request timed out") from exc
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
-            raise ProviderError("Chat completion request failed") from exc
+            raise ProviderTransportError("Chat completion transport failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
                 raise ProviderTimeoutError("Chat completion request timed out") from exc
-            raise ProviderError("Chat completion endpoint policy failed") from exc
+            raise ProviderTransportError("Chat completion endpoint transport failed") from exc
         final_safe_content = redactor.finish()
         if final_safe_content:
             pieces.append(final_safe_content)
