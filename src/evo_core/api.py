@@ -944,15 +944,28 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
         revision = binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None)
         try:
-            effective_project_command_prefixes(config.allowed_commands, revision)
+            effective_allowed_commands = effective_project_command_prefixes(config.allowed_commands, revision)
         except CommandPolicyError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from evo_experiments.execution import command_allowed
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
             if plan is None:
                 raise HTTPException(status_code=404, detail="Agent plan not found")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
+            for step in plan["steps"]:
+                commands = step.get("verification_commands") or []
+                if not commands:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' has no configured verification command and cannot be executed safely.",
+                    )
+                if any(not command_allowed(command, effective_allowed_commands) for command in commands):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
+                    )
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
