@@ -11,7 +11,7 @@ from evo_core.openai_compatible_adapter import (
     ParticipantDispatchDisabledError,
 )
 from evo_core.participant_contracts import InvocationEnvelope, ParticipantResult
-from evo_core.provider import ProviderHTTPError, ProviderMalformedResponseError, ProviderTimeoutError
+from evo_core.provider import ProviderHTTPError, ProviderMalformedResponseError, ProviderTimeoutError, ProviderTransportError
 from evo_core.provider_endpoint import PinnedProviderTransport
 
 
@@ -267,6 +267,19 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         result = list(adapter.invoke(participant, envelope("p")))[-1]
         self.assertEqual(result.status, "rate_limited")
         self.assertEqual(result.error_code, "provider_rate_limited")
+
+    def test_provider_transport_failure_is_normalized_as_unavailable(self):
+        class Unreachable(FakeProvider):
+            def chat(self, *args, **kwargs):
+                raise ProviderTransportError("connection failed")
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=Unreachable,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        result = list(adapter.invoke(participant, envelope("p")))[-1]
+        self.assertEqual(result.status, "unavailable")
+        self.assertEqual(result.error_code, "provider_unavailable")
 
     def test_provider_timeout_is_normalized(self):
         class TimedOut(FakeProvider):
