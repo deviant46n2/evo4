@@ -189,7 +189,7 @@ class ParticipantAdapter(Protocol):
     def probe_completion(self, participant: Any, *, timeout_seconds: int) -> "AvailabilityEvidence": ...
 
     def invoke(
-        self, participant: Any, envelope: InvocationEnvelope
+        self, participant: Any, envelope: InvocationEnvelope, *, cancellation_event=None
     ) -> Iterable["ParticipantEvent | ParticipantResult"]: ...
 
 
