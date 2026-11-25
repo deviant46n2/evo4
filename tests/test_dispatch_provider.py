@@ -12,6 +12,7 @@ from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
 from evo_core.provider_approvals import ProviderApproval
 from evo_core.runtime_binding import build_workspace_runtime, RegistryDispatchDisabledError
+from evo_core.provider import ProviderTimeoutError
 from evo_core.store import EvoStore
 from evo_core.workspaces import create_workspace
 
@@ -68,10 +69,13 @@ def telemetry():
 class FakeProvider:
     def __init__(self):
         self.calls = 0
+        self.failure = None
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None,
              tools=None, *, timeout_seconds=None):
         self.calls += 1
+        if self.failure is not None:
+            raise self.failure
         if on_token:
             on_token("admitted ")
             on_token("answer")
@@ -157,13 +161,17 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
         runtime, fake = self._enabled_config()
         tokens = []
         with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
-            result = runtime.assistant.provider.chat(
-                [{"role": "user", "content": "hello"}],
-                max_tokens=64, temperature=0.2, on_token=tokens.append,
-            )
-        self.assertEqual(fake.calls, 1)
-        self.assertEqual(result["content"], "admitted answer")
-        self.assertEqual(tokens, ["admitted ", "answer"])
+            results = [
+                runtime.assistant.provider.chat(
+                    [{"role": "user", "content": f"hello {index}"}],
+                    max_tokens=64, temperature=0.2, on_token=tokens.append,
+                    parent_task_id="parent-request",
+                )
+                for index in range(2)
+            ]
+        self.assertEqual(fake.calls, 2)
+        self.assertEqual([item["content"] for item in results], ["admitted answer", "admitted answer"])
+        self.assertEqual(tokens, ["admitted ", "answer", "admitted ", "answer"])
         with self.store.lock:
             snapshots = self.store.db.execute(
                 "SELECT invocation_id FROM runtime_invocation_snapshots"
@@ -172,12 +180,16 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 "SELECT requests_reserved,output_tokens_reserved,output_tokens_used "
                 "FROM provider_budget_usage"
             ).fetchone()
-        self.assertEqual(len(snapshots), 1)
-        invocation_id = snapshots[0]["invocation_id"]
-        lifecycle = get_invocation_lifecycle(self.store, invocation_id)
-        self.assertEqual(lifecycle["status"], "succeeded")
-        self.assertEqual(lifecycle["usage"]["output_tokens"], 2)
-        self.assertEqual(tuple(usage), (0, 0, 2))
+        self.assertEqual(len(snapshots), 2)
+        for snapshot in snapshots:
+            lifecycle = get_invocation_lifecycle(self.store, snapshot["invocation_id"])
+            self.assertEqual(lifecycle["status"], "succeeded")
+            self.assertEqual(lifecycle["usage"]["output_tokens"], 2)
+            self.assertTrue(any(
+                event["event_type"] == "invocation_started"
+                for event in lifecycle["events"]
+            ))
+        self.assertEqual(tuple(usage), (0, 0, 4))
 
     def test_missing_budget_blocks_before_provider_request(self):
         runtime, fake = self._enabled_config(with_budget=False)
@@ -193,6 +205,52 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 "SELECT status FROM participant_invocations"
             ).fetchone()
         self.assertEqual(row["status"], "denied")
+
+
+    def test_provider_timeout_retains_lease_and_unknown_usage_reservation(self):
+        runtime, fake = self._enabled_config()
+        fake.failure = ProviderTimeoutError("simulated timeout")
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            with self.assertRaises(DispatchProviderError):
+                runtime.assistant.provider.chat(
+                    [{"role": "user", "content": "timeout"}],
+                    max_tokens=64, temperature=0.2,
+                )
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT invocation_id,status FROM participant_invocations"
+            ).fetchone()
+            lease = self.store.db.execute(
+                "SELECT state FROM dispatch_leases WHERE lease_key='global_provider_dispatch'"
+            ).fetchone()
+            usage = self.store.db.execute(
+                "SELECT requests_reserved,output_tokens_reserved,output_tokens_used "
+                "FROM provider_budget_usage"
+            ).fetchone()
+        self.assertEqual(row["status"], "timed_out")
+        self.assertEqual(lease["state"], "abandoned")
+        self.assertEqual(tuple(usage), (1, 64, 0))
+
+    def test_pre_dispatch_cancellation_creates_no_snapshot_or_lease(self):
+        import threading
+        runtime, fake = self._enabled_config()
+        cancelled = threading.Event()
+        cancelled.set()
+        with self.assertRaisesRegex(DispatchProviderError, "cancelled before admission"):
+            runtime.assistant.provider.chat(
+                [{"role": "user", "content": "cancel"}],
+                max_tokens=64, temperature=0.2,
+                cancellation_event=cancelled,
+            )
+        self.assertEqual(fake.calls, 0)
+        with self.store.lock:
+            snapshots = self.store.db.execute(
+                "SELECT COUNT(*) FROM runtime_invocation_snapshots"
+            ).fetchone()[0]
+            invocations = self.store.db.execute(
+                "SELECT COUNT(*) FROM participant_invocations"
+            ).fetchone()[0]
+        self.assertEqual((snapshots, invocations), (0, 0))
 
 
 if __name__ == "__main__":
