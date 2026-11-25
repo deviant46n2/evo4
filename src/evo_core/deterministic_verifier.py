@@ -207,7 +207,7 @@ class DeterministicVerifierParticipantAdapter:
             raise DeterministicVerifierError("bound verifier is invalid")
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 600:
             raise ValueError("timeout_seconds is invalid")
-        return AvailabilityEvidence(True, True, None, _utc_now(), "local verifier loaded; no invocation performed")
+        return AvailabilityEvidence(None, None, None, _utc_now(), "local verifier loaded; no invocation performed")
 
     def probe_completion(self, participant: BoundDeterministicVerifier, *, timeout_seconds: int) -> AvailabilityEvidence:
         if not isinstance(participant, BoundDeterministicVerifier):
@@ -314,12 +314,13 @@ class DeterministicVerifierParticipantAdapter:
                 },
                 request["output"],
             )
-            parsed = _strict_json_object(request["output"], "participant output")
             evidence = []
-            for field in participant.evidence_fields:
-                values = parsed.get(field)
-                if isinstance(values, list):
-                    evidence.extend(value for value in values if isinstance(value, str) and value.strip())
+            if "malformed_json" not in outcome.issues and "output_must_be_object" not in outcome.issues:
+                parsed = _strict_json_object(request["output"], "participant output")
+                for field in participant.evidence_fields:
+                    values = parsed.get(field)
+                    if isinstance(values, list):
+                        evidence.extend(value for value in values if isinstance(value, str) and value.strip())
             result_payload = {
                 "valid": outcome.valid,
                 "issues": list(outcome.issues),
