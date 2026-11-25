@@ -300,7 +300,7 @@ The following order minimizes speculative framework work.
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.3 is accepted; P3.2 formal acceptance, P3-R4 resolution, P3.4/P3.5 implementation, and remaining Phase 3 criteria are still outstanding. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
