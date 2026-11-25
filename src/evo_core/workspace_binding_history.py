@@ -96,6 +96,10 @@ def rebind_workspace(
     )
     actor = workspaces._text(actor, "actor", required=True)
     reason = workspaces._text(reason, "reason", required=True)
+    if len(actor) > 128:
+        raise workspaces.WorkspaceValidationError("actor exceeds 128 characters")
+    if len(reason) > 2000:
+        raise workspaces.WorkspaceValidationError("reason exceeds 2000 characters")
     if checkout_id is not None:
         checkout_id = workspaces._text(checkout_id, "checkout_id", required=True)
 
