@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status: proposed technical plan; implementation not started.**  
+**Status: implementation in progress.** P3.1 is accepted; P3.2 is partially implemented under the user's authorization. P3.5 live dispatch remains gated.  
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -350,4 +350,4 @@ The precise Python names and persistence details remain implementation choices, 
 
 ---
 
-**Implementation boundary:** This plan is ready for technical review. Phase 3 code changes should begin only after the plan and P3.1 contract proposal are explicitly authorized.
+**Implementation boundary:** P3.1 contract foundations are accepted and P3.2 implementation is authorized. Continue only within the documented phase sequence. Do not enable live dispatch before P3.5 authorization/admission, and resolve P3-R4 before finalizing P3.5 admission.
