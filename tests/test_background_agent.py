@@ -15,12 +15,39 @@ class BackgroundAgentLedgerTests(unittest.TestCase):
             started_at TEXT NOT NULL, finished_at TEXT, summary TEXT,
             metadata_json TEXT NOT NULL DEFAULT '{}')""")
         self.db.execute(
-            "INSERT INTO agent_runs(id,kind,status,started_at) VALUES('run-1','coding','running','now')")
+            """INSERT INTO agent_runs(id,kind,status,started_at,metadata_json)
+               VALUES('run-1','coding','running','now',?)""",
+            ('{"project_id":"project-1","workspace_id":"workspace-1"}',))
         initialize(self.db)
         create(self.db, "run-1")
 
     def tearDown(self):
         self.db.close()
+
+    def test_scope_is_first_class_and_survives_restart_recovery(self):
+        task = self.db.execute(
+            "SELECT project_id,workspace_id FROM background_agent_tasks WHERE run_id='run-1'"
+        ).fetchone()
+        self.assertEqual(task["project_id"], "project-1")
+        self.assertEqual(task["workspace_id"], "workspace-1")
+        claim(self.db, "run-1", "worker-a")
+        self.assertEqual(recover(self.db), ["run-1"])
+        recovered = self.db.execute(
+            "SELECT project_id,workspace_id,status FROM background_agent_tasks WHERE run_id='run-1'"
+        ).fetchone()
+        self.assertEqual(recovered["project_id"], "project-1")
+        self.assertEqual(recovered["workspace_id"], "workspace-1")
+        self.assertEqual(recovered["status"], "interrupted")
+        queued = events(self.db, "run-1")[0]
+        self.assertEqual(queued["payload"]["project_id"], "project-1")
+        self.assertEqual(queued["payload"]["workspace_id"], "workspace-1")
+
+    def test_scope_metadata_rejects_workspace_without_project(self):
+        self.db.execute(
+            "UPDATE agent_runs SET metadata_json=? WHERE id='run-1'",
+            ('{"workspace_id":"workspace-1"}',))
+        with self.assertRaisesRegex(ValueError, "requires project_id"):
+            create(self.db, "run-1")
 
     def test_atomic_claim_only_once(self):
         self.assertTrue(claim(self.db, "run-1", "worker-a"))
