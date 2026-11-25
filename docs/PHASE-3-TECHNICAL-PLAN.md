@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25): P3.1, P3.3, and P3.4 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3-R4 resource-admission design is now proposed for independent challenge; it is not yet accepted or implemented.** Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
+**Status (2026-11-25): P3.1, P3.3, P3.4, and P3-R4 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3-R4 resource-admission design and telemetry-freshness prerequisite are accepted; P3.5 admission/dispatch implementation remains outstanding.** Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -371,7 +371,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.3 is accepted; P3.2 formal acceptance, P3-R4 resolution, P3.4/P3.5 implementation, and remaining Phase 3 criteria are still outstanding. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.3 and P3.4 are accepted; P3.2 formal acceptance, P3.5 implementation, and remaining Phase 3 criteria are still outstanding. P3-R4 resource-admission design and telemetry freshness are accepted. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
@@ -424,7 +424,7 @@ The precise Python names and persistence details remain implementation choices, 
 
 ---
 
-**Implementation boundary:** P3.1 contract foundations are accepted and P3.2 implementation is authorized. Continue only within the documented phase sequence. Do not enable live dispatch before P3.5 authorization/admission, and resolve P3-R4 before finalizing P3.5 admission.
+**Implementation boundary:** P3.1 contract foundations are accepted and P3.2 implementation is authorized. Continue only within the documented phase sequence. Do not enable live dispatch before P3.5 authorization/admission. P3-R4 is accepted as the resource-admission design prerequisite; implement its contract only within P3.5's authorization, budget, and durable lease boundary.
 
 
 ## P3.3 acceptance checkpoint (2026-11-25)
@@ -434,3 +434,10 @@ P3.3 OpenAI-compatible participant adapter is **accepted** at exact candidate `3
 The adapter uses the pinned Registry transport, strict bounded parsing, secret redaction, immutable runtime-bound settings, and cooperative cancellation with bounded request timeouts. Actual CR/LF injection, worker ordering, pre-cancel behavior, provenance completeness, and the transport/security boundaries were verified. No live provider calls or live dispatch occurred; the API/worker dispatch gate remains closed.
 
 This does not accept P3.2 formally, resolve P3-R4, authorize P3.5, or authorize a merge. Resolve P3-R4 before finalizing P3.5 admission. P3.5 remains the first milestone that may enable live dispatch.
+
+
+## P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
+
+Accepted at exact validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd`. Independent detached-worktree validation: compileall passed; focused telemetry suite 5/5 passed; full unittest suite 879/879 passed with zero failures/errors/skips; diff checks against both P3.4 base `ad04198b95708df58aae1ff07e0b38380671b574` and cumulative base `6c12cf467cde61166be74e1e501e58de1c8decf6` passed. The GPU regression proves probe/process/timestamp ordering, and the GPU fixture was confirmed valid. The no-NVIDIA path and UTC completion timestamp/nonnegative monotonic duration were verified. Original checkout and 32 pre-existing worktrees were preserved.
+
+This closes the P3-R4 design/freshness prerequisite only. It does not implement P3.5, authorize live dispatch/provider calls, formally accept P3.2, or authorize a merge. P3.5 must still implement authorization, budgets, durable atomic admission, and invocation lifecycle before any live dispatch.
