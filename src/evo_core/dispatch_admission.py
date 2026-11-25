@@ -404,19 +404,39 @@ def _validate_envelope(runtime, envelope, now):
     from .participant_contracts import InvocationEnvelope
     if not isinstance(envelope, InvocationEnvelope):
         raise AdmissionError("a validated invocation envelope is required")
+    string_limits = {
+        "invocation_id": 128,
+        "participant_id": 128,
+        "adapter_id": 128,
+        "configuration_id": 128,
+        "configuration_revision_id": 128,
+        "component_key": 128,
+        "objective": 1024,
+        "task_role": 128,
+        "correlation_id": 128,
+    }
+    for field, maximum in string_limits.items():
+        value = getattr(envelope, field, None)
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            raise AdmissionError(f"invocation {field} is invalid")
     if (
-        not isinstance(envelope.invocation_id, str)
-        or not envelope.invocation_id.strip()
-        or len(envelope.invocation_id) > 128
-        or envelope.participant_id != runtime.participant.participant_id
+        envelope.participant_id != runtime.participant.participant_id
         or envelope.project_id != runtime.project_id
         or envelope.workspace_id != runtime.workspace_id
         or envelope.configuration_id != runtime.configuration_id
         or envelope.configuration_revision_id != runtime.revision_id
         or envelope.adapter_id != runtime.participant.adapter_id
         or envelope.adapter_contract_version != runtime.participant.adapter_contract_version
+        or envelope.component_key != runtime.participant.component_key
+        or envelope.component_version != runtime.participant.component_version
     ):
         raise AdmissionError("invocation scope or participant identity does not match the runtime")
+    if envelope.parent_task_id is not None and (
+        not isinstance(envelope.parent_task_id, str)
+        or not envelope.parent_task_id.strip()
+        or len(envelope.parent_task_id) > 128
+    ):
+        raise AdmissionError("invocation parent task identity is invalid")
     deadline = _parse_utc(envelope.deadline_utc, "invocation deadline")
     remaining = (deadline - now).total_seconds()
     if remaining <= 0 or remaining > 600:
@@ -426,14 +446,76 @@ def _validate_envelope(runtime, envelope, now):
     if (
         not isinstance(envelope.input_json, str)
         or len(envelope.input_json) > 1_048_576
+        or not isinstance(envelope.output_contract_json, str)
+        or len(envelope.output_contract_json) > 65536
     ):
-        raise AdmissionError("invocation input is missing or oversized")
+        raise AdmissionError("invocation input or output contract is missing or oversized")
     try:
         if len(envelope.input_json.encode("utf-8")) > 1_048_576:
             raise AdmissionError("invocation input is missing or oversized")
-    except UnicodeEncodeError as exc:
-        raise AdmissionError("invocation input encoding is invalid") from exc
-    return deadline, _output_token_request(envelope)
+        contract = json.loads(
+            envelope.output_contract_json,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON value")),
+            object_pairs_hook=lambda pairs: _unique_pairs(pairs),
+        )
+    except (UnicodeEncodeError, TypeError, ValueError, RecursionError) as exc:
+        raise AdmissionError("invocation input or output contract is malformed") from exc
+    if not isinstance(contract, dict):
+        raise AdmissionError("invocation output contract must be a JSON object")
+    context_refs = envelope.context_references
+    if not isinstance(context_refs, tuple) or len(context_refs) > 128:
+        raise AdmissionError("invocation context references are invalid")
+    for reference in context_refs:
+        for field in ("reference_id", "source_type", "scope", "trust_label"):
+            value = getattr(reference, field, None)
+            if not isinstance(value, str) or not value.strip() or len(value) > 512:
+                raise AdmissionError("invocation context reference is invalid")
+    if not isinstance(envelope.acceptance_criteria, tuple) or len(envelope.acceptance_criteria) > 64:
+        raise AdmissionError("invocation acceptance criteria are invalid")
+    if any(not isinstance(item, str) or not item.strip() or len(item) > 2000 for item in envelope.acceptance_criteria):
+        raise AdmissionError("invocation acceptance criteria are invalid")
+    allowed_permissions = {"text_generation", "tool_call_generation"}
+    if (
+        not isinstance(envelope.effective_permissions, tuple)
+        or "text_generation" not in envelope.effective_permissions
+        or len(envelope.effective_permissions) > 8
+        or len(set(envelope.effective_permissions)) != len(envelope.effective_permissions)
+        or any(item not in allowed_permissions for item in envelope.effective_permissions)
+    ):
+        raise AdmissionError("invocation permissions exceed the initial model capability boundary")
+    if (
+        not isinstance(envelope.approval_requirements, tuple)
+        or len(envelope.approval_requirements) > 32
+        or any(not isinstance(item, str) or not item.strip() or len(item) > 128 for item in envelope.approval_requirements)
+    ):
+        raise AdmissionError("invocation approval requirements are invalid")
+    if not isinstance(envelope.remaining_budgets, tuple) or len(envelope.remaining_budgets) > 16:
+        raise AdmissionError("invocation budget envelope is invalid")
+    budget = {}
+    for item in envelope.remaining_budgets:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise AdmissionError("invocation budget entry is malformed")
+        name, value = item
+        if name not in {"output_tokens", "request_seconds"} or name in budget:
+            raise AdmissionError("invocation budget dimension is unsupported or duplicated")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise AdmissionError("invocation budget value is invalid")
+        budget[name] = value
+    requested_tokens = _output_token_request(envelope)
+    if budget.get("output_tokens", 0) < requested_tokens:
+        raise AdmissionError("invocation remaining output-token budget is insufficient")
+    if budget.get("request_seconds", 0) > remaining:
+        raise AdmissionError("invocation request-time budget exceeds its deadline")
+    return deadline, requested_tokens
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
 
 
 def admit_invocation(
