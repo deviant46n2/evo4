@@ -387,7 +387,7 @@ class OpenAICompatibleParticipantAdapter:
         request = _strict_json_object(envelope.input_json, "invocation input")
         try:
             json.dumps(request, ensure_ascii=False, allow_nan=False).encode("utf-8")
-        except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as exc:
             raise ParticipantAdapterError("invocation input contains unsupported values") from exc
         if set(request) - {"messages", "max_tokens", "temperature", "tools"}:
             raise ParticipantAdapterError("invocation input contains unsupported fields")
