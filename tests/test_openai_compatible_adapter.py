@@ -111,7 +111,7 @@ def envelope(participant_id, *, input_json=None):
         input_json=input_json or json.dumps({
             "messages": [{"role": "user", "content": "Say hello"}],
             "max_tokens": 8,
-            "temperature": 0.0,
+            "temperature": 0.2,
         }),
         context_references=(),
         output_contract_json='{"type":"object"}',
