@@ -243,5 +243,22 @@ allow_everything = true
             temp.cleanup()
 
 
+    def test_dispatch_enabled_requires_a_boolean_and_defaults_off(self):
+        config, temp = self._load(BASE_CONFIG)
+        try:
+            self.assertFalse(config.dispatch_enabled)
+        finally:
+            temp.cleanup()
+        text = BASE_CONFIG + "\\n[dispatch]\\nenabled = \"yes\"\\n"
+        temp = tempfile.TemporaryDirectory()
+        path = Path(temp.name) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            temp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()
