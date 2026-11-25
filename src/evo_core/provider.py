@@ -54,13 +54,42 @@ class InvalidToolCallError(ProviderError):
         super().__init__(message)
         self.finish_reason = finish_reason
 
+class ProviderHTTPError(ProviderError):
+    def __init__(self, status_code, operation):
+        self.status_code = int(status_code)
+        super().__init__(f"{operation} HTTP {self.status_code}")
+
+
+class ProviderTimeoutError(ProviderError):
+    pass
+
+
+class ProviderMalformedResponseError(ProviderError):
+    pass
+
+
 class OpenAICompatibleProvider:
-    """Streaming chat provider for llama.cpp and other OpenAI-compatible servers."""
-    def __init__(self, base_url, api_key, model, timeout=600):
+    """Streaming chat provider for llama.cpp and other OpenAI-compatible servers.
+
+    The optional pinned transport is used by Registry-bound adapters. Legacy
+    TOML callers retain urllib's existing behavior and are not silently moved
+    onto Registry endpoint policy.
+    """
+    def __init__(self, base_url, api_key, model, timeout=600, *, transport=None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.transport = transport
+
+    def _open_response(self, request, method, route, timeout):
+        if self.transport is None:
+            return urllib.request.urlopen(request, timeout=timeout)
+        headers = {name: value for name, value in request.header_items()}
+        return self.transport.open_response(
+            self.base_url, method, route, headers=headers,
+            body=request.data, timeout=timeout,
+        )
 
     def _redact_error(self, message):
         text = str(message)
@@ -72,14 +101,25 @@ class OpenAICompatibleProvider:
         request = urllib.request.Request(self.base_url + "/v1/models",
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout,10)) as response:
+            with self._open_response(request, "GET", "/models", min(self.timeout,10)) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    raise ProviderHTTPError(status, "Model-list")
                 payload = json.loads(response.read().decode("utf-8"))
-            return [item.get("id") for item in payload.get("data",[]) if item.get("id")]
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise ProviderMalformedResponseError("Model-list response is malformed")
+            return [item.get("id") for item in payload["data"] if isinstance(item, dict) and item.get("id")]
         except urllib.error.HTTPError as exc:
             # Provider bodies are untrusted and may echo credentials; discard by default.
-            raise ProviderError(f"Model-list HTTP {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            raise ProviderHTTPError(exc.code, "Model-list") from exc
+        except (TimeoutError,):
+            raise ProviderTimeoutError("Model-list request timed out")
+        except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
             raise ProviderError("Model-list request failed") from exc
+        except Exception as exc:
+            if exc.__class__.__name__ == "ProviderEndpointError":
+                raise ProviderError("Model-list request failed endpoint policy") from exc
+            raise
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
@@ -103,7 +143,10 @@ class OpenAICompatibleProvider:
         malformed_event = False
         finish_reason = None
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self._open_response(request, "POST", "/chat/completions", self.timeout) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    raise ProviderHTTPError(status, "Chat completion")
                 content_type = response.headers.get("Content-Type","")
                 for raw in response:
                     line = raw.decode("utf-8",errors="replace").strip()
@@ -159,9 +202,15 @@ class OpenAICompatibleProvider:
                                 on_token(safe_content)
         except urllib.error.HTTPError as exc:
             # Do not persist or expose provider response bodies by default.
-            raise ProviderError(f"Chat completion HTTP {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ProviderHTTPError(exc.code, "Chat completion") from exc
+        except TimeoutError as exc:
+            raise ProviderTimeoutError("Chat completion request timed out") from exc
+        except (urllib.error.URLError, OSError) as exc:
             raise ProviderError("Chat completion request failed") from exc
+        except Exception as exc:
+            if exc.__class__.__name__ == "ProviderEndpointError":
+                raise ProviderError("Chat completion endpoint policy failed") from exc
+            raise
         final_safe_content = redactor.finish()
         if final_safe_content:
             pieces.append(final_safe_content)
@@ -169,10 +218,12 @@ class OpenAICompatibleProvider:
                 on_token(final_safe_content)
         if not saw_event:
             raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
-        if not valid_event:
-            raise ProviderError(f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})")
+        if not valid_event or malformed_event:
+            raise ProviderMalformedResponseError(
+                f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})"
+            )
         if not pieces and not tool_call_parts and finish_reason != "length":
-            raise ProviderError("Server returned an empty completion")
+            raise ProviderMalformedResponseError("Server returned an empty completion")
         finished = time.perf_counter()
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")
