@@ -302,8 +302,8 @@ def initialize_invocation_lifecycle(store):
                 integration_id TEXT NOT NULL,
                 budget_day_utc TEXT NOT NULL,
                 -- Counts admitted provider requests against the UTC-day cap. A started request
-            -- consumes this daily allowance even after settlement; only a proven
-            -- pre-start cancellation refunds it. This is not an in-flight counter.
+                -- consumes this daily allowance even after settlement; only a proven
+                -- pre-start cancellation refunds it. This is not an in-flight counter.
             requests_reserved INTEGER NOT NULL DEFAULT 0 CHECK(requests_reserved >= 0),
                 output_tokens_reserved INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens_reserved >= 0),
                 output_tokens_used INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens_used >= 0),
