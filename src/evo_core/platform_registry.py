@@ -147,4 +147,6 @@ def initialize_platform_registry(store):
     # was already initialized on an earlier application version.
     from .workspace_binding_history import initialize_workspace_binding_history
     initialize_workspace_binding_history(store)
+    from .runtime_invocation_snapshots import initialize_runtime_invocation_snapshots
+    initialize_runtime_invocation_snapshots(store)
     return "initialized" if not applied else "already-initialized"
