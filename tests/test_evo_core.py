@@ -60,6 +60,32 @@ class EvoCoreTests(unittest.TestCase):
             self.assertTrue(metadata["truncated"])
             assistant.close()
 
+    def test_assistant_persists_runtime_invocation_id_on_both_turn_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            store=EvoStore(config.database)
+            assistant=EvoAssistant(config,store,StubProvider())
+            cid=assistant.new_conversation()
+            assistant.turn(cid,"Workspace-scoped turn",invocation_id="invocation-123")
+            rows=store.db.execute(
+                "SELECT role,metadata_json FROM messages WHERE conversation_id=? ORDER BY id",
+                (cid,)).fetchall()
+            self.assertEqual([row["role"] for row in rows],["user","assistant"])
+            for row in rows:
+                metadata=json.loads(row["metadata_json"] or "{}")
+                self.assertEqual(metadata["runtime_invocation_id"],"invocation-123")
+
+            global_cid=assistant.new_conversation()
+            assistant.turn(global_cid,"Global turn")
+            global_rows=store.db.execute(
+                "SELECT metadata_json FROM messages WHERE conversation_id=? ORDER BY id",
+                (global_cid,)).fetchall()
+            for row in global_rows:
+                metadata=json.loads(row["metadata_json"] or "{}")
+                self.assertNotIn("runtime_invocation_id",metadata)
+            assistant.close()
+            store.close()
+
     def test_memory_lifecycle_and_lexical_search(self):
         with tempfile.TemporaryDirectory() as tmp:
             store=EvoStore(Path(tmp)/"evo.db")
