@@ -49,6 +49,7 @@ class ResourceDemand:
             or not isinstance(self.gpu_vram_mib, (int, float))
             or not math.isfinite(self.gpu_vram_mib)
             or self.gpu_vram_mib <= 0
+            or self.gpu_vram_mib > 1_048_576.0
         ):
             raise ValueError("gpu_vram_mib must be a finite positive number or None")
         if self.locality == "local_endpoint":
@@ -90,8 +91,8 @@ class AdmissionPolicy:
         ):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be a finite non-negative number")
-        if self.cpu_pressure_percent > 100:
-            raise ValueError("cpu_pressure_percent cannot exceed 100")
+        if not 0 < self.cpu_pressure_percent <= 100:
+            raise ValueError("cpu_pressure_percent must be greater than zero and at most 100")
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,14 @@ class ProviderBudget:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if self.maximum_requests_per_utc_day > 1_000_000:
+            raise ValueError("daily request limit exceeds the supported maximum")
+        if self.maximum_output_tokens_per_invocation > 10_000_000:
+            raise ValueError("per-invocation token limit exceeds the supported maximum")
+        if self.maximum_reserved_output_tokens_per_utc_day > 100_000_000:
+            raise ValueError("daily reserved-token limit exceeds the supported maximum")
+        if self.maximum_output_tokens_per_invocation > self.maximum_reserved_output_tokens_per_utc_day:
+            raise ValueError("per-invocation token limit cannot exceed the daily reservation limit")
 
 
 def derive_resource_demand(runtime, *, local_profile=None):
@@ -157,7 +166,7 @@ def derive_resource_demand(runtime, *, local_profile=None):
 
 
 def _parse_utc(value, field):
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or len(value) > 64:
         raise AdmissionError(f"{field} is missing")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -172,7 +181,7 @@ def evaluate_resource_admission(telemetry, demand: ResourceDemand, policy=Admiss
     """Return a deterministic allow/defer/unknown decision from one fresh snapshot."""
     if not isinstance(telemetry, dict):
         return {"decision": "unknown", "reason": "telemetry_unavailable"}
-    now = now or datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) if now is None else now
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     try:
@@ -346,6 +355,8 @@ def _canonical_json(value):
 
 
 def _event(db, invocation_id, event_type, payload):
+    if not isinstance(event_type, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", event_type):
+        raise AdmissionError("lifecycle event type is invalid")
     encoded = _canonical_json(payload)
     if len(encoded.encode("utf-8")) > 16384:
         raise AdmissionError("lifecycle event exceeds the storage limit")
@@ -542,7 +553,7 @@ def admit_invocation(
     Denied/deferred decisions are persisted for audit and never acquire a lease.
     """
     initialize_invocation_lifecycle(store)
-    now = now or datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) if now is None else now
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise ValueError("now must be a timezone-aware datetime")
     now = now.astimezone(timezone.utc)
@@ -756,6 +767,10 @@ def heartbeat_dispatch_lease(store, invocation_id):
 
 
 def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=None, error_message=None, provider_settled=False):
+    if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
+        raise ValueError("invocation ID is invalid")
+    if not isinstance(provider_settled, bool):
+        raise ValueError("provider_settled must be a boolean")
     if status not in TERMINAL_STATUSES - {"denied", "abandoned"}:
         raise ValueError("invocation terminal status is invalid")
     if usage is not None:
@@ -776,8 +791,38 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
         ).fetchone()
         if row is None:
             return False
-        if row["status"] in TERMINAL_STATUSES and not (row["status"] == "abandoned" and provider_settled):
+        previous_status = row["status"]
+        if previous_status in TERMINAL_STATUSES and not (previous_status == "abandoned" and provider_settled):
             return False
+
+        lease = db.execute(
+            "SELECT * FROM dispatch_leases WHERE invocation_id=?",
+            (invocation_id,),
+        ).fetchone()
+        provider_invocation = row["adapter_id"] == "openai_compatible_chat"
+
+        # An admitted invocation has not crossed the worker's atomic start
+        # transition. It may only be cancelled; that transaction wins against
+        # mark_invocation_running and proves no provider request was started.
+        not_started_cancel = previous_status == "admitted" and status == "cancelled"
+        if previous_status == "admitted" and not not_started_cancel:
+            return False
+        if previous_status not in {"admitted", "running", "abandoned"}:
+            return False
+        if provider_invocation:
+            if lease is None:
+                return False
+            if not_started_cancel:
+                if lease["state"] != "active":
+                    return False
+            elif previous_status == "running":
+                if lease["state"] != "active" and not provider_settled:
+                    return False
+            elif previous_status == "abandoned" and not provider_settled:
+                return False
+        elif lease is not None:
+            return False
+
         now = utc_now()
         db.execute(
             """UPDATE participant_invocations SET status=?,finished_at=?,updated_at=?,
@@ -788,21 +833,27 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
                 error_code, error_message[:2000] if error_message else None, invocation_id,
             ),
         )
-        lease = db.execute(
-            "SELECT * FROM dispatch_leases WHERE invocation_id=?",
-            (invocation_id,),
-        ).fetchone()
         if lease is not None:
-            if provider_settled:
+            # A not-started cancellation is safe to release: the serialized
+            # status transition prevented the worker from entering running.
+            if not_started_cancel or provider_settled:
                 db.execute("DELETE FROM dispatch_leases WHERE invocation_id=?", (invocation_id,))
             else:
                 db.execute(
                     "UPDATE dispatch_leases SET state='abandoned',heartbeat_at=? WHERE invocation_id=?",
                     (now, invocation_id),
                 )
+        if not_started_cancel and row["budget_day_utc"] is not None:
+            db.execute(
+                """UPDATE provider_budget_usage
+                   SET requests_reserved=MAX(0,requests_reserved-1),
+                       output_tokens_reserved=MAX(0,output_tokens_reserved-?)
+                   WHERE integration_id=? AND budget_day_utc=?""",
+                (row["requested_output_tokens"], row["integration_id"], row["budget_day_utc"]),
+            )
         # Unknown usage retains the full reservation: releasing it would permit
         # daily-budget oversubscription when the provider may have processed work.
-        if usage is not None and row["budget_day_utc"] is not None:
+        elif usage is not None and row["budget_day_utc"] is not None:
             output_tokens = usage.get("output_tokens")
             if isinstance(output_tokens, int) and not isinstance(output_tokens, bool) and output_tokens >= 0:
                 db.execute(
@@ -813,7 +864,10 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
                     (row["requested_output_tokens"], output_tokens, row["integration_id"], row["budget_day_utc"]),
                 )
         _event(db, invocation_id, "invocation_finalized", {
-            "status": status, "provider_settled": bool(provider_settled),
+            "previous_status": previous_status,
+            "status": status,
+            "provider_settled": bool(provider_settled or not_started_cancel),
+            "not_started_cancellation": not_started_cancel,
             "usage_known": usage is not None,
         })
         return True
@@ -881,6 +935,8 @@ def acknowledge_abandoned_dispatch_recovery(
 
 
 def get_invocation_lifecycle(store, invocation_id):
+    if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
+        raise ValueError("invocation ID is invalid")
     with store.lock:
         row = store.db.execute(
             "SELECT * FROM participant_invocations WHERE invocation_id=?",
