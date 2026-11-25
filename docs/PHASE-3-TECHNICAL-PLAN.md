@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25): P3.1, P3.3, P3.4, and P3-R4 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3-R4 resource-admission design and telemetry-freshness prerequisite are accepted; P3.5 admission/dispatch implementation remains outstanding.** Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
+**Status (2026-11-25): P3.1, P3.2, P3.3, P3.4, and P3-R4 accepted. P3.5 authorization, budgets, durable atomic admission, and invocation-lifecycle implementation remain outstanding. Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -344,7 +344,7 @@ The following order minimizes speculative framework work.
 
 **Exit:** two genuinely distinct production participant implementations can be bound and contract-tested through the common contract, with deterministic tests and documented contributions. Live dispatch of either participant remains gated on P3.5. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
 
-P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574` (2026-11-25). The `evo_deterministic_verifier` is a distinct local-only participant. It checks bounded JSON-object output, required/extra fields, and the shape of evidence-reference strings, with a maximum of 128 valid returned references. It does not resolve references, establish that referenced artifacts exist, verify factual claims, execute arbitrary tools, use network access, or receive secrets. Registry runtime construction binds configured verifier components from the exact pinned revision and exposes model plus verifier descriptors/bindings through one inspection surface. The verifier adapter is immutable after construction; production runtime installs no invocation authorizer. Independent validation of the exact accepted SHA passed compileall, 14 focused verifier tests, 21 participant/runtime-binding tests, and the full 877-test suite with zero failures/errors/skips. Diff checks against both P3.4 and cumulative bases passed. The local self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`. Original checkout and all 32 pre-existing worktrees were preserved. No live dispatch or provider calls occurred. Formal acceptance is limited to P3.4; P3.2 formal acceptance remains pending, P3-R4 remains open, P3.5 remains gated, and no merge is authorized.
+P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aae1ff07e0b38380671b574` (2026-11-25). The `evo_deterministic_verifier` is a distinct local-only participant. It checks bounded JSON-object output, required/extra fields, and the shape of evidence-reference strings, with a maximum of 128 valid returned references. It does not resolve references, establish that referenced artifacts exist, verify factual claims, execute arbitrary tools, use network access, or receive secrets. Registry runtime construction binds configured verifier components from the exact pinned revision and exposes model plus verifier descriptors/bindings through one inspection surface. The verifier adapter is immutable after construction; production runtime installs no invocation authorizer. Independent validation of the exact accepted SHA passed compileall, 14 focused verifier tests, 21 participant/runtime-binding tests, and the full 877-test suite with zero failures/errors/skips. Diff checks against both P3.4 and cumulative bases passed. The local self-test reports `transport_reachable=True`, `model_advertised=None`, and `completion_verified=True`. Original checkout and all 32 pre-existing worktrees were preserved. No live dispatch or provider calls occurred. Formal acceptance is limited to P3.4; P3.2 and P3-R4 are separately accepted. P3.5 remains gated and no live dispatch is enabled.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - This is the first milestone that may enable live participant dispatch. Until its gate is complete, P3.2–P3.4 may construct, inspect, and test participants with inert/fake adapters, but must not expose a live Registry-bound invocation path.
@@ -371,7 +371,7 @@ P3.4 deterministic verifier — ACCEPTED at exact candidate `ad04198b95708df58aa
 - Have an independent reviewer challenge adapter boundaries, secret handling, stale configuration behavior, resource admission, and project isolation.
 - Record exactly which live provider tests were run and which were not.
 
-**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.3 and P3.4 are accepted; P3.2 formal acceptance, P3.5 implementation, and remaining Phase 3 criteria are still outstanding. P3-R4 resource-admission design and telemetry freshness are accepted. Only then begin Phase 4 cooperative execution.
+**Exit:** all Phase 3 roadmap acceptance criteria are evidenced and accepted. P3.1–P3.4 and P3-R4 are accepted; P3.5 implementation and remaining Phase 3 criteria are still outstanding. Only then begin Phase 4 cooperative execution.
 
 ## 9. Phase 3 acceptance checklist
 
@@ -433,11 +433,20 @@ P3.3 OpenAI-compatible participant adapter is **accepted** at exact candidate `3
 
 The adapter uses the pinned Registry transport, strict bounded parsing, secret redaction, immutable runtime-bound settings, and cooperative cancellation with bounded request timeouts. Actual CR/LF injection, worker ordering, pre-cancel behavior, provenance completeness, and the transport/security boundaries were verified. No live provider calls or live dispatch occurred; the API/worker dispatch gate remains closed.
 
-This does not accept P3.2 formally, resolve P3-R4, authorize P3.5, or authorize a merge. Resolve P3-R4 before finalizing P3.5 admission. P3.5 remains the first milestone that may enable live dispatch.
+P3.2 and P3-R4 are separately accepted. This does not accept P3.5 or authorize live dispatch. P3.5 remains the first milestone that may enable live dispatch.
 
 
 ## P3-R4 resource-admission design and telemetry freshness — ACCEPTED (2026-11-25)
 
 Accepted at exact validated candidate `85b9f933a32dc45b72492dfee136edaad5c882fd`. Independent detached-worktree validation: compileall passed; focused telemetry suite 5/5 passed; full unittest suite 879/879 passed with zero failures/errors/skips; diff checks against both P3.4 base `ad04198b95708df58aae1ff07e0b38380671b574` and cumulative base `6c12cf467cde61166be74e1e501e58de1c8decf6` passed. The GPU regression proves probe/process/timestamp ordering, and the GPU fixture was confirmed valid. The no-NVIDIA path and UTC completion timestamp/nonnegative monotonic duration were verified. Original checkout and 32 pre-existing worktrees were preserved.
 
-This closes the P3-R4 design/freshness prerequisite only. It does not implement P3.5, authorize live dispatch/provider calls, formally accept P3.2, or authorize a merge. P3.5 must still implement authorization, budgets, durable atomic admission, and invocation lifecycle before any live dispatch.
+This closes the P3-R4 design/freshness prerequisite only. P3.2 is separately accepted. It does not implement P3.5 or authorize live dispatch/provider calls. P3.5 must still implement authorization, budgets, durable atomic admission, and invocation lifecycle before any live dispatch.
+
+
+## P3.2 formal acceptance record
+
+**ACCEPTED — 2026-11-25.** Exact implementation validation target `7c50ff666b7cd684cf21f373a82badc3dad5627c`; documentation-only whitespace correction `11b173d7d7405c80f1ec6c5acb9087b5e1382646`.
+
+Independent validation: compileall passed; full suite 843/843 passed; focused runtime/workspace/snapshot/orchestration tests 100/100 passed. The only finding was trailing whitespace in documentation, fixed in the docs-only follow-up. No source or tests changed in that cleanup. Later cumulative P3.3/P3.4/P3-R4 validations passed 863/863, 877/877, and 879/879 respectively, with cumulative diff checks clean.
+
+The accepted implementation constructs workspace runtimes from exact pinned revisions, records invocation snapshots at workspace-bound entrypoints, and verifies the pinned runtime again in the worker before any execution. Assistant messages retain the invocation ID. Runtime dispatch remains inert and fail-closed until P3.5. No live provider calls were made.
