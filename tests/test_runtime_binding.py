@@ -145,9 +145,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(verifier.configuration_revision_id, self.revision["revision_id"])
         verifier_adapter, bound_verifier = runtime.additional_participant_bindings[0]
         self.assertEqual(bound_verifier.component_key, "verifier")
-        with self.assertRaises(Exception) as disabled:
-            list(verifier_adapter.invoke(bound_verifier, None))
-        self.assertIn("P3.5", str(disabled.exception))
+        self.assertIsNone(verifier_adapter._dispatch_authorizer)
 
     def test_global_model_changes_do_not_change_bound_runtime(self):
         changed = replace(self.base_config, model="other-global", base_url="https://elsewhere.invalid",
