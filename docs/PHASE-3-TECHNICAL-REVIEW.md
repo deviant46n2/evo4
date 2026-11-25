@@ -162,3 +162,24 @@ Review confirmed that the verifier is a distinct local-only deterministic partic
 The original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072` with identical status, and all 32 pre-existing worktrees were preserved. No live provider calls or dispatch occurred.
 
 Acceptance is limited to P3.4. P3.2 formal acceptance remains pending; P3-R4 remains open and must be resolved before finalizing P3.5 admission; P3.5 remains the first milestone permitted to enable live dispatch. No merge into `local-demo-ready-v1` is authorized.
+
+
+## P3-R4 resource-admission contract — proposed for independent challenge
+
+**Status: design proposal; not accepted, not implemented.** The current telemetry source is `evo_experiments.monitor.sample_nvidia_smi()`; it supplies RAM, CPU logical cores/load average, and optional NVIDIA metrics with one UTC sample timestamp. The current `assess_workload()` and workload scheduler are advisory and use generic GPU assumptions, so neither can be reused unchanged as the participant dispatch gate.
+
+The proposed design in Section 6.1 of `docs/PHASE-3-TECHNICAL-PLAN.md` makes locality code-derived: loopback OpenAI-compatible endpoints are local to this host; non-loopback endpoints (including LAN addresses) are remote for this host's inference-resource accounting. Remote calls require host CPU/RAM for Evo's bounded client work and provider-side quota/compliance gates, but never local GPU telemetry. CPU-only local endpoints likewise do not require NVIDIA metrics. GPU/mixed local endpoints require fresh VRAM and temperature telemetry. The deterministic verifier has a small code-owned CPU/RAM declaration.
+
+For local model endpoints, the proposal requires an operator-owned resource profile selected by reference, with explicit CPU/GPU/mixed mode and bounded CPU/RAM/VRAM estimates. Missing profiles/estimates remain unknown and fail closed; no model-name heuristics or invented memory estimates. The profile distinguishes persistent/preloaded incremental demand from cold-load peak demand, and persistent residency is explicitly an operator assertion. Common defaults preserve existing 2 GiB RAM and 1 GiB VRAM reserves, 90% RAM pressure and 85°C GPU ceiling, and add a 1-core CPU reserve. A single 10-second freshness window applies to the timestamped sample. Interactive priority does not bypass reserves. Telemetry remains a best-effort snapshot and cannot lock resources against unrelated desktop processes.
+
+**Review questions for independent challenge:**
+1. Is static loopback the correct and sufficiently conservative definition of same-host inference? Are LAN endpoints correctly treated as remote for this host?
+2. Are the participant-specific dimensions and fixed remote/verifier estimates defensible, bounded, and clearly separated from provider-side budgets?
+3. Does the operator-owned local model profile adequately handle CPU/GPU/mixed modes and cold-load versus persistent incremental memory without pretending residency is proven?
+4. Are 10-second sample freshness, CPU headroom from logical cores minus 1-minute load average, and the proposed reserves/pressure limits appropriate? Identify telemetry limitations or safer alternatives.
+5. Does the decision logic fail closed on missing/stale required dimensions without blocking remote or CPU-only workloads on irrelevant NVIDIA telemetry?
+6. Are interactive reserve semantics correct for the local-first desktop goal, and is the race with unrelated processes honestly bounded?
+7. Is the boundary with the existing advisory workload scheduler and P3.5's durable single-flight lease clear and safe?
+8. What changes are needed to schema/adapter versioning so old schema-2 local endpoints remain readable but cannot dispatch without a resource profile?
+
+Do not edit files, implement code, change branches/worktrees, enable dispatch, or call providers. Return concrete findings with severity, exact source/doc references, recommended corrections, and PASS / PASS WITH FINDINGS / FAIL for the design.
