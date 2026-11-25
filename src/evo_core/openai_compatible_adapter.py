@@ -292,7 +292,7 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, verified, _utc_now(),
                 "openai_compatible:bounded_completion_probe",
             )
-        except ProviderMalformedResponseError:
+        except (InvalidToolCallError, ProviderMalformedResponseError):
             return AvailabilityEvidence(
                 True, None, False, _utc_now(),
                 "openai_compatible:completion_probe_malformed",
@@ -327,6 +327,12 @@ class OpenAICompatibleParticipantAdapter:
         self._authorize("participant_invocation", participant, envelope)
         if not isinstance(envelope, InvocationEnvelope):
             raise TypeError("invocation envelope is required")
+        for field_name in ("invocation_id", "objective", "task_role", "correlation_id"):
+            field_value = getattr(envelope, field_name, None)
+            if not isinstance(field_value, str) or not field_value.strip() or len(field_value) > 1024:
+                raise ParticipantAdapterError(f"invocation {field_name} is invalid")
+        if isinstance(envelope.retry_limit, bool) or not isinstance(envelope.retry_limit, int) or envelope.retry_limit != 0:
+            raise ParticipantAdapterError("this adapter version does not implement retries")
         if (
             envelope.participant_id != participant.participant_id
             or envelope.adapter_id != self.adapter_id
@@ -358,7 +364,7 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("invocation input contains unsupported fields")
         messages = request.get("messages")
         max_tokens = request.get("max_tokens")
-        temperature = request.get("temperature", 0.2)
+        temperature = request.get("temperature")
         if not isinstance(messages, list) or not messages or len(messages) > 256:
             raise ParticipantAdapterError("invocation messages are invalid")
         for message in messages:
