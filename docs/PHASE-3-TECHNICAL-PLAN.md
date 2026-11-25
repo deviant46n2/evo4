@@ -257,7 +257,7 @@ The following order minimizes speculative framework work.
 
 ### P3.3 — First provider participant
 - Wrap/reuse the existing OpenAI-compatible transport behind the new adapter boundary.
-- Preserve current assistant/CLI compatibility.
+- Preserve the global TOML assistant path for non-Registry callers. The direct `evo chat` and `evo code` CLI modes are explicitly privileged local-only operations, require an acknowledgement flag, and are not represented as Registry-scoped API equivalents. Any future Registry-aware CLI mode must reuse the same runtime-binding and authorization boundary.
 - Normalize streaming, usage, errors, timeout, cancellation, and malformed responses.
 - Record adapter/config/provider/model provenance without exposing credentials.
 
