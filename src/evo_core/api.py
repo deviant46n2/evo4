@@ -384,16 +384,28 @@ def create_app(config_path="config.toml", provider_name=None):
             # Do not return provider exception text, which may contain endpoint
             # details or other integration diagnostics.
             raise HTTPException(status_code=502, detail="participant metadata preflight failed safely") from exc
-        if evidence.transport_reachable is False or evidence.model_advertised is False:
-            state = "unavailable"
-        elif evidence.transport_reachable is True and evidence.model_advertised is True:
-            state = "available"
-        else:
-            state = "unknown"
+        # A metadata-only model-list response cannot establish that a
+        # completion will succeed. Keep the participant unavailable when the
+        # endpoint/model is explicitly absent; otherwise completion availability
+        # remains unknown until a separately admitted operator probe verifies it.
+        state = (
+            "unavailable"
+            if evidence.transport_reachable is False or evidence.model_advertised is False
+            else "unknown"
+        )
         return {
             "workspace_id": runtime.workspace_id,
             "participant_id": participant_id,
             "availability": state,
+            "metadata_preflight": (
+                "model_advertised"
+                if evidence.transport_reachable is True and evidence.model_advertised is True
+                else "not_advertised"
+                if evidence.model_advertised is False
+                else "reachable_unverified"
+                if evidence.transport_reachable is True
+                else "unknown"
+            ),
             "transport_reachable": evidence.transport_reachable,
             "model_advertised": evidence.model_advertised,
             "completion_verified": None,
