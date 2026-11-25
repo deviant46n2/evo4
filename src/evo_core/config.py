@@ -42,13 +42,13 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     profiles = raw.get("providers", {})
     security = raw.get("security", {})
     secrets = raw.get("secrets", {})
-    if not isinstance(security, dict):
-        raise ValueError("security must be a TOML table")
-    if not isinstance(secrets, dict):
-        raise ValueError("secrets must be a TOML table")
+    if not isinstance(security, dict) or set(security) - {"allowed_provider_origins"}:
+        raise ValueError("security must contain only allowed_provider_origins")
+    if not isinstance(secrets, dict) or set(secrets) - {"allowed_env_vars"}:
+        raise ValueError("secrets must contain only allowed_env_vars")
     raw_origins = security.get("allowed_provider_origins", [])
-    if not isinstance(raw_origins, list):
-        raise ValueError("security.allowed_provider_origins must be a list of exact origins")
+    if not isinstance(raw_origins, list) or len(raw_origins) > 128:
+        raise ValueError("security.allowed_provider_origins must be a list of at most 128 exact origins")
     try:
         allowed_origins = tuple(normalize_provider_origin(origin) for origin in raw_origins)
     except (ProviderEndpointError, TypeError) as exc:
@@ -56,6 +56,8 @@ def load_config(path: str | Path = "config.toml", provider_name: str | None = No
     if len(allowed_origins) != len(set(allowed_origins)):
         raise ValueError("security.allowed_provider_origins contains duplicate origins")
     allowed_env_vars = secrets.get("allowed_env_vars", [])
+    if not isinstance(allowed_env_vars, list) or len(allowed_env_vars) > 128:
+        raise ValueError("secrets.allowed_env_vars must be a list of at most 128 names")
     try:
         resolve_secret_references({}, allowed_env_vars)
     except SecretResolutionError as exc:
