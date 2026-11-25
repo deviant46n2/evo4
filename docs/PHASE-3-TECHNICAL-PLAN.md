@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25): P3.1 and P3.3 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending; P3.4 implementation in progress.** The P3.3 adapter binds the Registry runtime to pinned transport. P3.4 adds a local deterministic verifier as a second production participant kind. Both participant invocation paths remain gated; P3.5 is the first milestone that may enable live dispatch.
+**Status (2026-11-25): P3.1, P3.3, and P3.4 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3-R4 resource-admission design is now proposed for independent challenge; it is not yet accepted or implemented.** Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -205,6 +205,73 @@ Resource estimates are not guarantees or OS isolation. The existing hardware adm
 
 For the local-first deployment, do not invent token/cost estimates when the endpoint does not report usage. Track configured maximums and actual usage when returned; label unavailable measurements as unknown. Remote-provider request/token budgets must be operator-configured and enforced conservatively; if quota is unknown and no conservative local limit is configured, fail closed. The first version need not implement sophisticated forecasting or dynamic model loading.
 
+### 6.1 P3-R4 — resource semantics and telemetry contract (proposal; independent challenge pending)
+
+This section proposes the resolution of P3-R4. It is a design decision only: it does not implement admission, reserve capacity, authorize invocation, or enable dispatch. P3.5 must implement and test the accepted contract before any participant can be invoked.
+
+#### Execution locality is code-derived, not user-asserted
+
+Use three runtime locality classes:
+
+- `local_process`: the participant executes inside Evo's local process. The deterministic verifier is in this class.
+- `local_endpoint`: the configured model endpoint is statically loopback (`localhost`, IPv4 loopback, or IPv6 loopback), meaning the inference service runs on this same host.
+- `remote_service`: every non-loopback endpoint, including a private/LAN address, is external to this host for local-resource accounting. It consumes provider-side resources, not this host's inference VRAM.
+
+For the OpenAI-compatible adapter, derive endpoint locality from the validated endpoint's static loopback classification (the same policy used by `provider_endpoint.py`). Do not infer locality from provider brand, model name, DNS answers, process-name heuristics, or a workspace-supplied boolean. The pinned transport already rejects a non-local hostname resolving to loopback and a loopback hostname resolving elsewhere. A LAN inference server is remote for this machine's CPU/RAM/GPU budget even if it is physically nearby.
+
+#### Code-owned resource declarations
+
+Each invokable adapter must return an immutable, validated resource declaration for its bound participant. A declaration identifies locality and bounded peak incremental demand in explicit units:
+
+- host CPU cores (fractional cores);
+- host RAM MiB;
+- host GPU VRAM MiB, only when the participant consumes this host's GPU;
+- optional hard safety constraints such as maximum GPU temperature.
+
+The declaration is an estimate and admission bound, not an OS quota or guarantee. It must not be a free-form dictionary supplied by configuration. The common participant descriptor exposes the resolved declaration for inspection.
+
+Initial declarations:
+
+| Participant | Locality | Required local dimensions | Initial code-owned demand |
+|---|---|---|---|
+| OpenAI-compatible remote endpoint | remote_service | CPU, RAM | 0.05 CPU cores; 64 MiB RAM for bounded client/request handling; no local GPU requirement |
+| OpenAI-compatible loopback endpoint | local_endpoint | CPU, RAM, plus GPU VRAM when configured compute mode uses GPU | Operator-owned resource profile required; no guessed model size or VRAM demand |
+| Deterministic verifier | local_process | CPU, RAM | 0.10 CPU cores; 64 MiB RAM; no GPU requirement |
+
+The local model profile is selected by a reference in the model component, but its contents and reserve policy are operator-owned in the local Evo configuration—not writable by the AI Configuration. It declares `compute_mode` (`cpu`, `gpu`, or `mixed`), bounded peak CPU cores and RAM MiB, and VRAM MiB when GPU is used. It also declares whether the supplied memory estimate covers a persistent/preloaded model's incremental invocation demand or a possible cold load. A cold-load estimate must include model/runtime load plus peak request-time allocation; a persistent/preloaded estimate covers peak incremental invocation allocation beyond memory already reflected in telemetry. Persistent residency is an operator assertion, not something inferred from a model-list response or process name. Missing profile, unknown compute mode, or missing required estimate yields unknown and denies/defer dispatch; no default GPU estimate is invented. The adapter contract/schema version must change when this profile reference becomes executable configuration. Existing schema-2 local endpoint definitions without a profile remain readable but non-dispatchable until explicitly migrated. Remote schema-2 definitions do not need a local inference profile.
+
+The deterministic verifier's fixed declaration is code-owned and bounded by its existing 1 MiB input/output limits. The fixed estimate is deliberately conservative for its small structured-validation workload; if implementation measurements later show it inadequate, revise the adapter implementation/version and tests rather than letting configuration enlarge its authority.
+
+#### Required telemetry by locality
+
+All dimensions use the same UTC `sampled_at` from `evo_experiments.monitor.sample_nvidia_smi()`. P3.5 must parse it as timezone-aware, reject future/invalid timestamps, and require age no greater than the operator-configured freshness window (initial default: 10 seconds). A stale sample is unknown. A missing individual field is unknown only when that field is required by the participant declaration.
+
+- **All invocations:** host RAM available bytes and host CPU logical-core count plus 1-minute load average. RAM headroom is `ram_available_bytes / 1 MiB`. Conservative CPU headroom is `max(0, logical_cores - load_average_1m)`; this is an admission heuristic, not a scheduler guarantee. Missing required RAM/CPU telemetry fails closed. CPU utilization percentage is an additional pressure signal when present, not a substitute for load average and not required on the first sample.
+- **local_endpoint with CPU compute:** host CPU and RAM only; NVIDIA telemetry is irrelevant and must not block the invocation.
+- **local_endpoint with GPU or mixed compute:** additionally require `gpu_available=true`, GPU memory used/total, and GPU temperature. Free VRAM is total minus used. Missing NVIDIA telemetry or required GPU fields is unknown and fails closed.
+- **remote_service:** never require GPU VRAM, GPU utilization, GPU temperature, or NVIDIA process discovery for local admission. Provider-side rate/token/spend/concurrency budgets and compliance are separate mandatory provider gates in P3.5; local GPU telemetry cannot substitute for them.
+- **local_process verifier:** CPU and RAM only; GPU telemetry is irrelevant.
+
+#### Operator reserves and decision semantics
+
+Initial code defaults should preserve the existing advisory policy's 2,048 MiB host-RAM reserve, 1,024 MiB GPU-VRAM reserve, 90% maximum RAM-used pressure threshold, and 85°C GPU-temperature ceiling. Add a 1.0 CPU-core reserve. Make these thresholds and the 10-second freshness window operator-owned settings in local Evo configuration, with validated bounds and documented defaults. AI Configuration definitions may select a resource profile but cannot lower reserves, increase freshness, or supply telemetry values.
+
+For each required dimension, admission requires:
+
+- CPU: `cpu_headroom_cores - declared_cpu_cores >= reserve_cpu_cores`.
+- RAM: `ram_available_mib - declared_ram_mib >= reserve_ram_mib`, and RAM-used percentage below the configured pressure ceiling.
+- GPU (only for local GPU/mixed inference): `gpu_free_vram_mib - declared_gpu_vram_mib >= reserve_vram_mib`, and GPU temperature below the configured ceiling.
+
+Any missing, malformed, stale, or unknown required input produces `unknown` (not allow). A known reserve violation produces `defer`. Only all-known dimensions clearing all reserves can produce `allow`. Interactive priority affects queue ordering only; it does not bypass protected reserves or permit preemption. No automatic process killing, GPU clock/power changes, or service reconfiguration is part of admission.
+
+The sample is an observation, not a lock on resources owned by other processes. P3.5's SQLite single-flight lease prevents overlapping Evo participant invocations; it cannot reserve GPU/RAM against unrelated desktop applications. Admission must re-sample immediately before dispatch and record the exact sample timestamp, declared demand, reserve policy version, and per-dimension decision. The result is a bounded best-effort decision, not a guarantee against external workload races.
+
+#### Boundaries with existing hardware features
+
+Reuse the existing telemetry sampler and its allowlisted metrics. The existing `assess_workload` and hardware scheduler remain advisory workload-management features; they do not become participant admission. In particular, the workload scheduler's expiring queue reservations and process-control-free lifecycle are not substitutes for P3.5's durable provider-dispatch lease, whose abandoned state must remain blocking until safe recovery. Do not merge the two lease models.
+
+This proposal resolves the P3-R4 design questions if independently accepted. It does not implement P3.5, provider budgets, authorization, invocation persistence, or dispatch.
+ 
 ## 7. Security, isolation, and failure requirements
 
 - Resolve the exact workspace-pinned configuration revision at dispatch time. Reject missing/mismatched revisions and archived/inactive workspace, project, or configuration relationships. Do not reject an older pinned revision merely because the configuration's current revision has advanced.
