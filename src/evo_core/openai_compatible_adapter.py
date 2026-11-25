@@ -278,10 +278,17 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, verified, _utc_now(),
                 "openai_compatible:bounded_completion_probe",
             )
-        except ProviderError:
+        except ProviderMalformedResponseError:
             return AvailabilityEvidence(
                 True, None, False, _utc_now(),
-                "openai_compatible:completion_probe_failed",
+                "openai_compatible:completion_probe_malformed",
+            )
+        except ProviderError:
+            # Rate limits, authorization failures, and transient provider errors
+            # do not prove that the configured model is unavailable.
+            return AvailabilityEvidence(
+                True, None, None, _utc_now(),
+                "openai_compatible:completion_probe_unverified",
             )
 
     def _authorize(self, operation, participant, envelope):
