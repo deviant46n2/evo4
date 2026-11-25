@@ -48,6 +48,27 @@ def _redact_value(value, secret):
     return value
 
 
+def _unique_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value):
+    raise ValueError("non-standard JSON constant")
+
+
+def _strict_json_loads(value):
+    return json.loads(
+        value,
+        object_pairs_hook=_unique_json_pairs,
+        parse_constant=_reject_json_constant,
+    )
+
+
 class ProviderError(RuntimeError):
     pass
 
@@ -108,7 +129,10 @@ class OpenAICompatibleProvider:
                 status = getattr(response, "status", 200)
                 if status >= 400:
                     raise ProviderHTTPError(status, "Model-list")
-                payload = json.loads(response.read().decode("utf-8"))
+                raw_payload = response.read(1_048_577)
+                if len(raw_payload) > 1_048_576:
+                    raise ProviderMalformedResponseError("Model-list response exceeds the size limit")
+                payload = _strict_json_loads(raw_payload.decode("utf-8"))
             if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
                 raise ProviderMalformedResponseError("Model-list response is malformed")
             return [item.get("id") for item in payload["data"] if isinstance(item, dict) and item.get("id")]
@@ -119,7 +143,7 @@ class OpenAICompatibleProvider:
             if self.transport is None:
                 raise ProviderError("Model-list request failed") from exc
             raise ProviderTimeoutError("Model-list request timed out") from exc
-        except (urllib.error.URLError, OSError, http.client.HTTPException, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             raise ProviderError("Model-list request failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
@@ -153,7 +177,16 @@ class OpenAICompatibleProvider:
                 if status >= 400:
                     raise ProviderHTTPError(status, "Chat completion")
                 content_type = response.headers.get("Content-Type","")
-                for raw in response:
+                response_bytes = 0
+                while True:
+                    raw = response.readline(1_048_577)
+                    if not raw:
+                        break
+                    response_bytes += len(raw)
+                    if len(raw) > 1_048_576 or response_bytes > 4_194_304:
+                        raise ProviderMalformedResponseError("Chat completion stream exceeds the size limit")
+                    if len(raw) == 1_048_577 and not raw.endswith(b"\\n"):
+                        raise ProviderMalformedResponseError("Chat completion SSE line exceeds the size limit")
                     line = raw.decode("utf-8",errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
@@ -162,8 +195,8 @@ class OpenAICompatibleProvider:
                     if data == "[DONE]":
                         break
                     try:
-                        event = json.loads(data)
-                    except json.JSONDecodeError:
+                        event = _strict_json_loads(data)
+                    except (ValueError, json.JSONDecodeError):
                         malformed_event = True
                         continue
                     if not isinstance(event, dict):
@@ -177,7 +210,7 @@ class OpenAICompatibleProvider:
                         else:
                             message = str(error)
                         raise ProviderError(f"Chat completion stream error: {self._redact_error(message)}")
-                    if event.get("usage"):
+                    if "usage" in event and event["usage"] is not None:
                         if not isinstance(event["usage"], dict):
                             malformed_event = True
                             continue
@@ -195,7 +228,10 @@ class OpenAICompatibleProvider:
                         malformed_event = True
                         continue
                     if choice.get("finish_reason") is not None:
-                        finish_reason = str(choice["finish_reason"])
+                        if not isinstance(choice["finish_reason"], str):
+                            malformed_event = True
+                            continue
+                        finish_reason = choice["finish_reason"]
                     delta = choice.get("delta") or {}
                     if not isinstance(delta, dict):
                         malformed_event = True
@@ -234,8 +270,17 @@ class OpenAICompatibleProvider:
                         if name_fragment: part["function"]["name"] += name_fragment
                         if argument_fragment: part["function"]["arguments"] += argument_fragment
                     content = delta.get("content")
-                    if isinstance(content,list):
-                        content = "".join(part.get("text","") for part in content if isinstance(part,dict))
+                    if isinstance(content, list):
+                        if any(
+                            not isinstance(part, dict) or not isinstance(part.get("text", ""), str)
+                            for part in content
+                        ):
+                            malformed_event = True
+                            continue
+                        content = "".join(part.get("text", "") for part in content)
+                    elif content is not None and not isinstance(content, str):
+                        malformed_event = True
+                        continue
                     if isinstance(content,str) and content:
                         if first_token is None:
                             first_token = time.perf_counter()
@@ -285,8 +330,10 @@ class OpenAICompatibleProvider:
                 secret = self.api_key if self.api_key != "no-key" else None
                 call = _redact_value(tool_call_parts[index], secret)
                 try:
-                    arguments = json.loads(call["function"]["arguments"] or "{}")
-                except json.JSONDecodeError as exc:
+                    arguments = _strict_json_loads(call["function"]["arguments"] or "{}")
+                    if not isinstance(arguments, dict):
+                        raise ValueError("tool-call arguments must be an object")
+                except (ValueError, json.JSONDecodeError) as exc:
                     raise InvalidToolCallError(
                         f"Model returned invalid tool-call JSON: {exc}",
                         finish_reason=finish_reason,
