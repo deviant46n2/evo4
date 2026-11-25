@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from evo_core.openai_compatible_adapter import (
     OpenAICompatibleParticipantAdapter,
+    ParticipantAdapterError,
     ParticipantDispatchDisabledError,
 )
 from evo_core.participant_contracts import InvocationEnvelope, ParticipantResult
@@ -245,6 +246,17 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         deltas = [json.loads(item.payload_json)["text"] for item in records if getattr(item, "event_type", None) == "text_delta"]
         self.assertEqual(deltas, ["hello"])
         self.assertEqual(records[-1].status, "succeeded")
+
+    def test_invocation_rejects_workspace_or_revision_provenance_drift(self):
+        from dataclasses import replace
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=FakeProvider,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        mismatched = replace(envelope("p"), configuration_revision_id="revision-2")
+        with self.assertRaisesRegex(ParticipantAdapterError, "identity"):
+            list(adapter.invoke(participant, mismatched))
 
     def test_invocation_rejects_unknown_input_fields_before_provider_call(self):
         adapter = OpenAICompatibleParticipantAdapter(
