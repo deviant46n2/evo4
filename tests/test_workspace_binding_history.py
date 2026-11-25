@@ -102,20 +102,28 @@ class WorkspaceBindingHistoryTests(unittest.TestCase):
         )
 
     def test_history_is_append_only(self):
-        history = list_workspace_binding_history(self.store, self.workspace["workspace_id"])
-        self.assertEqual(history, [])
+        newer = create_revision(
+            self.store, self.configuration["configuration_id"],
+            {"schema_version": 1, "components": {"next": {}}},
+            expected_version=self.configuration["version"],
+            parent_revision_id=self.revision["revision_id"],
+            change_summary="new revision",
+        )
+        rebind_workspace(
+            self.store, self.workspace["workspace_id"],
+            configuration_id=self.configuration["configuration_id"],
+            configuration_revision_id=newer["revision_id"],
+            checkout_id=self.checkout["checkout_id"], expected_version=1,
+            reason="create immutable history",
+        )
         with self.store.lock:
             with self.assertRaises(sqlite3.IntegrityError):
                 self.store.db.execute(
-                    """INSERT INTO workspace_binding_history (
-                        history_id, workspace_id, from_version, to_version,
-                        old_configuration_id, old_revision_id,
-                        new_configuration_id, new_revision_id,
-                        actor, reason, changed_at
-                    ) VALUES ('bad', ?, 1, 2, 'a', 'b', 'c', 'd', 'x', 'y', 'z')""",
-                    (self.workspace["workspace_id"],),
+                    "UPDATE workspace_binding_history SET reason='rewritten'"
                 )
-                self.store.db.rollback()
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.store.db.execute("DELETE FROM workspace_binding_history")
+            self.store.db.rollback()
 
     def test_unchanged_binding_rejected(self):
         with self.assertRaises(WorkspaceValidationError):
