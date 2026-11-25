@@ -4,7 +4,7 @@ This adapter consumes the connection-pinned transport. It has no dispatch
 authority of its own: invocation and completion probes require a code-supplied
 authorization callback, which is intentionally absent before P3.5.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import re
