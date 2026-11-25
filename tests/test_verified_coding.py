@@ -108,7 +108,7 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
         orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
         plan = orchestration.get_plan(self.db, self.plan["id"])
-        self.assertEqual(plan["steps"][0]["verification_status"], "not_run")
+        self.assertEqual(plan["steps"][0]["verification_status"], "failed")
 
     def test_all_configured_commands_passed(self):
         step = self.plan["steps"][0]
