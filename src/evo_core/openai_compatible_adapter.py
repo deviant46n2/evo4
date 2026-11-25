@@ -429,10 +429,14 @@ class OpenAICompatibleParticipantAdapter:
                 remaining = deadline_monotonic - time.monotonic()
                 if remaining <= 0:
                     stop.set()
+                    partial = {"content": "".join(streamed_text), "partial": True}
+                    partial_json = json.dumps(partial, separators=(",", ":"), ensure_ascii=False) if streamed_text else None
                     result = ParticipantResult(
                         envelope.invocation_id, participant.participant_id,
-                        "timed_out", _utc_now(), error_code="provider_timeout",
+                        "timed_out", _utc_now(), output_json=partial_json,
+                        error_code="provider_timeout",
                         error_message="Provider response exceeded its bounded timeout",
+                        partial_output=bool(partial_json),
                     )
                     validate_participant_result(result)
                     yield result
