@@ -199,6 +199,8 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(metadata.get("provider_response_attempts"),2)
             self.assertEqual(metadata.get("malformed_tool_call_retries"),1)
             self.assertEqual(metadata.get("tool_calls_processed"),0)
+            self.assertEqual(metadata.get("last_finish_reason"), "tool_calls")
+            self.assertEqual(metadata.get("truncated_responses"), 0)
             assistant.close()
 
     def test_generic_provider_error_is_not_retried(self):
