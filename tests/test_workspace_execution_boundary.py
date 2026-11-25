@@ -530,3 +530,104 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertEqual(status, 503)
         submit.assert_not_called()
         self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
+
+
+    def _workspace_snapshots(self):
+        from evo_core.runtime_invocation_snapshots import list_runtime_invocation_snapshots
+        return list_runtime_invocation_snapshots(
+            self.store, self.workspace["workspace_id"], limit=100,
+        )
+
+    def test_coding_agent_route_records_attempt_snapshot_before_disabled_gate(self):
+        before = {row["invocation_id"] for row in self._workspace_snapshots()}
+        status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+            "request": "inspect",
+            "workspace_id": self.workspace["workspace_id"],
+        })
+        self.assertEqual(status, 503)
+        created = [row for row in self._workspace_snapshots()
+                   if row["invocation_id"] not in before]
+        self.assertEqual(len(created), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, created[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "coding_agent")
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), 0)
+
+    def test_plan_proposal_route_records_typed_attempt_snapshot(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
+            "request": "plan",
+            "workspace_id": self.workspace["workspace_id"],
+        })
+        self.assertEqual(status, 503)
+        rows = self._workspace_snapshots()
+        self.assertEqual(len(rows), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "plan_proposal")
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+
+    def test_plan_execution_route_records_typed_attempt_snapshot_after_validation(self):
+        with self.app.state.lab_db.lock:
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved plan",
+                    "summary": "Plan used to verify execution snapshot wiring.",
+                    "steps": [{
+                        "title": "Step",
+                        "description": "Do work",
+                        "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        status, body = asgi_request(
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute"), {},
+        )
+        self.assertEqual(status, 503)
+        rows = self._workspace_snapshots()
+        self.assertEqual(len(rows), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "plan_execution")
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
+        self.assertEqual(self.store.list_agent_runs(limit=1000), [])
+
+    def test_workspace_chat_route_records_attempt_snapshot(self):
+        conversation_id = self.app.state.assistant.new_conversation(
+            project_id=self.project["project_id"],
+            workspace_id=self.workspace["workspace_id"],
+        )
+        status, body = asgi_request(self.app, "POST", "/api/v1/chat", {
+            "conversation_id": conversation_id,
+            "message": "Hello",
+            "project_id": self.project["project_id"],
+            "workspace_id": self.workspace["workspace_id"],
+        })
+        self.assertEqual(status, 503)
+        rows = self._workspace_snapshots()
+        self.assertEqual(len(rows), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "workspace_chat")
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+
+    def test_invalid_workspace_chat_conversation_creates_no_snapshot(self):
+        status, body = asgi_request(self.app, "POST", "/api/v1/chat", {
+            "conversation_id": "not-a-conversation",
+            "message": "Hello",
+            "project_id": self.project["project_id"],
+            "workspace_id": self.workspace["workspace_id"],
+        })
+        self.assertEqual(status, 404)
+        self.assertEqual(self._workspace_snapshots(), [])
