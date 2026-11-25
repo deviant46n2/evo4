@@ -130,18 +130,21 @@ def initialize_platform_registry(store):
             applied = db.execute(
                 "SELECT 1 FROM schema_migrations WHERE name=?", (MIGRATION_NAME,)
             ).fetchone()
-            if applied:
-                db.commit()
-                return "already-initialized"
-            for statement in PLATFORM_REGISTRY_DDL:
-                db.execute(statement)
-            db.execute(
-                "INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)",
-                (MIGRATION_NAME, datetime.now(timezone.utc).isoformat()),
-            )
+            if not applied:
+                for statement in PLATFORM_REGISTRY_DDL:
+                    db.execute(statement)
+                db.execute(
+                    "INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)",
+                    (MIGRATION_NAME, datetime.now(timezone.utc).isoformat()),
+                )
             db.commit()
-            return "initialized"
         except Exception:
             if getattr(db, "in_transaction", False):
                 db.rollback()
             raise
+
+    # Separate additive migration: run even when the original Registry schema
+    # was already initialized on an earlier application version.
+    from .workspace_binding_history import initialize_workspace_binding_history
+    initialize_workspace_binding_history(store)
+    return "initialized" if not applied else "already-initialized"
