@@ -892,8 +892,8 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
             proposal = orchestration.propose_with_model(
-                runtime.assistant.provider, payload.request, str(workspace),
-                max_tokens=min(runtime.assistant.config.max_tokens, 3000),
+                runtime.assistant.provider, payload.request, str(workspace), max_tokens=min(runtime.assistant.config.max_tokens, 3000),
+                allowed_commands=effective_allowed_commands)
             with lab_db.lock:
                 plan = orchestration.create_plan(
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
@@ -995,7 +995,7 @@ def create_app(config_path="config.toml", provider_name=None):
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": runtime.assistant.config.model,
+                "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -1036,7 +1036,7 @@ def create_app(config_path="config.toml", provider_name=None):
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "base_url": runtime.assistant.config.base_url,
+            "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
