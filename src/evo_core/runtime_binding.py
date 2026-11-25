@@ -198,7 +198,15 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
         )
         bound_participant = participant_adapter.bind_component(
             model_component,
-            {"participant_id": participant_id},
+            {
+                "participant_id": participant_id,
+                "project_id": binding["project_id"],
+                "workspace_id": binding["workspace_id"],
+                "configuration_id": binding["configuration_id"],
+                "configuration_revision_id": binding["configuration_revision_id"],
+                "component_key": model_key,
+                "component_version": model_component["component_version"],
+            },
             secret_values=secret_values,
             assistant_settings=assistant_settings,
         )
