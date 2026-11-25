@@ -55,7 +55,6 @@ class BoundOpenAICompatibleParticipant:
     timeout_seconds: int
     max_output_tokens: int
     temperature: float
-    provider: OpenAICompatibleProvider = field(repr=False, compare=False)
 
 
 def _utc_now():
@@ -96,10 +95,25 @@ class OpenAICompatibleParticipantAdapter:
         provider_factory=OpenAICompatibleProvider,
         dispatch_authorizer=None,
     ):
-        self._endpoint_policy = EndpointPolicy(tuple(allowed_origins))
-        self._resolver = resolver
-        self._provider_factory = provider_factory
-        self._dispatch_authorizer = dispatch_authorizer
+        object.__setattr__(self, "_endpoint_policy", EndpointPolicy(tuple(allowed_origins)))
+        object.__setattr__(self, "_resolver", resolver)
+        object.__setattr__(self, "_provider_factory", provider_factory)
+        object.__setattr__(self, "_dispatch_authorizer", dispatch_authorizer)
+        object.__setattr__(self, "_providers", {})
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name, value):
+        if getattr(self, "_sealed", False):
+            raise AttributeError("participant adapter configuration is immutable")
+        object.__setattr__(self, name, value)
+
+    def _provider_for(self, participant):
+        if not isinstance(participant, BoundOpenAICompatibleParticipant):
+            raise ParticipantAdapterError("bound participant is invalid")
+        provider = self._providers.get(participant.participant_id)
+        if provider is None:
+            raise ParticipantAdapterError("bound participant is not owned by this adapter")
+        return provider
 
     def validate_component(self, component: Mapping[str, Any]) -> None:
         if not isinstance(component, Mapping) or component.get("type") != "model":
@@ -204,6 +218,7 @@ class OpenAICompatibleParticipantAdapter:
             )
         except Exception as exc:
             raise ParticipantAdapterError("provider participant could not be constructed") from exc
+        self._providers[participant_id] = provider
         return BoundOpenAICompatibleParticipant(
             participant_id=participant_id,
             project_id=provenance["project_id"],
@@ -217,7 +232,6 @@ class OpenAICompatibleParticipantAdapter:
             timeout_seconds=settings["timeout_seconds"],
             max_output_tokens=max_output_tokens,
             temperature=float(temperature),
-            provider=provider,
         )
 
     def preflight(
@@ -229,7 +243,7 @@ class OpenAICompatibleParticipantAdapter:
         """Check transport/model advertisement only; never issue a completion."""
         if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or not 1 <= timeout_seconds <= 10:
             raise ValueError("preflight timeout must be between 1 and 10 seconds")
-        provider = participant.provider
+        provider = self._provider_for(participant)
         try:
             models = provider.list_models(timeout_seconds=timeout_seconds)
             return AvailabilityEvidence(
@@ -269,7 +283,7 @@ class OpenAICompatibleParticipantAdapter:
         self._authorize("availability_probe", participant, None)
         timeout = min(participant.timeout_seconds, timeout_seconds)
         try:
-            result = participant.provider.chat(
+            result = self._provider_for(participant).chat(
                 [{"role": "user", "content": "Reply with OK."}],
                 max_tokens=1, temperature=0.0, timeout_seconds=timeout,
             )
@@ -389,7 +403,7 @@ class OpenAICompatibleParticipantAdapter:
 
         def run_provider():
             try:
-                result = participant.provider.chat(
+                result = self._provider_for(participant).chat(
                     messages, max_tokens=max_tokens, temperature=float(temperature),
                     tools=tools, on_token=lambda token: publish("text_delta", {"text": token}),
                     timeout_seconds=request_timeout,
@@ -501,6 +515,8 @@ class OpenAICompatibleParticipantAdapter:
                         status, code, message = "rate_limited", "provider_rate_limited", "Provider rate limit was reached"
                     elif isinstance(exc, ProviderHTTPError) and exc.status_code in {401, 403}:
                         status, code, message = "denied", "provider_denied", "Provider rejected the request"
+                    elif isinstance(exc, ProviderHTTPError) and exc.status_code in {408, 504}:
+                        status, code, message = "timed_out", "provider_timeout", "Provider request timed out"
                     elif isinstance(exc, (InvalidToolCallError, ProviderMalformedResponseError)):
                         status, code, message = "malformed_output", "malformed_provider_output", "Provider returned malformed output"
                     else:
