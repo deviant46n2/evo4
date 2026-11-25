@@ -50,11 +50,30 @@ def project_command_prefixes(revision):
     components = definition.get("components")
     if not isinstance(components, dict):
         raise CommandPolicyError("workspace configuration components are invalid")
+    schema_version = definition.get("schema_version")
     policy = components.get("command_policy")
     if policy is None:
         return ()
     if not isinstance(policy, dict):
         raise CommandPolicyError("components.command_policy must be an object")
+    if schema_version == 2:
+        # Schema 2 is validated as a complete typed contract before its policy
+        # settings are consumed. This component only narrows operator policy.
+        from .ai_configurations import ConfigurationValidationError, validate_definition
+        try:
+            validate_definition(definition)
+        except ConfigurationValidationError as exc:
+            raise CommandPolicyError("schema-2 workspace configuration is invalid") from exc
+        if policy.get("type") != "command_policy":
+            raise CommandPolicyError("components.command_policy has the wrong component type")
+        settings = policy.get("settings")
+        if not isinstance(settings, dict) or set(settings) != {"allowed_commands"}:
+            raise CommandPolicyError("schema-2 command_policy settings are invalid")
+        return _normalize_prefixes(
+            settings["allowed_commands"], "components.command_policy.settings.allowed_commands"
+        )
+    # Schema-1 command_policy is retained only as a legacy restrictive ceiling;
+    # it cannot select or execute a provider/runtime component.
     unknown = set(policy) - {"allowed_commands"}
     if unknown:
         raise CommandPolicyError(

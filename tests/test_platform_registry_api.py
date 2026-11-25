@@ -10,6 +10,29 @@ from evo_core.platform_registry_api import build_configuration_router
 VALID_DEFINITION = {"schema_version": 1, "components": {"model": {"provider": "p", "model": "m"}}}
 
 
+VALID_SCHEMA2_DEFINITION = {
+    "schema_version": 2,
+    "components": {
+        "model": {
+            "type": "model", "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {"endpoint": "http://127.0.0.1:18997/v1", "model": "test-model", "timeout_seconds": 60},
+        },
+        "assistant": {
+            "type": "assistant_runtime", "component_version": 1,
+            "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+            "settings": {
+                "model_component": "model", "persona_prompt": "Careful",
+                "max_output_tokens": 1024, "temperature": 0.2,
+                "context_window_tokens": 8192, "history_messages": 8,
+                "max_history_chars": 8000, "memory_limit": 4,
+            },
+        },
+    },
+    "entrypoints": {"assistant": "assistant"},
+}
+
+
 def make_config(root):
     config = root / "config.toml"
     config.write_text(
@@ -222,6 +245,49 @@ class PlatformRegistryApiTests(unittest.TestCase):
             self.fail("expected HTTPException")
         except HTTPException as exc:
             self.assertEqual(exc.status_code, 422)
+
+
+    def test_create_schema2_typed_configuration(self):
+        from evo_core.platform_registry_api import ConfigurationCreateRequest
+        ep = endpoint(self.app, "POST", "/api/v1/configurations")
+        result = ep(payload=ConfigurationCreateRequest(definition=VALID_SCHEMA2_DEFINITION, name="typed"))
+        self.assertEqual(result.revision.schema_version, 2)
+        self.assertEqual(result.revision.definition["entrypoints"]["assistant"], "assistant")
+
+    def test_schema1_migration_preview_is_read_only(self):
+        from evo_core.platform_registry_api import ConfigurationCreateRequest
+        ep_create = endpoint(self.app, "POST", "/api/v1/configurations")
+        created = ep_create(payload=ConfigurationCreateRequest(definition=VALID_DEFINITION, name="legacy"))
+        preview_ep = endpoint(
+            self.app, "GET",
+            "/api/v1/configurations/{configuration_id}/revisions/{revision_id}/migration-preview",
+        )
+        preview = preview_ep(
+            configuration_id=created.configuration.configuration_id,
+            revision_id=created.revision.revision_id,
+        )
+        self.assertFalse(preview.preview["automatic_migration"])
+        self.assertTrue(preview.preview["requires_manual_reconstruction"])
+        self.assertEqual(preview.revision_id, created.revision.revision_id)
+        revisions = endpoint(
+            self.app, "GET", "/api/v1/configurations/{configuration_id}/revisions"
+        )(configuration_id=created.configuration.configuration_id)
+        self.assertEqual(revisions.total, 1)
+
+    def test_schema2_migration_preview_is_rejected(self):
+        from evo_core.platform_registry_api import ConfigurationCreateRequest
+        ep_create = endpoint(self.app, "POST", "/api/v1/configurations")
+        created = ep_create(payload=ConfigurationCreateRequest(definition=VALID_SCHEMA2_DEFINITION, name="typed"))
+        preview_ep = endpoint(
+            self.app, "GET",
+            "/api/v1/configurations/{configuration_id}/revisions/{revision_id}/migration-preview",
+        )
+        with self.assertRaises(HTTPException) as raised:
+            preview_ep(
+                configuration_id=created.configuration.configuration_id,
+                revision_id=created.revision.revision_id,
+            )
+        self.assertEqual(raised.exception.status_code, 422)
 
     def test_stale_version_conflict(self):
         from evo_core.platform_registry_api import ConfigurationCreateRequest, RevisionCreateRequest

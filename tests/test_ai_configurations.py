@@ -23,6 +23,8 @@ from evo_core.ai_configurations import (
     restore_revision,
     update_configuration,
     validate_definition,
+    validate_executable_definition,
+    preview_schema1_migration,
 )
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.store import EvoStore
@@ -60,7 +62,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_unsupported_schema_version(self):
         with self.assertRaises(ConfigurationValidationError):
-            validate_definition({"schema_version": 2, "components": {}})
+            validate_definition({"schema_version": 3, "components": {}})
 
     def test_bool_schema_version(self):
         with self.assertRaises(ConfigurationValidationError):
@@ -143,6 +145,201 @@ class ValidationTests(unittest.TestCase):
     def test_non_string_json_text(self):
         with self.assertRaises(ConfigurationValidationError):
             validate_definition(123)
+
+
+VALID_SCHEMA2_DEFINITION = {
+    "schema_version": 2,
+    "components": {
+        "primary_model": {
+            "type": "model",
+            "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {
+                "endpoint": "http://127.0.0.1:18997/v1",
+                "model": "local-model",
+                "timeout_seconds": 120,
+            },
+            "secret_refs": {"api_key": "env:EVO_LOCAL_API_KEY"},
+        },
+        "assistant": {
+            "type": "assistant_runtime",
+            "component_version": 1,
+            "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+            "settings": {
+                "model_component": "primary_model",
+                "persona_prompt": "Be careful and evidence-driven.",
+                "max_output_tokens": 2048,
+                "temperature": 0.2,
+                "context_window_tokens": 49152,
+                "history_messages": 16,
+                "max_history_chars": 40000,
+                "memory_limit": 8,
+            },
+        },
+        "command_policy": {
+            "type": "command_policy",
+            "component_version": 1,
+            "adapter": {"id": "evo_command_policy", "contract_version": 1},
+            "settings": {"allowed_commands": [["pytest"], ["python", "-m", "unittest"]]},
+        },
+        "verifier": {
+            "type": "deterministic_verifier",
+            "component_version": 1,
+            "adapter": {"id": "evo_deterministic_verifier", "contract_version": 1},
+            "settings": {
+                "required_fields": ["status", "evidence"],
+                "evidence_fields": ["evidence"],
+                "max_output_bytes": 65536,
+                "allow_additional_fields": False,
+            },
+        },
+    },
+    "entrypoints": {"assistant": "assistant"},
+}
+
+
+class Schema2ValidationTests(unittest.TestCase):
+    def test_valid_typed_schema2(self):
+        normalized = validate_definition(VALID_SCHEMA2_DEFINITION)
+        self.assertEqual(normalized["schema_version"], 2)
+        self.assertEqual(normalized["entrypoints"]["assistant"], "assistant")
+
+    def test_schema2_round_trips_without_mutating_caller(self):
+        source = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        normalized = validate_definition(source)
+        self.assertEqual(source, normalized)
+        source["components"]["command_policy"]["settings"]["allowed_commands"].append(["evil"])
+        self.assertNotIn(["evil"], normalized["components"]["command_policy"]["settings"]["allowed_commands"])
+
+    def test_schema2_requires_entrypoints(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        del value["entrypoints"]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_entrypoint_must_reference_assistant_runtime(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["entrypoints"]["assistant"] = "primary_model"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_assistant_model_reference_must_exist_and_be_model(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["settings"]["model_component"] = "verifier"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_unknown_component_type(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["type"] = "python"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_adapter_type_mismatch(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["adapter"]["id"] = "openai_compatible_chat"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_unknown_adapter_version(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["adapter"]["contract_version"] = 2
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_unknown_component_fields(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["settings"]["arbitrary"] = True
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_non_loopback_http(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["settings"]["endpoint"] = "http://example.com/v1"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_endpoint_credentials_and_query(self):
+        for endpoint in (
+            "https://user:pass@example.com/v1",
+            "https://example.com/v1?token=secret",
+            "https://example.com/v1#fragment",
+        ):
+            with self.subTest(endpoint=endpoint):
+                value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+                value["components"]["primary_model"]["settings"]["endpoint"] = endpoint
+                with self.assertRaises(ConfigurationValidationError):
+                    validate_definition(value)
+
+
+    def test_schema2_rejects_wildcard_endpoint_hostname(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["settings"]["endpoint"] = "https://*.example.test/v1"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_secret_refs_are_env_only_and_allowlist_is_not_in_definition(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["secret_refs"]["api_key"] = "file:/tmp/key"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_model_rejects_unknown_secret_names(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["primary_model"]["secret_refs"]["password"] = "env:MY_PASSWORD"
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_boolean_numeric_settings(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["settings"]["max_output_tokens"] = True
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_extensions_must_be_namespaced_and_versioned(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["extensions"] = {"custom": {"version": 1, "data": {}}}
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+        value["extensions"] = {"vendor:feature": {"version": 1, "data": {"enabled": True}}}
+        self.assertIn("vendor:feature", validate_definition(value)["extensions"])
+
+    def test_schema2_configuration_revision_is_persisted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = make_store(Path(temp) / "schema2.sqlite3")
+            try:
+                result = create_configuration(store, VALID_SCHEMA2_DEFINITION, name="typed")
+                self.assertEqual(result["revision"]["schema_version"], 2)
+                self.assertEqual(result["revision"]["definition"]["schema_version"], 2)
+            finally:
+                store.db.close()
+
+
+class SchemaMigrationBoundaryTests(unittest.TestCase):
+    def test_schema1_remains_readable_but_is_not_executable(self):
+        legacy = validate_definition(VALID_DEFINITION)
+        self.assertEqual(legacy["schema_version"], 1)
+        with self.assertRaisesRegex(ConfigurationValidationError, "not executable"):
+            validate_executable_definition(legacy)
+
+    def test_schema2_is_eligible_for_executable_contract_validation(self):
+        self.assertEqual(
+            validate_executable_definition(VALID_SCHEMA2_DEFINITION)["schema_version"], 2
+        )
+
+    def test_schema1_migration_preview_never_auto_maps_opaque_components(self):
+        legacy = copy.deepcopy(VALID_DEFINITION)
+        before = copy.deepcopy(legacy)
+        preview = preview_schema1_migration(legacy)
+        self.assertFalse(preview["automatic_migration"])
+        self.assertTrue(preview["requires_manual_reconstruction"])
+        self.assertTrue(preview["source_revision_must_remain_unchanged"])
+        self.assertEqual(preview["source_content_hash"], content_hash(before))
+        self.assertEqual(legacy, before)
+
+    def test_migration_preview_rejects_schema2(self):
+        with self.assertRaises(ConfigurationValidationError):
+            preview_schema1_migration(VALID_SCHEMA2_DEFINITION)
 
 
 class CanonicalizationTests(unittest.TestCase):
