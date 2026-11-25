@@ -76,7 +76,7 @@ def _strict_json_object(value, label):
     try:
         parsed = json.loads(value, object_pairs_hook=unique_pairs,
                             parse_constant=lambda _: (_ for _ in ()).throw(ValueError("constant")))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise ParticipantAdapterError(f"{label} is malformed") from exc
     if not isinstance(parsed, dict):
         raise ParticipantAdapterError(f"{label} must be a JSON object")
@@ -376,9 +376,19 @@ class OpenAICompatibleParticipantAdapter:
         if remaining_seconds <= 0:
             raise ParticipantAdapterError("invocation deadline has expired")
         request_timeout = min(float(participant.timeout_seconds), remaining_seconds)
-        request = _strict_json_object(envelope.input_json, "invocation input")
-        if len(envelope.input_json.encode("utf-8")) > 1_048_576:
+        if not isinstance(envelope.input_json, str):
+            raise ParticipantAdapterError("invocation input must be JSON text")
+        try:
+            input_bytes = envelope.input_json.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ParticipantAdapterError("invocation input encoding is invalid") from exc
+        if len(input_bytes) > 1_048_576:
             raise ParticipantAdapterError("invocation input exceeds the size limit")
+        request = _strict_json_object(envelope.input_json, "invocation input")
+        try:
+            json.dumps(request, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeEncodeError) as exc:
+            raise ParticipantAdapterError("invocation input contains unsupported values") from exc
         if set(request) - {"messages", "max_tokens", "temperature", "tools"}:
             raise ParticipantAdapterError("invocation input contains unsupported fields")
         messages = request.get("messages")
