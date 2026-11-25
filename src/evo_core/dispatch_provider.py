@@ -44,7 +44,7 @@ class _CombinedCancellation:
 
 
 class RuntimeDispatchController:
-    """Single-use admission authority installed into one pinned adapter."""
+    """Code-owned admission authority for exact participants in one pinned runtime."""
 
     def __init__(self, store, config):
         self.store = store
@@ -56,16 +56,45 @@ class RuntimeDispatchController:
             raise RuntimeError("dispatch controller is already bound")
         self.runtime = runtime
 
-    def authorize(self, operation, participant, envelope):
-        if operation != "participant_invocation" or self.runtime is None:
+    def authorizer_for(self, adapter_reference):
+        """Create a code-owned callback pinned to the adapter created by runtime binding."""
+        if not isinstance(adapter_reference, dict) or "adapter" in adapter_reference:
+            raise TypeError("adapter reference must be a fresh, empty runtime-owned mapping")
+
+        def authorize(operation, participant, envelope):
+            return self.authorize(
+                operation, participant, envelope,
+                adapter=adapter_reference.get("adapter"),
+            )
+
+        return authorize
+
+    def authorize(self, operation, participant, envelope, *, adapter=None):
+        if (
+            operation != "participant_invocation"
+            or self.runtime is None
+            or not isinstance(envelope, InvocationEnvelope)
+            or adapter is None
+        ):
             return False
         runtime = self.runtime
-        if participant is not runtime.bound_participant:
+        try:
+            selected = runtime.resolve_participant(participant)
+        except Exception:
+            return False
+        descriptor = selected.participant
+        if selected.participant_adapter is not adapter:
             return False
         if (
-            envelope.workspace_id != runtime.workspace_id
-            or envelope.project_id != runtime.project_id
-            or envelope.configuration_revision_id != runtime.revision_id
+            envelope.workspace_id != selected.workspace_id
+            or envelope.project_id != selected.project_id
+            or envelope.configuration_id != selected.configuration_id
+            or envelope.configuration_revision_id != selected.revision_id
+            or envelope.participant_id != descriptor.participant_id
+            or envelope.adapter_id != descriptor.adapter_id
+            or envelope.adapter_contract_version != descriptor.adapter_contract_version
+            or envelope.component_key != descriptor.component_key
+            or envelope.component_version != descriptor.component_version
         ):
             return False
 
@@ -73,22 +102,30 @@ class RuntimeDispatchController:
         from .provider_endpoint import normalize_provider_origin
         from evo_experiments.monitor import sample_nvidia_smi
 
+        if descriptor.adapter_id != "openai_compatible_chat":
+            return False
         parsed = urlsplit(participant.endpoint)
         origin = normalize_provider_origin(f"{parsed.scheme}://{parsed.netloc}")
         approval = find_provider_approval(
             self.config.provider_approvals, origin,
-            runtime.participant.adapter_id, "chat_completion",
+            descriptor.adapter_id, "chat_completion",
+            integration_id=descriptor.integration_id,
+            allow_unscoped=(
+                descriptor.participant_id == runtime.participant.participant_id
+            ),
         )
-        budget = next(
-            (item for item in self.config.provider_budgets
-             if item.integration_id == runtime.participant.integration_id),
-            None,
-        )
-        local_profile = next(
-            (dict(profile) for integration_id, profile in self.config.local_resource_profiles
-             if integration_id == runtime.participant.integration_id),
-            None,
-        )
+        budgets = [
+            item for item in self.config.provider_budgets
+            if item.integration_id == descriptor.integration_id
+        ]
+        profiles = [
+            dict(profile) for integration_id, profile in self.config.local_resource_profiles
+            if integration_id == descriptor.integration_id
+        ]
+        if len(budgets) > 1 or len(profiles) > 1:
+            return False
+        budget = budgets[0] if budgets else None
+        local_profile = profiles[0] if profiles else None
         try:
             telemetry = sample_nvidia_smi()
         except Exception:
@@ -96,7 +133,7 @@ class RuntimeDispatchController:
             # fall back to cached dashboard data or guessed headroom.
             telemetry = None
         decision = admit_invocation(
-            self.store, runtime, envelope,
+            self.store, selected, envelope,
             approval=approval,
             provider_budget=budget,
             telemetry=telemetry,
@@ -119,16 +156,21 @@ class RuntimeDispatchController:
 
 
 class DispatchingProvider:
-    """EvoAssistant-compatible provider facade with durable P3.5 admission."""
+    """Provider facade for one selected participant with durable P3.5 admission."""
 
     dispatch_enabled = True
 
-    def __init__(self, store, runtime, controller):
+    def __init__(self, store, runtime, controller, *, participant_id=None):
         self.store = store
-        self.runtime = runtime
+        self.parent_runtime = runtime
+        self.runtime = (
+            runtime.select_participant(participant_id)
+            if participant_id is not None
+            else runtime.select_participant(runtime.participant.participant_id)
+        )
         self.controller = controller
-        self.adapter = runtime.participant_adapter
-        self.participant = runtime.bound_participant
+        self.adapter = self.runtime.participant_adapter
+        self.participant = self.runtime.bound_participant
         self.base_url = self.participant.endpoint.rstrip("/")
         self.model = self.participant.model
         self.timeout = self.participant.timeout_seconds

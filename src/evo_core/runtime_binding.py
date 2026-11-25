@@ -6,7 +6,8 @@ accept dispatch callbacks or permissions from workspace configuration.
 """
 from dataclasses import dataclass, replace
 from hashlib import sha256
-from types import MappingProxyType
+import re
+from types import MappingProxyType, SimpleNamespace
 from urllib.parse import urlsplit
 
 from . import workspaces
@@ -76,6 +77,7 @@ class RegistryBoundRuntime:
     provenance: object
     additional_participants: tuple[ParticipantDescriptor, ...] = ()
     additional_participant_bindings: tuple[tuple[object, object], ...] = ()
+    additional_participant_provenance: tuple[tuple[str, object], ...] = ()
 
     @property
     def participants(self):
@@ -90,6 +92,134 @@ class RegistryBoundRuntime:
     @property
     def dispatch_enabled(self):
         return bool(getattr(self.assistant.provider, "dispatch_enabled", False))
+
+    def resolve_participant(self, bound_participant):
+        """Return a trusted invocation context for an exact revision-bound instance.
+
+        Resolution is by object identity, never by caller-supplied descriptor or ID.
+        The adapter must also prove that it owns the exact bound instance.
+        """
+        if len(self.participants) != len(self.participant_bindings):
+            raise RuntimeBindingError("runtime participant descriptors and bindings are inconsistent")
+        participant_ids = [descriptor.participant_id for descriptor in self.participants]
+        if len(participant_ids) != len(set(participant_ids)):
+            raise RuntimeBindingError("runtime contains duplicate or ambiguous participant identities")
+        for descriptor, (adapter, bound) in zip(self.participants, self.participant_bindings):
+            if bound is not bound_participant:
+                continue
+            if descriptor.participant_type != "model":
+                raise RuntimeBindingError("selected participant is not a model invocation participant")
+            if len(descriptor.limits) != len(dict(descriptor.limits)):
+                raise RuntimeBindingError("selected participant descriptor contains duplicate limits")
+            limits = dict(descriptor.limits)
+            try:
+                parsed = urlsplit(bound.endpoint)
+                origin = normalize_provider_origin(f"{parsed.scheme}://{parsed.netloc}")
+                expected_integration_id = stable_integration_id(
+                    descriptor.adapter_id, origin, bound.model
+                )
+                expected_participant_id = stable_participant_id(
+                    expected_integration_id, self.configuration_id, self.revision_id,
+                    descriptor.component_key, descriptor.component_version,
+                )
+            except Exception as exc:
+                raise RuntimeBindingError("selected participant endpoint identity is invalid") from exc
+            if (
+                descriptor.participant_type != "model"
+                or descriptor.adapter_id != getattr(adapter, "adapter_id", None)
+                or descriptor.adapter_contract_version != getattr(adapter, "contract_version", None)
+                or descriptor.configuration_id != self.configuration_id
+                or descriptor.configuration_revision_id != self.revision_id
+                or descriptor.integration_id != expected_integration_id
+                or descriptor.participant_id != expected_participant_id
+                or descriptor.display_name != getattr(bound, "model", None)
+                or getattr(bound, "participant_id", None) != descriptor.participant_id
+                or getattr(bound, "project_id", None) != self.project_id
+                or getattr(bound, "workspace_id", None) != self.workspace_id
+                or getattr(bound, "configuration_id", None) != self.configuration_id
+                or getattr(bound, "configuration_revision_id", None) != self.revision_id
+                or getattr(bound, "component_key", None) != descriptor.component_key
+                or getattr(bound, "component_version", None) != descriptor.component_version
+                or limits.get("timeout_seconds") != getattr(bound, "timeout_seconds", None)
+                or limits.get("max_output_tokens") != getattr(bound, "max_output_tokens", None)
+            ):
+                raise RuntimeBindingError("selected participant binding does not match its pinned descriptor")
+            if not isinstance(adapter, OpenAICompatibleParticipantAdapter):
+                raise RuntimeBindingError("selected participant has no supported model invocation adapter")
+            try:
+                adapter._provider_for(bound)
+            except ParticipantAdapterError as exc:
+                raise RuntimeBindingError("selected participant adapter does not own its bound instance") from exc
+            selected_config = replace(
+                self.assistant.config,
+                base_url=bound.endpoint,
+                model=bound.model,
+                timeout_seconds=bound.timeout_seconds,
+                max_tokens=bound.max_output_tokens,
+                temperature=bound.temperature,
+            )
+            selected_provenance = dict(self.provenance)
+            try:
+                provenance_entries = dict(self.additional_participant_provenance)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeBindingError("runtime participant provenance bindings are invalid") from exc
+            if len(provenance_entries) != len(self.additional_participant_provenance):
+                raise RuntimeBindingError("runtime participant provenance identities are ambiguous")
+            participant_provenance = provenance_entries.get(descriptor.participant_id, {})
+            if not isinstance(participant_provenance, dict):
+                raise RuntimeBindingError("selected participant provenance is invalid")
+            selected_provenance.update(participant_provenance)
+            secret_reference_names = (
+                participant_provenance.get("secret_reference_names", ())
+                if descriptor.participant_id != self.participant.participant_id
+                else self.provenance.get("secret_reference_names", ())
+            )
+            if not isinstance(secret_reference_names, (tuple, list)) or len(secret_reference_names) > 16:
+                raise RuntimeBindingError("selected participant secret-reference provenance is invalid")
+            for reference in secret_reference_names:
+                if (
+                    not isinstance(reference, (tuple, list))
+                    or len(reference) != 2
+                    or reference[0] != "api_key"
+                    or not isinstance(reference[1], str)
+                    or re.fullmatch(r"env:[A-Za-z_][A-Za-z0-9_]*", reference[1]) is None
+                ):
+                    raise RuntimeBindingError("selected participant provenance must contain secret-reference names only")
+            selected_provenance.update({
+                "workspace_id": self.workspace_id,
+                "project_id": self.project_id,
+                "configuration_id": self.configuration_id,
+                "configuration_revision_id": self.revision_id,
+                "revision_hash": self.revision_hash,
+                "model_component_key": descriptor.component_key,
+                "adapter_id": descriptor.adapter_id,
+                "adapter_contract_version": descriptor.adapter_contract_version,
+                "secret_reference_names": secret_reference_names,
+            })
+            return ParticipantInvocationRuntime(
+                parent_runtime=self,
+                participant=descriptor,
+                participant_adapter=adapter,
+                bound_participant=bound,
+                assistant=SimpleNamespace(config=selected_config),
+                provenance=MappingProxyType(selected_provenance),
+            )
+        raise RuntimeBindingError("selected participant is not bound to this immutable runtime revision")
+
+    def select_participant(self, participant_id):
+        """Resolve a participant ID only against this runtime's pinned descriptors."""
+        if not isinstance(participant_id, str) or not participant_id.strip():
+            raise RuntimeBindingError("selected participant identity is invalid")
+        participant_ids = [descriptor.participant_id for descriptor in self.participants]
+        if len(participant_ids) != len(set(participant_ids)):
+            raise RuntimeBindingError("runtime contains duplicate or ambiguous participant identities")
+        matches = [
+            bound for descriptor, (_, bound) in zip(self.participants, self.participant_bindings)
+            if descriptor.participant_id == participant_id
+        ]
+        if len(matches) != 1:
+            raise RuntimeBindingError("selected participant identity is unknown or ambiguous")
+        return self.resolve_participant(matches[0])
 
     def require_dispatch_enabled(self):
         if not self.dispatch_enabled:
@@ -126,6 +256,62 @@ class RegistryBoundRuntime:
         if identity != expected:
             raise RuntimeBindingError("workspace runtime binding changed; rebuild the runtime before use")
         return True
+
+
+@dataclass(frozen=True)
+class ParticipantInvocationRuntime:
+    """Selected participant view over one immutable workspace runtime.
+
+    It carries the exact descriptor, adapter, bound instance, effective
+    participant-specific model settings, and the parent revision provenance.
+    It has no independent authority and delegates current-binding checks to
+    the parent runtime.
+    """
+    parent_runtime: RegistryBoundRuntime
+    participant: ParticipantDescriptor
+    participant_adapter: OpenAICompatibleParticipantAdapter
+    bound_participant: object
+    assistant: object
+    provenance: object
+
+    @property
+    def workspace_id(self):
+        return self.parent_runtime.workspace_id
+
+    @property
+    def project_id(self):
+        return self.parent_runtime.project_id
+
+    @property
+    def configuration_id(self):
+        return self.parent_runtime.configuration_id
+
+    @property
+    def revision_id(self):
+        return self.parent_runtime.revision_id
+
+    @property
+    def checkout_id(self):
+        return self.parent_runtime.checkout_id
+
+    @property
+    def workspace_version(self):
+        return self.parent_runtime.workspace_version
+
+    @property
+    def revision_hash(self):
+        return self.parent_runtime.revision_hash
+
+    @property
+    def effective_allowed_commands(self):
+        return self.parent_runtime.effective_allowed_commands
+
+    @property
+    def dispatch_enabled(self):
+        return self.parent_runtime.dispatch_enabled
+
+    def assert_current(self, store):
+        return self.parent_runtime.assert_current(store)
 
 
 def _component(definition, component_key, expected_type):
@@ -218,12 +404,16 @@ def build_workspace_runtime(store, base_config, workspace_id):
         if getattr(base_config, "dispatch_enabled", False):
             from .dispatch_provider import RuntimeDispatchController
             dispatch_controller = RuntimeDispatchController(store, base_config)
+        adapter_reference = {} if dispatch_controller is not None else None
         participant_adapter = OpenAICompatibleParticipantAdapter(
             allowed_origins=base_config.allowed_provider_origins,
             dispatch_authorizer=(
-                dispatch_controller.authorize if dispatch_controller is not None else None
+                dispatch_controller.authorizer_for(adapter_reference)
+                if dispatch_controller is not None else None
             ),
         )
+        if adapter_reference is not None:
+            adapter_reference["adapter"] = participant_adapter
         bound_participant = participant_adapter.bind_component(
             model_component,
             {

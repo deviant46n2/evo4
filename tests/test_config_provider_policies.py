@@ -123,6 +123,105 @@ data_handling_reference = "handling-v2"
         finally:
             temp.cleanup()
 
+
+
+    def test_config_loader_accepts_integration_scoped_provider_approval(self):
+        integration_id = "integration_0123456789abcdef0123456789abcdef"
+        text = BASE_CONFIG + f"""
+[[provider_approvals]]
+origin = "https://api.example.test"
+adapter_id = "openai_compatible_chat"
+integration_id = "{integration_id}"
+uses = ["chat_completion"]
+status = "approved"
+reviewed_at = "2026-11-23"
+terms_reference = "terms-v3"
+data_handling_reference = "handling-v2"
+"""
+        config, temp = self._load(text)
+        try:
+            self.assertEqual(config.provider_approvals[0].integration_id, integration_id)
+        finally:
+            temp.cleanup()
+
+    def test_provider_approval_can_be_scoped_to_exact_integration(self):
+        integration_id = "integration_0123456789abcdef0123456789abcdef"
+        record = {
+            "origin": "https://api.example.test",
+            "adapter_id": "openai_compatible_chat",
+            "uses": ["chat_completion"],
+            "status": "approved",
+            "reviewed_at": "2026-11-23",
+            "terms_reference": "terms-v3",
+            "data_handling_reference": "handling-v2",
+            "integration_id": integration_id,
+        }
+        parsed = parse_provider_approvals([record])
+        self.assertIsNotNone(find_provider_approval(
+            parsed, "https://api.example.test", "openai_compatible_chat",
+            "chat_completion", integration_id=integration_id,
+        ))
+        self.assertIsNone(find_provider_approval(
+            parsed, "https://api.example.test", "openai_compatible_chat",
+            "chat_completion", integration_id="integration_other",
+        ))
+
+    def test_legacy_unscoped_approval_is_not_inherited_by_secondary_integration(self):
+        record = {
+            "origin": "https://api.example.test",
+            "adapter_id": "openai_compatible_chat",
+            "uses": ["chat_completion"],
+            "status": "approved",
+            "reviewed_at": "2026-11-23",
+            "terms_reference": "terms-v3",
+            "data_handling_reference": "handling-v2",
+        }
+        parsed = parse_provider_approvals([record])
+        self.assertIsNotNone(find_provider_approval(
+            parsed, record["origin"], record["adapter_id"], "chat_completion",
+            integration_id="integration_primary", allow_unscoped=True,
+        ))
+        self.assertIsNone(find_provider_approval(
+            parsed, record["origin"], record["adapter_id"], "chat_completion",
+            integration_id="integration_secondary",
+        ))
+
+
+    def test_exact_integration_approval_takes_precedence_over_legacy_fallback(self):
+        base = {
+            "origin": "https://api.example.test",
+            "adapter_id": "openai_compatible_chat",
+            "uses": ["chat_completion"],
+            "reviewed_at": "2026-11-23",
+            "terms_reference": "terms-v3",
+            "data_handling_reference": "handling-v2",
+        }
+        legacy = dict(base, status="restricted")
+        exact = dict(base, status="approved", integration_id="integration_primary")
+        parsed = parse_provider_approvals([legacy, exact])
+        selected = find_provider_approval(
+            parsed, base["origin"], base["adapter_id"], "chat_completion",
+            integration_id="integration_primary", allow_unscoped=True,
+        )
+        self.assertEqual(selected.integration_id, "integration_primary")
+        self.assertEqual(selected.status, "approved")
+
+    def test_duplicate_approval_is_scoped_by_integration_identity(self):
+        base = {
+            "origin": "https://api.example.test",
+            "adapter_id": "openai_compatible_chat",
+            "uses": ["chat_completion"],
+            "status": "approved",
+            "reviewed_at": "2026-11-23",
+            "terms_reference": "terms-v3",
+            "data_handling_reference": "handling-v2",
+        }
+        first = dict(base, integration_id="integration_first")
+        second = dict(base, integration_id="integration_second")
+        self.assertEqual(len(parse_provider_approvals([first, second])), 2)
+        with self.assertRaises(ProviderApprovalError):
+            parse_provider_approvals([first, first])
+
     def test_absent_approval_remains_unknown(self):
         self.assertIsNone(
             find_provider_approval(

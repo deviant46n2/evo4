@@ -164,8 +164,9 @@ class RuntimeInvocationSnapshotTests(unittest.TestCase):
 
     def test_rebound_workspace_cannot_silently_adopt_new_revision(self):
         original = self.build()
+        selected = original.select_participant(original.participant.participant_id)
         create_runtime_invocation_snapshot(
-            self.store, original, invocation_id="inv-before-rebind",
+            self.store, selected, invocation_id="inv-before-rebind",
             invocation_kind="coding_agent",
         )
         replacement = create_configuration(
@@ -182,8 +183,9 @@ class RuntimeInvocationSnapshotTests(unittest.TestCase):
         rebound_runtime = self.build()
         with self.assertRaises(RuntimeSnapshotError):
             assert_runtime_matches_snapshot(
-                self.store, rebound_runtime, "inv-before-rebind",
-                expected_kind="coding_agent",
+                self.store, rebound_runtime.select_participant(
+                    rebound_runtime.participant.participant_id
+                ), "inv-before-rebind", expected_kind="coding_agent",
             )
 
     def test_read_detects_snapshot_tampering(self):

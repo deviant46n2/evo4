@@ -68,9 +68,12 @@ allowed_env_vars = []
 
 # Compliance is a separate operator decision from endpoint allowlisting.
 # Add one record per exact origin, adapter/interface, and approved use.
+# Legacy unscoped records remain usable only for the workspace's primary model.
+# Every additional model integration must include its exact integration_id.
 # [[provider_approvals]]
 # origin = "https://api.example.com"
 # adapter_id = "openai_compatible_chat"
+# integration_id = "integration_<32-hex-character-id>" # required for non-primary models
 # uses = ["chat_completion"]
 # status = "approved"
 # reviewed_at = "2026-11-23"

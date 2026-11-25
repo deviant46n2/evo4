@@ -28,6 +28,7 @@ class ProviderApproval:
     reviewed_at: str | None
     terms_reference: str | None
     data_handling_reference: str | None
+    integration_id: str | None = None
 
 
 def _validate_review_date(value):
@@ -63,7 +64,7 @@ def parse_provider_approvals(raw) -> tuple[ProviderApproval, ...]:
             raise ProviderApprovalError(f"provider_approvals[{index}] must be a table")
         allowed = {
             "origin", "adapter_id", "uses", "status", "reviewed_at",
-            "terms_reference", "data_handling_reference",
+            "terms_reference", "data_handling_reference", "integration_id",
         }
         if set(item) - allowed or not {"origin", "adapter_id", "uses", "status"}.issubset(item):
             raise ProviderApprovalError(f"provider_approvals[{index}] has missing or unknown fields")
@@ -102,29 +103,62 @@ def parse_provider_approvals(raw) -> tuple[ProviderApproval, ...]:
             reviewed_at is None or handling is None or (status == "approved" and terms is None)
         ):
             raise ProviderApprovalError("approved provider records require review date and handling/terms references")
+        integration_id = item.get("integration_id")
+        if integration_id is not None and (
+            not isinstance(integration_id, str)
+            or not integration_id.strip()
+            or len(integration_id) > 128
+        ):
+            raise ProviderApprovalError(f"provider_approvals[{index}] integration_id is invalid")
         approval = ProviderApproval(
             origin, adapter_id, tuple(uses), status, reviewed_at, terms, handling,
+            integration_id,
         )
         for use in approval.uses:
-            key = (approval.origin, approval.adapter_id, use)
+            key = (approval.origin, approval.adapter_id, use, approval.integration_id)
             if key in seen:
-                raise ProviderApprovalError("duplicate provider approval for the same origin, adapter, and use")
+                raise ProviderApprovalError("duplicate provider approval for the same origin, adapter, integration, and use")
             seen.add(key)
         approvals.append(approval)
     return tuple(approvals)
 
 
-def find_provider_approval(approvals: Iterable[ProviderApproval], origin: str, adapter_id: str, use: str):
-    """Return the exact reviewed record or None (unknown); never infer approval."""
+def find_provider_approval(
+    approvals: Iterable[ProviderApproval],
+    origin: str,
+    adapter_id: str,
+    use: str,
+    *,
+    integration_id: str | None = None,
+    allow_unscoped: bool = False,
+):
+    """Return an exact integration approval.
+
+    Unscoped legacy approvals are considered only when the trusted caller
+    explicitly identifies the primary participant. They never authorize a
+    non-primary integration by inheritance.
+    """
     try:
         normalized_origin = normalize_provider_origin(origin)
     except ProviderEndpointError:
         return None
-    for approval in approvals:
+    matching = [
+        approval for approval in approvals
         if (
             approval.origin == normalized_origin
             and approval.adapter_id == adapter_id
             and use in approval.uses
-        ):
-            return approval
+        )
+    ]
+    if integration_id is None:
+        unscoped = [item for item in matching if item.integration_id is None]
+        return unscoped[0] if len(unscoped) == 1 else None
+    exact = [item for item in matching if item.integration_id == integration_id]
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return None
+    if allow_unscoped:
+        unscoped = [item for item in matching if item.integration_id is None]
+        return unscoped[0] if len(unscoped) == 1 else None
     return None

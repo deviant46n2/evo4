@@ -4,7 +4,7 @@ This module deliberately does not install itself into a participant adapter.
 P3.5 wiring must pass these decisions through the single dispatch boundary and
 must not treat a persisted runtime snapshot as invocation authorization.
 """
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -402,12 +402,40 @@ def _snapshot_matches(db, runtime, envelope):
     participant = snapshot.get("participant", {})
     if not isinstance(participant, dict):
         raise AdmissionError("runtime snapshot participant descriptor is malformed")
+    descriptor = runtime.participant
+    try:
+        expected_participant = json.loads(_canonical_json(asdict(descriptor)))
+    except (TypeError, ValueError) as exc:
+        raise AdmissionError("selected participant descriptor cannot be canonicalized") from exc
+    if participant != expected_participant:
+        raise AdmissionError("invocation participant does not match the immutable runtime snapshot")
     if (
         participant.get("participant_id") != envelope.participant_id
         or participant.get("adapter_id") != envelope.adapter_id
+        or participant.get("adapter_contract_version") != envelope.adapter_contract_version
+        or participant.get("configuration_id") != envelope.configuration_id
         or participant.get("configuration_revision_id") != envelope.configuration_revision_id
+        or participant.get("component_key") != envelope.component_key
+        or participant.get("component_version") != envelope.component_version
     ):
-        raise AdmissionError("invocation participant does not match the immutable runtime snapshot")
+        raise AdmissionError("invocation envelope does not match the selected participant snapshot")
+    config = runtime.assistant.config
+    runtime_config = snapshot.get("runtime_config")
+    expected_runtime_config = {
+        "base_url": config.base_url,
+        "model": config.model,
+        "timeout_seconds": config.timeout_seconds,
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "system_prompt": config.system_prompt,
+        "memory_limit": config.memory_limit,
+        "history_messages": config.history_messages,
+        "max_history_chars": config.max_history_chars,
+        "context_window_tokens": config.context_window_tokens,
+        "allowed_commands": [list(command) for command in config.allowed_commands],
+    }
+    if runtime_config != expected_runtime_config:
+        raise AdmissionError("invocation snapshot does not match the selected participant configuration")
     return row
 
 

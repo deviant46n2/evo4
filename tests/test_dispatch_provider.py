@@ -9,7 +9,13 @@ from evo_core.config import EvoConfig
 from evo_core.dispatch_admission import (
     ProviderBudget, get_invocation_lifecycle, initialize_invocation_lifecycle,
 )
-from evo_core.dispatch_provider import DispatchProviderError
+from evo_core.dispatch_provider import DispatchProviderError, DispatchingProvider
+from evo_core.openai_compatible_adapter import OpenAICompatibleParticipantAdapter
+from evo_core.participant_contracts import (
+    ParticipantDescriptor, resolve_adapter_contract, stable_integration_id,
+    stable_participant_id,
+)
+from evo_core.runtime_binding import RuntimeBindingError
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
 from evo_core.provider_approvals import ProviderApproval
@@ -254,6 +260,340 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM participant_invocations"
             ).fetchone()[0]
         self.assertEqual((snapshots, invocations), (0, 0))
+
+
+class SelectedParticipantAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        DispatchProviderIntegrationTests.setUp(self)
+
+    def tearDown(self):
+        DispatchProviderIntegrationTests.tearDown(self)
+
+    def _enabled_config(self, *, with_budget=True):
+        return DispatchProviderIntegrationTests._enabled_config(self, with_budget=with_budget)
+
+    def _runtime_with_secondary(self, *, include_budget=True, include_profile=True, include_approval=True):
+        runtime, primary_fake = self._enabled_config()
+        controller = runtime.assistant.provider.controller
+        endpoint = "http://127.0.0.1:18997/v1"
+        model = "secondary-dispatch-test-model"
+        origin = "http://127.0.0.1:18997"
+        integration_id = stable_integration_id(
+            "openai_compatible_chat", origin, model
+        )
+        participant_id = stable_participant_id(
+            integration_id, runtime.configuration_id, runtime.revision_id,
+            "secondary_model", 1,
+        )
+        contract = resolve_adapter_contract(
+            "openai_compatible_chat", 1, "model"
+        )
+        descriptor = ParticipantDescriptor(
+            participant_id=participant_id,
+            integration_id=integration_id,
+            participant_type="model",
+            display_name=model,
+            adapter_id="openai_compatible_chat",
+            adapter_contract_version=1,
+            adapter_implementation_version=contract.implementation_version,
+            capabilities=contract.capabilities,
+            input_contract_versions=(1,),
+            output_contract_versions=(1,),
+            execution_location=contract.execution_location,
+            availability="unknown",
+            availability_observed_at=None,
+            resource_requirements=(),
+            limits=(
+                ("timeout_seconds", 25),
+                ("max_output_tokens", 256),
+                ("context_window_tokens", 8192),
+            ),
+            configuration_id=runtime.configuration_id,
+            configuration_revision_id=runtime.revision_id,
+            component_key="secondary_model",
+            component_version=1,
+            compliance_reference=None,
+        )
+        component = {
+            "type": "model",
+            "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {
+                "endpoint": endpoint, "model": model, "timeout_seconds": 25,
+            },
+        }
+        adapter_reference = {}
+        adapter = OpenAICompatibleParticipantAdapter(
+            allowed_origins=(origin,),
+            dispatch_authorizer=controller.authorizer_for(adapter_reference),
+        )
+        adapter_reference["adapter"] = adapter
+        bound = adapter.bind_component(
+            component,
+            {
+                "participant_id": participant_id,
+                "project_id": runtime.project_id,
+                "workspace_id": runtime.workspace_id,
+                "configuration_id": runtime.configuration_id,
+                "configuration_revision_id": runtime.revision_id,
+                "component_key": "secondary_model",
+                "component_version": 1,
+            },
+            runtime_settings={"max_output_tokens": 256, "temperature": 0.2},
+        )
+        fake = FakeProvider()
+        adapter._providers[participant_id] = fake
+        additional_provenance = (
+            (participant_id, {
+                "secret_reference_names": (("api_key", "env:EVO_SECONDARY_TEST_KEY"),),
+            }),
+        )
+        selected_runtime = replace(
+            runtime,
+            additional_participants=(descriptor,),
+            additional_participant_bindings=((adapter, bound),),
+            additional_participant_provenance=additional_provenance,
+        )
+        controller.runtime = selected_runtime
+        profile = {
+            "compute_mode": "cpu", "cpu_cores": 0.1,
+            "ram_mib": 64, "memory_mode": "cold_load",
+        }
+        budgets = tuple(controller.config.provider_budgets)
+        profiles = tuple(controller.config.local_resource_profiles)
+        if include_budget:
+            budgets += (ProviderBudget(integration_id, 20, 256, 8192),)
+        if include_profile:
+            profiles += ((integration_id, profile),)
+        approvals = tuple(controller.config.provider_approvals)
+        if include_approval:
+            approvals += (ProviderApproval(
+                origin=origin,
+                adapter_id="openai_compatible_chat",
+                uses=("chat_completion",),
+                status="local_only",
+                reviewed_at="2026-11-25",
+                terms_reference=None,
+                data_handling_reference="secondary local test endpoint",
+                integration_id=integration_id,
+            ),)
+        controller.config = replace(
+            controller.config,
+            provider_budgets=budgets,
+            local_resource_profiles=profiles,
+            provider_approvals=approvals,
+        )
+        provider = DispatchingProvider(
+            self.store, selected_runtime, controller,
+            participant_id=participant_id,
+        )
+        return selected_runtime, provider, fake, descriptor, integration_id
+
+    def test_non_primary_participant_uses_its_own_snapshot_approval_budget_and_profile(self):
+        runtime, provider, fake, descriptor, integration_id = self._runtime_with_secondary()
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            result = provider.chat(
+                [{"role": "user", "content": "secondary participant request"}],
+                max_tokens=64, temperature=0.2, task_role="independent_challenge",
+            )
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(result["content"], "admitted answer")
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT invocation_id,participant_id,integration_id,status "
+                "FROM participant_invocations"
+            ).fetchone()
+            snapshot_row = self.store.db.execute(
+                "SELECT snapshot_json FROM runtime_invocation_snapshots WHERE invocation_id=?",
+                (row["invocation_id"],),
+            ).fetchone()
+            usage = self.store.db.execute(
+                "SELECT requests_reserved,output_tokens_used FROM provider_budget_usage "
+                "WHERE integration_id=?",
+                (integration_id,),
+            ).fetchone()
+        import json
+        snapshot = json.loads(snapshot_row["snapshot_json"])
+        self.assertEqual(row["participant_id"], descriptor.participant_id)
+        self.assertEqual(row["integration_id"], integration_id)
+        self.assertEqual(row["status"], "succeeded")
+        self.assertEqual(snapshot["participant"]["participant_id"], descriptor.participant_id)
+        self.assertEqual(snapshot["runtime_config"]["model"], "secondary-dispatch-test-model")
+        self.assertIn(
+            ["api_key", "env:EVO_SECONDARY_TEST_KEY"],
+            snapshot["provenance"]["secret_reference_names"],
+        )
+        self.assertNotIn("resolved", repr(snapshot).lower())
+        self.assertEqual(tuple(usage), (1, 2))
+
+    def test_non_primary_wrong_integration_budget_fails_before_provider_request(self):
+        runtime, provider, fake, descriptor, integration_id = self._runtime_with_secondary(
+            include_budget=False,
+        )
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            with self.assertRaises(DispatchProviderError):
+                provider.chat([{"role": "user", "content": "must be denied"}], max_tokens=64)
+        self.assertEqual(fake.calls, 0)
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT participant_id,integration_id,status,decision_json FROM participant_invocations"
+            ).fetchone()
+        self.assertEqual(row["participant_id"], descriptor.participant_id)
+        self.assertEqual(row["integration_id"], integration_id)
+        self.assertEqual(row["status"], "denied")
+        self.assertIn("provider_budget_not_configured", row["decision_json"])
+
+    def test_non_primary_stale_telemetry_fails_closed(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        stale = telemetry()
+        stale["sampled_at"] = "2000-01-01T00:00:00Z"
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=stale):
+            with self.assertRaises(DispatchProviderError):
+                provider.chat([{"role": "user", "content": "stale telemetry"}], max_tokens=64)
+        self.assertEqual(fake.calls, 0)
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT status,decision_json FROM participant_invocations"
+            ).fetchone()
+        self.assertEqual(row["status"], "denied")
+        self.assertIn("telemetry_stale", row["decision_json"])
+
+    def test_non_primary_missing_resource_profile_fails_closed(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary(
+            include_profile=False,
+        )
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            with self.assertRaises(DispatchProviderError):
+                provider.chat([{"role": "user", "content": "missing profile"}], max_tokens=64)
+        self.assertEqual(fake.calls, 0)
+        # Resource declaration fails before the admission transaction. The
+        # immutable snapshot remains for audit; no invocation or lease exists.
+        with self.store.lock:
+            invocations = self.store.db.execute(
+                "SELECT COUNT(*) FROM participant_invocations"
+            ).fetchone()[0]
+            leases = self.store.db.execute(
+                "SELECT COUNT(*) FROM dispatch_leases"
+            ).fetchone()[0]
+        self.assertEqual((invocations, leases), (0, 0))
+
+
+    def test_non_primary_unscoped_primary_approval_does_not_authorize_secondary(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary(
+            include_approval=False,
+        )
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            with self.assertRaises(DispatchProviderError):
+                provider.chat([{"role": "user", "content": "approval must be scoped"}], max_tokens=64)
+        self.assertEqual(fake.calls, 0)
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT status,decision_json FROM participant_invocations"
+            ).fetchone()
+        self.assertEqual(row["status"], "denied")
+        self.assertIn("provider_compliance_not_approved", row["decision_json"])
+
+
+    def test_snapshot_and_envelope_must_match_selected_descriptor_and_config(self):
+        import hashlib
+        import json
+        from types import SimpleNamespace
+        from evo_core.dispatch_admission import AdmissionError, _snapshot_matches
+        from evo_core.runtime_invocation_snapshots import create_runtime_invocation_snapshot
+
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        selected = runtime.select_participant(descriptor.participant_id)
+        invocation_id = "selected-snapshot-integrity-test"
+        create_runtime_invocation_snapshot(
+            self.store, selected, invocation_id=invocation_id,
+            invocation_kind="participant_completion",
+        )
+        valid = SimpleNamespace(
+            invocation_id=invocation_id,
+            participant_id=descriptor.participant_id,
+            adapter_id=descriptor.adapter_id,
+            adapter_contract_version=descriptor.adapter_contract_version,
+            configuration_id=descriptor.configuration_id,
+            configuration_revision_id=descriptor.configuration_revision_id,
+            component_key=descriptor.component_key,
+            component_version=descriptor.component_version,
+        )
+        wrong_envelope = SimpleNamespace(**{
+            **valid.__dict__, "component_key": "primary_model",
+        })
+        with self.assertRaises(AdmissionError):
+            _snapshot_matches(self.store.db, selected, wrong_envelope)
+
+        row = self.store.db.execute(
+            "SELECT snapshot_json FROM runtime_invocation_snapshots WHERE invocation_id=?",
+            (invocation_id,),
+        ).fetchone()
+        snapshot = json.loads(row["snapshot_json"])
+        snapshot["participant"]["integration_id"] = "integration_substituted"
+        encoded = json.dumps(
+            snapshot, sort_keys=True, ensure_ascii=False,
+            separators=(",", ":"), allow_nan=False,
+        )
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        self.store.db.execute("DROP TRIGGER runtime_snapshots_no_update")
+        self.store.db.execute(
+            "UPDATE runtime_invocation_snapshots SET snapshot_json=?,snapshot_hash=? WHERE invocation_id=?",
+            (encoded, digest, invocation_id),
+        )
+        self.store.db.commit()
+        with self.assertRaises(AdmissionError):
+            _snapshot_matches(self.store.db, selected, valid)
+        self.assertEqual(fake.calls, 0)
+
+
+    def test_selected_runtime_rejects_adapter_that_does_not_own_bound_instance(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        wrong_adapter_reference = {}
+        wrong_adapter = OpenAICompatibleParticipantAdapter(
+            allowed_origins=("http://127.0.0.1:18997",),
+            dispatch_authorizer=runtime.assistant.provider.controller.authorizer_for(
+                wrong_adapter_reference
+            ),
+        )
+        wrong_adapter_reference["adapter"] = wrong_adapter
+        tampered = replace(
+            runtime,
+            additional_participant_bindings=((wrong_adapter, runtime.additional_participant_bindings[0][1]),),
+        )
+        with self.assertRaises(RuntimeBindingError):
+            tampered.select_participant(descriptor.participant_id)
+        self.assertEqual(fake.calls, 0)
+
+    def test_controller_rejects_authorization_without_adapter_bound_callback(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        controller = runtime.assistant.provider.controller
+        bound = runtime.additional_participant_bindings[0][1]
+        self.assertFalse(controller.authorize("participant_invocation", bound, None))
+        self.assertEqual(fake.calls, 0)
+
+    def test_selected_runtime_rejects_duplicate_participant_ids(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        duplicate = replace(
+            descriptor,
+            participant_id=runtime.participant.participant_id,
+        )
+        tampered = replace(runtime, additional_participants=(duplicate,))
+        with self.assertRaises(RuntimeBindingError):
+            tampered.select_participant(runtime.participant.participant_id)
+        self.assertEqual(fake.calls, 0)
+
+    def test_non_primary_descriptor_substitution_is_rejected(self):
+        runtime, provider, fake, descriptor, _ = self._runtime_with_secondary()
+        bad_descriptor = replace(
+            descriptor, integration_id="integration_substituted",
+        )
+        tampered = replace(
+            runtime, additional_participants=(bad_descriptor,),
+        )
+        with self.assertRaises(RuntimeBindingError):
+            tampered.select_participant(descriptor.participant_id)
+        self.assertEqual(fake.calls, 0)
+
 
 
 if __name__ == "__main__":
