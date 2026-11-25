@@ -220,7 +220,7 @@ Command policy is settled: effective permissions are the intersection of global 
 **Phase 3 implementation status (2026-11-25):**
 - P3.1 executable configuration/contract foundations: accepted.
 - P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: implementation complete and independently validated at 843 passing tests; formal phase acceptance remains pending. The one documentation whitespace finding was corrected in commit 11b173d7d7405c80f1ec6c5acb9087b5e1382646.
-- P3.3 OpenAI-compatible participant adapter: implementation in progress on candidate 1906c422d9093437081a1db6d965c09d7ba50a7f; local full-suite and independent review are pending.
+- P3.3 OpenAI-compatible participant adapter: implementation in progress on candidate 62af30df3678c730a15968ed41614ce1bef038bf; local full-suite and independent review are pending.
 - P3.5 remains the first milestone permitted to enable live Registry-bound dispatch. No production dispatch authorizer is installed; no live provider dispatch or external provider calls are enabled.
 - P3-R4 remains open and must be resolved before finalizing P3.5 resource admission.
 
