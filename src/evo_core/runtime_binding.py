@@ -222,7 +222,9 @@ def build_workspace_runtime(store, base_config, workspace_id, *, provider_factor
         runtime_config = replace(
             base_config,
             base_url=endpoint,
-            api_key=secret_values.get("api_key", "no-key"),
+            # The assistant receives a disabled provider before P3.5; keep
+            # resolved credentials only inside the private adapter provider.
+            api_key="no-key",
             model=model_settings["model"],
             timeout_seconds=model_settings["timeout_seconds"],
             max_tokens=assistant_settings["max_output_tokens"],
