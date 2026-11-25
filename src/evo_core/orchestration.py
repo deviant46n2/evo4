@@ -368,16 +368,15 @@ def step_verification_status(step):
         return "failed"
     remaining = [list(command) for command in commands]
     for check in checks:
-        if check.get("status") != "passed":
-            continue
         try:
             command = list(check.get("command") or [])
         except TypeError:
-            command = []
-        for index, configured in enumerate(remaining):
-            if command == configured:
-                del remaining[index]
-                break
+            return "failed"
+        if command not in remaining:
+            return "failed"
+        if check.get("status") != "passed" or check.get("exit_code") != 0:
+            return "failed"
+        remaining.remove(command)
     if remaining:
         return "not_run"
     return "passed"
