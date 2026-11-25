@@ -150,6 +150,13 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(runtime.assistant.config.model, "model-a")
         self.assertNotEqual(runtime.revision_id, newer["revision_id"])
 
+    def test_registry_runtime_does_not_accept_provider_factory_override(self):
+        with self.assertRaises(TypeError):
+            build_workspace_runtime(
+                self.store, self.base_config, self.workspace["workspace_id"],
+                provider_factory=lambda *args, **kwargs: object(),
+            )
+
     def test_live_dispatch_is_explicitly_disabled(self):
         runtime = build_workspace_runtime(
             self.store, self.base_config, self.workspace["workspace_id"]
