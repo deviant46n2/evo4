@@ -221,6 +221,7 @@ Command policy is settled: effective permissions are the intersection of global 
 - P3.1 executable configuration/contract foundations: accepted.
 - P3.2 Registry-driven runtime binding, API-boundary invocation snapshots, and fail-closed worker continuity: implementation complete and independently validated at 843 passing tests; formal phase acceptance remains pending. The one documentation whitespace finding was corrected in commit 11b173d7d7405c80f1ec6c5acb9087b5e1382646.
 - P3.3 OpenAI-compatible participant adapter: accepted at exact candidate 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; independent validation passed 863/863 tests, compileall, and cumulative diff-check. Formal evidence is recorded below.
+- P3.4 deterministic verifier: implementation in progress. A bounded local-only verifier adapter is being integrated into revision-pinned Registry runtime construction; independent validation and acceptance are pending.
 - P3.5 remains the first milestone permitted to enable live Registry-bound dispatch. No production dispatch authorizer is installed; no live provider dispatch or external provider calls are enabled.
 - P3-R4 remains open and must be resolved before finalizing P3.5 resource admission.
 
@@ -308,7 +309,7 @@ The target user experience is specified in `docs/PRODUCT-REDESIGN-PLAN.md`. It i
 
 ## Current implementation status
 
-Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant adapter is accepted at 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission and P3-R4. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
+Use `README.md` for user-facing implemented behavior and `docs/ARCHITECTURE.md` for the evidence-based architecture inventory. The Registry is implemented through M5. Phase 3 P3.2 runtime binding and invocation-snapshot wiring are implemented and independently validated, pending formal phase acceptance; P3.3 participant adapter is accepted at 30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1; P3.4 deterministic verifier implementation is in progress. Live Registry-bound dispatch remains disabled pending P3.5 authorization/admission and P3-R4. Project-scoped context expansion and Evo-managed cooperative execution are not yet implemented. Existing agent runs/plans/background tasks, memory, experiment, and resource features are partial foundations; they must not be described as the target control plane.
 
 ## Stabilization and Gemini Audit Remediation
 
