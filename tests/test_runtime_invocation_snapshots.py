@@ -109,7 +109,7 @@ class RuntimeInvocationSnapshotTests(unittest.TestCase):
 
     def test_secret_reference_is_recorded_but_resolved_value_is_not(self):
         created = create_configuration(self.store, definition(secret=True), name="Secret config")
-        from evo_core.workspaces import rebind_workspace
+        from evo_core.workspace_binding_history import rebind_workspace
         rebind_workspace(
             self.store, self.workspace["workspace_id"],
             configuration_id=created["configuration"]["configuration_id"],
