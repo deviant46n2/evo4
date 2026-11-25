@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status:** Independent contract challenge completed; P3.1 implementation authorized by the user on 2026-11-24. This does not authorize P3.2 or live dispatch.
+**Status:** P3.1 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending. P3.3 OpenAI-compatible participant adapter implementation is underway. No live Registry-bound dispatch is enabled.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
@@ -106,9 +106,32 @@ Acceptance evidence:
 
 Acceptance is deliberately limited to P3.1's executable configuration contract, participant contracts, configuration validation, provider endpoint/secret/approval foundations, and associated tests/documentation. It does **not** mean live Registry-bound dispatch exists or is enabled. The pinned transport is not wired into the legacy TOML provider path; a later Registry adapter must consume the secured transport. No P3.2 runtime factory/routing, P3.5 admission/lease service, provider invocation, or merge into `local-demo-ready-v1` is authorized by this acceptance.
 
-P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 work remains subject to the user's previously granted implementation authorization and the roadmap's sequencing constraints; P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
+P3-R4 remains open and must be resolved before finalizing P3.5 admission. Phase 2 is accepted. P3.2 implementation and independent validation are complete; formal phase acceptance remains pending. P3.3 adapter work is underway within the documented sequence. P3.5 dispatch remains disabled until authorization, admission, and R4 are resolved.
 
 
+
+## P3.2 runtime binding and invocation-snapshot validation
+
+**Implementation disposition:** complete; independent validation PASS WITH FINDINGS at candidate 7c50ff666b7cd684cf21f373a82badc3dad5627c. Formal phase acceptance remains pending.
+
+Validation evidence supplied from the exact detached candidate:
+- python -m compileall -q src tests: exit 0.
+- python -m unittest discover -s tests -v: 843 tests, 0 failures, 0 errors, 0 skips.
+- Focused runtime, workspace-boundary, snapshot, and orchestration tests: 100 tests passed, including the assistant invocation-ID persistence regression.
+- Original checkout remained local-demo-ready-v1 at a8ab59324caceab5b6fb2e5c674276c5ba96d072; status was unchanged and all 32 pre-existing worktrees were preserved.
+- The sole finding was trailing whitespace at line 3 of the technical plan, introduced by the candidate's status update. It was removed in documentation-only commit 11b173d7d7405c80f1ec6c5acb9087b5e1382646, whose parent is the validated candidate. No application code or tests changed in that cleanup.
+
+P3.2 source and API-boundary review found no remaining implementation blocker: workspace chat, plan proposal, plan execution, and coding-agent entrypoints record typed invocation snapshots; worker continuity verifies the exact pinned runtime and fails closed on revision drift; assistant turns retain the invocation ID on both messages. Snapshot attempts do not prove execution and do not authorize dispatch. No live provider dispatch is enabled.
+
+The 843-test report applies to 7c50ff...; it is not a claim that tests were rerun after the documentation-only whitespace cleanup. The current P3.3 validation will rerun the full suite and diff check against the cumulative candidate.
+
+## P3.3 OpenAI-compatible participant adapter — in progress
+
+Candidate implementation checkpoint: a67f92fb71eaaf667c7079bc8e743e996f1fd248 (the validation target; later documentation-only commits may follow).
+
+The adapter now constructs a Registry-bound OpenAI-compatible provider through PinnedProviderTransport, with no dispatch authorizer installed by runtime construction. It separates transport/model-list evidence from completion verification, requires an injected authorization callback for completion probes and invocation, binds invocation identity to workspace/project/configuration revision/component provenance, and constrains generation settings and request timeout to the pinned runtime. Provider errors are normalized to terminal participant outcomes; streamed content passes through the existing secret redactor.
+
+P3.3 is not accepted yet. Local compile/test/diff validation and independent source review are pending. No external provider calls, live Registry dispatch, or API route to this adapter are authorized. P3.5 remains the first milestone permitted to enable live dispatch.
 
 ## Phase 2 formal acceptance record
 
