@@ -391,7 +391,11 @@ def _snapshot_matches(db, runtime, envelope):
 
 def _output_token_request(envelope):
     try:
-        payload = json.loads(envelope.input_json)
+        payload = json.loads(
+            envelope.input_json,
+            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON value")),
+            object_pairs_hook=_unique_pairs,
+        )
         value = payload.get("max_tokens")
     except (TypeError, ValueError, AttributeError):
         raise AdmissionError("invocation output-token request is malformed")
@@ -479,8 +483,8 @@ def _validate_envelope(runtime, envelope, now):
         not isinstance(envelope.effective_permissions, tuple)
         or "text_generation" not in envelope.effective_permissions
         or len(envelope.effective_permissions) > 8
+        or any(not isinstance(item, str) or item not in allowed_permissions for item in envelope.effective_permissions)
         or len(set(envelope.effective_permissions)) != len(envelope.effective_permissions)
-        or any(item not in allowed_permissions for item in envelope.effective_permissions)
     ):
         raise AdmissionError("invocation permissions exceed the initial model capability boundary")
     if (
@@ -496,7 +500,7 @@ def _validate_envelope(runtime, envelope, now):
         if not isinstance(item, tuple) or len(item) != 2:
             raise AdmissionError("invocation budget entry is malformed")
         name, value = item
-        if name not in {"output_tokens", "request_seconds"} or name in budget:
+        if not isinstance(name, str) or name not in {"output_tokens", "request_seconds"} or name in budget:
             raise AdmissionError("invocation budget dimension is unsupported or duplicated")
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise AdmissionError("invocation budget value is invalid")
