@@ -913,7 +913,7 @@ def create_app(config_path="config.toml", provider_name=None):
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
                     allowed_commands=effective_allowed_commands,
                     project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                    store=store)
+                    store=store, proposal_invocation_id=invocation["invocation_id"])
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
