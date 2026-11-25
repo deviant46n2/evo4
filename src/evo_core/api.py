@@ -994,7 +994,8 @@ def create_app(config_path="config.toml", provider_name=None):
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
                 "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": runtime.assistant.config.model,\n                "base_url": runtime.assistant.config.base_url,
+                "workspace": str(workspace_path), "model": runtime.assistant.config.model,
+                "base_url": runtime.assistant.config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -1035,7 +1036,8 @@ def create_app(config_path="config.toml", provider_name=None):
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
             "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-            "workspace": str(workspace), "model": runtime.assistant.config.model,\n            "base_url": runtime.assistant.config.base_url,
+            "workspace": str(workspace), "model": runtime.assistant.config.model,
+            "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
