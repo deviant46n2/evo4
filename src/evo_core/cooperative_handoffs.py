@@ -55,11 +55,20 @@ def _canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)\\bBearer\\s+[A-Za-z0-9._~+/=-]{16,}"),
+    re.compile(r"\\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\\b"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+)
+
+
 def _text(value, field, *, maximum=MAX_TEXT_CHARS, allow_empty=False):
     if not isinstance(value, str) or (not allow_empty and not value.strip()) or len(value) > maximum:
         raise HandoffError(f"{field} must be non-empty bounded text")
     if any(ord(char) < 32 and char not in "\n\t\r" for char in value):
         raise HandoffError(f"{field} contains unsupported control characters")
+    if any(pattern.search(value) for pattern in _SECRET_PATTERNS):
+        raise HandoffError(f"{field} appears to contain credential material")
     return value
 
 
@@ -383,6 +392,15 @@ def create_handoff(
         invocation_deadline = _parse_deadline(invocation["deadline_utc"])
         if deadline > invocation_deadline:
             raise HandoffError("handoff deadline cannot exceed its source invocation deadline")
+        try:
+            snapshot_context = snapshot_payload["runtime_config"]["context_window_tokens"]
+        except (KeyError, TypeError) as exc:
+            raise HandoffError("source snapshot is missing its bounded context window") from exc
+        if (
+            budget.output_tokens > invocation["requested_output_tokens"]
+            or budget.input_tokens + budget.output_tokens > snapshot_context
+        ):
+            raise HandoffError("handoff token ceilings exceed the source invocation or context-window limits")
         db.execute(
             """INSERT INTO cooperative_handoffs(
                 handoff_id,invocation_id,workspace_id,project_id,configuration_id,

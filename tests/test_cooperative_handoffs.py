@@ -100,11 +100,16 @@ class HandoffContractTests(unittest.TestCase):
         })
         self.assertEqual(value["criteria_results"][0]["status"], "unknown")
 
-    def test_rejects_unknown_fields_oversize_payload_and_invalid_role(self):
+    def test_rejects_unknown_fields_oversize_payload_secret_like_text_and_invalid_role(self):
         with self.assertRaises(HandoffError):
             validate_handoff_payload("proposal", {"summary": "x", "plan": [], "dispatch": True})
         with self.assertRaises(HandoffError):
             validate_handoff_payload("proposal", {"summary": "x", "plan": []})
+        with self.assertRaises(HandoffError):
+            validate_handoff_payload("proposal", {
+                "summary": "Use token Bearer abcdefghijklmnopqrstuvwxyz123456",
+                "plan": [{"step_id": "1", "description": "x"}],
+            })
         with self.assertRaises(HandoffError):
             validate_handoff_payload("unrestricted_chat", {})
 
@@ -226,6 +231,20 @@ class HandoffPersistenceTests(unittest.TestCase):
             budget=HandoffBudget(10, 10, self.deadline),
         )
         self.assertIsNone(result["target_participant_id"])
+
+    def test_rejects_token_ceilings_exceeding_invocation_or_context_window(self):
+        with self.assertRaises(HandoffError):
+            create_handoff(
+                self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
+                role="proposal", target_participant_id=self.runtime.participants[1].participant_id,
+                payload=self.payload, budget=HandoffBudget(8192, 256, self.deadline),
+            )
+        with self.assertRaises(HandoffError):
+            create_handoff(
+                self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
+                role="proposal", target_participant_id=self.runtime.participants[1].participant_id,
+                payload=self.payload, budget=HandoffBudget(1024, 257, self.deadline),
+            )
 
     def test_rejects_wrong_target_and_non_succeeded_invocation(self):
         with self.assertRaises(HandoffError):
