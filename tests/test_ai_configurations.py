@@ -235,6 +235,14 @@ class Schema2ValidationTests(unittest.TestCase):
         with self.assertRaises(ConfigurationValidationError):
             validate_definition(value)
 
+    def test_schema2_rejects_non_string_component_type_as_validation_error(self):
+        for invalid_type in ([], {}, 1, None):
+            with self.subTest(invalid_type=invalid_type):
+                value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+                value["components"]["assistant"]["type"] = invalid_type
+                with self.assertRaises(ConfigurationValidationError):
+                    validate_definition(value)
+
     def test_schema2_rejects_adapter_type_mismatch(self):
         value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
         value["components"]["assistant"]["adapter"]["id"] = "openai_compatible_chat"
