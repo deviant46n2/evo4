@@ -42,7 +42,7 @@ Application shutdown resolves pending approvals as denied and signals the normal
 
 ## Validation boundaries
 
-Automated tests cover task claims, lifecycle transitions, cancellation persistence, ordered/incremental event retrieval, and restart interruption. Production build and full API/agent integration must be independently validated. No browser or live-model claim is made by this document.
+Automated tests cover task claims, lifecycle transitions, cancellation persistence, ordered/incremental event retrieval, restart interruption, first-class project/workspace scope, and legacy scope-column backfill. Production build and full API/agent integration must be independently validated. No browser or live-model claim is made by this document.
 
 
 ## Persisted project/workspace scope
