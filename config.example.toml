@@ -89,3 +89,27 @@ allowed_env_vars = []
 # model = "provider-model-id"
 # api_key_env = "EXAMPLE_CLOUD_API_KEY"
 # timeout_seconds = 600
+
+# P3.5 dispatch admission is opt-in. Every Registry-bound model integration
+# requires an explicit budget. Loopback endpoints additionally require an
+# operator-owned resource profile. The integration_id is derived from the
+# exact adapter, normalized endpoint origin, and model identifier; obtain it
+# from the bound participant/runtime diagnostics rather than guessing.
+#
+# [[dispatch.provider_budgets]]
+# integration_id = "integration_<32-hex-character-id>"
+# maximum_requests_per_utc_day = 100
+# maximum_output_tokens_per_invocation = 4096
+# maximum_reserved_output_tokens_per_utc_day = 65536
+#
+# Loopback-only profile. Values are operator estimates for the exact
+# integration, not workspace-controlled claims. GPU estimates must include
+# the incremental/cold-load memory behavior of the model server.
+# [[dispatch.local_resource_profiles]]
+# integration_id = "integration_<32-hex-character-id>"
+# compute_mode = "gpu"                 # cpu, gpu, or mixed
+# cpu_cores = 1.0
+# ram_mib = 2048
+# gpu_vram_mib = 4096
+# memory_mode = "persistent_incremental" # or cold_load
+# maximum_gpu_temperature_c = 85
