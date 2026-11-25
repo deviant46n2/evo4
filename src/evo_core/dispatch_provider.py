@@ -25,6 +25,7 @@ from .openai_compatible_adapter import ParticipantAdapterError
 from .participant_contracts import InvocationEnvelope, ParticipantEvent, ParticipantResult
 from .provider_approvals import find_provider_approval
 from .runtime_invocation_snapshots import create_runtime_invocation_snapshot
+from .cooperative_handoffs import HandoffError, PERSISTABLE_ROLES, record_participant_output
 
 
 class DispatchProviderError(RuntimeError):
@@ -320,6 +321,16 @@ class DispatchingProvider:
                 # Never turn a failed durable settlement into a successful
                 # completion. The lease remains held or abandoned for recovery.
                 raise DispatchProviderError("Provider completed but lifecycle settlement failed") from exc
+
+            if terminal.status == "succeeded" and task_role in PERSISTABLE_ROLES:
+                try:
+                    record_participant_output(self.store, invocation_id, terminal.output_json)
+                except HandoffError as exc:
+                    # The provider result is settled, but it cannot enter the
+                    # cooperative handoff chain without a durable exact artifact.
+                    raise DispatchProviderError(
+                        "Provider completed but its structured handoff output could not be recorded"
+                    ) from exc
 
             if terminal.status != "succeeded" or not terminal.output_json:
                 raise DispatchProviderError(

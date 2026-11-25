@@ -10,7 +10,8 @@ from evo_core.ai_configurations import create_configuration
 from evo_core.config import EvoConfig
 from evo_core.cooperative_handoffs import (
     HandoffBudget, HandoffError, create_handoff, get_handoff,
-    initialize_cooperative_handoffs, list_handoffs, validate_context_references,
+    initialize_cooperative_handoffs, list_handoffs, record_participant_output,
+    validate_context_references,
     validate_handoff_payload,
 )
 from evo_core.dispatch_admission import initialize_invocation_lifecycle
@@ -202,6 +203,11 @@ class HandoffPersistenceTests(unittest.TestCase):
             )
             self.store.db.commit()
         self.deadline = (now + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        self.output_json = json.dumps({
+            "content": json.dumps(self.payload, separators=(",", ":")),
+            "tool_calls": [], "finish_reason": "stop", "truncated": False,
+        }, separators=(",", ":"))
+        record_participant_output(self.store, self.invocation_id, self.output_json)
         self.payload = {
             "summary": "Implement the bounded feature.",
             "plan": [{"step_id": "S1", "description": "Add the contract module."}],
@@ -249,6 +255,15 @@ class HandoffPersistenceTests(unittest.TestCase):
                 self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
                 role="proposal", target_participant_id=self.runtime.participants[1].participant_id,
                 payload=self.payload, budget=HandoffBudget(7168, 1025, self.deadline),
+            )
+
+    def test_rejects_handoff_payload_not_equal_to_persisted_participant_output(self):
+        with self.assertRaises(HandoffError):
+            create_handoff(
+                self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
+                role="proposal", target_participant_id=self.runtime.participants[1].participant_id,
+                payload={"summary": "Invented output.", "plan": [{"step_id": "X", "description": "not returned"}]},
+                budget=HandoffBudget(10, 10, self.deadline),
             )
 
     def test_rejects_wrong_target_and_non_succeeded_invocation(self):

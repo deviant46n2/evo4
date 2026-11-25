@@ -373,8 +373,8 @@ def record_participant_output(store, invocation_id, output_json):
                WHERE i.invocation_id=?""",
             (invocation_id.strip(),),
         ).fetchone()
-        if row is None or row["status"] != "running" or row["lease_state"] != "active":
-            raise HandoffError("structured output requires a running invocation with its active lease")
+        if row is None or row["status"] != "succeeded" or row["lease_state"] is not None:
+            raise HandoffError("structured output requires a settled successful invocation with no active lease")
         if (
             row["snapshot_hash"] != row["current_snapshot_hash"]
             or row["workspace_id"] != row["snapshot_workspace_id"]
