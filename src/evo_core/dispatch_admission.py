@@ -301,7 +301,10 @@ def initialize_invocation_lifecycle(store):
             CREATE TABLE IF NOT EXISTS provider_budget_usage (
                 integration_id TEXT NOT NULL,
                 budget_day_utc TEXT NOT NULL,
-                requests_reserved INTEGER NOT NULL DEFAULT 0 CHECK(requests_reserved >= 0),
+                -- Counts admitted provider requests against the UTC-day cap. A started request
+            -- consumes this daily allowance even after settlement; only a proven
+            -- pre-start cancellation refunds it. This is not an in-flight counter.
+            requests_reserved INTEGER NOT NULL DEFAULT 0 CHECK(requests_reserved >= 0),
                 output_tokens_reserved INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens_reserved >= 0),
                 output_tokens_used INTEGER NOT NULL DEFAULT 0 CHECK(output_tokens_used >= 0),
                 PRIMARY KEY(integration_id, budget_day_utc)
@@ -861,8 +864,10 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
                    WHERE integration_id=? AND budget_day_utc=?""",
                 (row["requested_output_tokens"], row["integration_id"], row["budget_day_utc"]),
             )
-        # Unknown usage retains the full reservation: releasing it would permit
-        # daily-budget oversubscription when the provider may have processed work.
+        # Unknown usage retains the output-token reservation: releasing it could
+        # permit daily-budget oversubscription when the provider may have processed work.
+        # requests_reserved is a consumed daily request allowance, not concurrency;
+        # once the provider worker starts, settlement never refunds that request.
         elif usage is not None and row["budget_day_utc"] is not None:
             output_tokens = usage.get("output_tokens")
             if isinstance(output_tokens, int) and not isinstance(output_tokens, bool) and output_tokens >= 0:
