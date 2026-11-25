@@ -239,18 +239,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
     def test_missing_project_policy_denies_command(self):
         self._make_app([["python", "-c"]], {})
         with patch("evo_core.workspace.Workspace.run") as run_mock:
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
-                self.plan["id"], project_id=self.project["project_id"],
-                workspace_id=self.workspace["workspace_id"])
-            self.assertEqual(result["status"], "running")
-            run_id = result["run_id"]
-            run = self._wait_terminal(run_id)
-            self.assertEqual(run["status"], "failed")
-            store = self.app.state.store
-            stored = store.get_agent_run(run_id)
-            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
-            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
-            self.assertIsNone(metadata.get("pending_approval_id"))
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                    self.plan["id"], project_id=self.project["project_id"],
+                    workspace_id=self.workspace["workspace_id"])
+            self.assertEqual(raised.exception.status_code, 409)
             run_mock.assert_not_called()
 
     def test_empty_project_policy_denies_command(self):
@@ -331,8 +324,7 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             run_mock.assert_not_called()
 
     def test_persisted_verification_command_no_longer_allowed(self):
-        # Broad policy at proposal time, then a narrower persisted plan is simulated by
-        # creating a plan whose verification command is not in the effective policy.
+        # A previously valid plan must be revalidated against the current effective allowlist.
         self._make_app([["python", "-c"], ["python", "-m", "pytest"]],
                        {"command_policy": {"allowed_commands": [["python", "-c"]]}})
         with self.app.state.lab_db.lock:
@@ -353,17 +345,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
             self.plan = plan
         with patch("evo_core.workspace.Workspace.run") as run_mock:
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
-                self.plan["id"], project_id=self.project["project_id"],
-                workspace_id=self.workspace["workspace_id"])
-            run_id = result["run_id"]
-            run = self._wait_terminal(run_id)
-            self.assertEqual(run["status"], "failed")
-            store = self.app.state.store
-            stored = store.get_agent_run(run_id)
-            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
-            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
-            self.assertIsNone(metadata.get("pending_approval_id"))
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                    self.plan["id"], project_id=self.project["project_id"],
+                    workspace_id=self.workspace["workspace_id"])
+            self.assertEqual(raised.exception.status_code, 409)
             run_mock.assert_not_called()
 
     def _wait_terminal(self, run_id, timeout=10):
