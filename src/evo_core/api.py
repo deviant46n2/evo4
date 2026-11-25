@@ -372,6 +372,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "probe_kind": "local_binding",
                 "probe_performed": False,
+                "transport_reachable": None,
+                "model_advertised": None,
                 "completion_verified": None,
                 "ephemeral": True,
             }
