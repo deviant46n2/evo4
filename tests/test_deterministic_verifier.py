@@ -102,6 +102,15 @@ class DeterministicVerifierParticipantTests(unittest.TestCase):
         with self.assertRaises(DeterministicVerifierError):
             adapter.validate_component(invalid)
 
+    def test_adapter_configuration_is_immutable(self):
+        adapter, _ = self.bind()
+        with self.assertRaises(AttributeError):
+            adapter._dispatch_authorizer = lambda p, e: True
+        invalid = component()
+        invalid["settings"]["required_fields"] = ["bad field"]
+        with self.assertRaises(DeterministicVerifierError):
+            adapter.validate_component(invalid)
+
     def test_preflight_is_non_invoking_and_completion_probe_is_local(self):
         adapter, participant = self.bind()
         preflight = adapter.preflight(participant, timeout_seconds=2)
