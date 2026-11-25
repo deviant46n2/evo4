@@ -96,11 +96,14 @@ class AdmissionPolicy:
 
 @dataclass(frozen=True)
 class ProviderBudget:
+    integration_id: str
     maximum_requests_per_utc_day: int
     maximum_output_tokens_per_invocation: int
     maximum_reserved_output_tokens_per_utc_day: int
 
     def __post_init__(self):
+        if not isinstance(self.integration_id, str) or not self.integration_id.strip() or len(self.integration_id) > 128:
+            raise ValueError("provider budget integration_id is required")
         for name, value in (
             ("maximum_requests_per_utc_day", self.maximum_requests_per_utc_day),
             ("maximum_output_tokens_per_invocation", self.maximum_output_tokens_per_invocation),
@@ -375,6 +378,8 @@ def _snapshot_matches(db, runtime, envelope):
     except (TypeError, ValueError) as exc:
         raise AdmissionError("runtime invocation snapshot is malformed") from exc
     participant = snapshot.get("participant", {})
+    if not isinstance(participant, dict):
+        raise AdmissionError("runtime snapshot participant descriptor is malformed")
     if (
         participant.get("participant_id") != envelope.participant_id
         or participant.get("adapter_id") != envelope.adapter_id
@@ -400,7 +405,9 @@ def _validate_envelope(runtime, envelope, now):
     if not isinstance(envelope, InvocationEnvelope):
         raise AdmissionError("a validated invocation envelope is required")
     if (
-        envelope.invocation_id == ""
+        not isinstance(envelope.invocation_id, str)
+        or not envelope.invocation_id.strip()
+        or len(envelope.invocation_id) > 128
         or envelope.participant_id != runtime.participant.participant_id
         or envelope.project_id != runtime.project_id
         or envelope.workspace_id != runtime.workspace_id
@@ -492,6 +499,7 @@ def admit_invocation(
             or approval.status != expected_status
             or approval.adapter_id != runtime.participant.adapter_id
             or approval.origin != origin
+            or "chat_completion" not in getattr(approval, "uses", ())
         ):
             approval_result = {"decision": "denied", "reason": "provider_compliance_not_approved"}
         else:
@@ -562,10 +570,11 @@ def admit_invocation(
             ).fetchone()
             requests = row["requests_reserved"] if row else 0
             reserved = row["output_tokens_reserved"] if row else 0
+            used = row["output_tokens_used"] if row else 0
             if requests + 1 > provider_budget.maximum_requests_per_utc_day:
                 state = "rate_limited"
                 decision.update({"decision": state, "reason": "daily_request_budget_exhausted"})
-            elif reserved + requested_tokens > provider_budget.maximum_reserved_output_tokens_per_utc_day:
+            elif reserved + used + requested_tokens > provider_budget.maximum_reserved_output_tokens_per_utc_day:
                 state = "budget_exhausted"
                 decision.update({"decision": state, "reason": "daily_output_token_budget_exhausted"})
         db.execute(
