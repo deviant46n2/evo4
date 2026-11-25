@@ -61,13 +61,27 @@ def _reject_json_constant(value):
     raise ValueError("non-standard JSON constant")
 
 
+def _validate_utf8_strings(value):
+    if isinstance(value, str):
+        value.encode("utf-8")
+    elif isinstance(value, list):
+        for item in value:
+            _validate_utf8_strings(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _validate_utf8_strings(key)
+            _validate_utf8_strings(item)
+    return value
+
+
 def _strict_json_loads(value):
     try:
-        return json.loads(
+        parsed = json.loads(
             value,
             object_pairs_hook=_unique_json_pairs,
             parse_constant=_reject_json_constant,
         )
+        return _validate_utf8_strings(parsed)
     except RecursionError as exc:
         raise ValueError("JSON nesting exceeds the parser limit") from exc
 
@@ -147,7 +161,7 @@ class OpenAICompatibleProvider:
             if self.transport is None:
                 raise ProviderError("Model-list request failed") from exc
             raise ProviderTimeoutError("Model-list request timed out") from exc
-        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
             raise ProviderMalformedResponseError("Model-list response is malformed") from exc
         except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderError("Model-list request failed") from exc
@@ -209,7 +223,7 @@ class OpenAICompatibleProvider:
                         break
                     try:
                         event = _strict_json_loads(data)
-                    except (ValueError, json.JSONDecodeError):
+                    except (ValueError, UnicodeError, json.JSONDecodeError):
                         malformed_event = True
                         continue
                     if not isinstance(event, dict):
@@ -362,7 +376,7 @@ class OpenAICompatibleProvider:
                     arguments = _strict_json_loads(call["function"]["arguments"] or "{}")
                     if not isinstance(arguments, dict):
                         raise ValueError("tool-call arguments must be an object")
-                except (ValueError, json.JSONDecodeError) as exc:
+                except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
                     raise InvalidToolCallError(
                         f"Model returned invalid tool-call JSON: {exc}",
                         finish_reason=finish_reason,
