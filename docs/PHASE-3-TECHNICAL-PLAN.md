@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status: P3.1 accepted; P3.2 implementation complete and independently validated (843 tests), with explicit phase acceptance pending. P3.3 OpenAI-compatible participant adapter implementation is in progress.** The current P3.3 candidate binds the Registry runtime to the pinned transport and keeps completion probes/invocation disabled without a code-supplied authorization gate. P3.5 live dispatch remains gated.
+**Status (2026-11-25): P3.1 and P3.3 accepted; P3.2 implementation complete and independently validated (843 tests), with formal phase acceptance pending; P3.4 implementation in progress.** The P3.3 adapter binds the Registry runtime to pinned transport. P3.4 adds a local deterministic verifier as a second production participant kind. Both participant invocation paths remain gated; P3.5 is the first milestone that may enable live dispatch.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -274,6 +274,8 @@ The following order minimizes speculative framework work.
 - If no second production runtime can be integrated safely, report the blocker and seek an explicit Phase 3/4 acceptance revision rather than weakening boundaries.
 
 **Exit:** two genuinely distinct production participant implementations can be bound and contract-tested through the common contract, with deterministic tests and documented contributions. Live dispatch of either participant remains gated on P3.5. If Phase 4 requires independent model judgment, the two-model-endpoint requirement is separately met.
+
+P3.4 implementation checkpoint (not yet accepted): `evo_deterministic_verifier` is a local-only participant. It checks bounded JSON-object output, required/extra fields, and the shape of evidence-reference strings. It does not resolve references, establish that referenced artifacts exist, verify factual claims, execute arbitrary tools, use network access, or receive secrets. Registry runtime construction binds configured verifier components from the exact pinned revision; the production runtime installs no invocation authorizer. Independent validation remains pending.
 
 ### P3.5 — Invocation authorization, budgets, and minimal admission
 - This is the first milestone that may enable live participant dispatch. Until its gate is complete, P3.2–P3.4 may construct, inspect, and test participants with inert/fake adapters, but must not expose a live Registry-bound invocation path.
