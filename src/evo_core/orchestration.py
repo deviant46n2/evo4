@@ -63,6 +63,9 @@ def initialize(connection):
         connection.execute("ALTER TABLE agent_plans ADD COLUMN workspace_id TEXT")
     if "project_id" not in columns:
         connection.execute("ALTER TABLE agent_plans ADD COLUMN project_id TEXT")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plans)")}
+    if "proposal_invocation_id" not in columns:
+        connection.execute("ALTER TABLE agent_plans ADD COLUMN proposal_invocation_id TEXT")
     connection.commit()
 
 def _event(connection, plan_id, event_type, payload=None, step_id=None):
@@ -70,7 +73,7 @@ def _event(connection, plan_id, event_type, payload=None, step_id=None):
         "INSERT INTO agent_plan_events(plan_id,step_id,event_type,payload_json,created_at) VALUES(?,?,?,?,?)",
         (plan_id, step_id, event_type, json.dumps(payload or {}, ensure_ascii=False, default=str), _now()))
 
-def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, project_id=None, workspace=None, proposal=None, store=None):
+def create_plan(connection, request, *args, allowed_commands=None, workspace_id=None, project_id=None, workspace=None, proposal=None, store=None, proposal_invocation_id=None):
     # Support both the legacy (workspace, proposal) signature and the new
     # (workspace_id, workspace, proposal) signature without breaking callers.
     positional = list(args)
@@ -150,12 +153,19 @@ def create_plan(connection, request, *args, allowed_commands=None, workspace_id=
                 if not any(command[:len(prefix)] == prefix for prefix in allowed):
                     raise ValueError("A verification command must match one of the configured command prefixes")
         steps.append(values)
+    if proposal_invocation_id is not None and (
+        not isinstance(proposal_invocation_id, str) or not proposal_invocation_id.strip()
+        or len(proposal_invocation_id) > 128
+    ):
+        raise ValueError("proposal_invocation_id must be a non-empty string of at most 128 characters")
+    if isinstance(proposal_invocation_id, str):
+        proposal_invocation_id = proposal_invocation_id.strip()
     plan_id, stamp = uuid.uuid4().hex, _now()
     with connection:
         connection.execute(
-            """INSERT INTO agent_plans(id,request,workspace,workspace_id,project_id,title,summary,status,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
-            (plan_id, request[:20000], workspace, workspace_id, project_id, title, summary, "proposed", stamp, stamp))
+            """INSERT INTO agent_plans(id,request,workspace,workspace_id,project_id,title,summary,status,created_at,updated_at,proposal_invocation_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (plan_id, request[:20000], workspace, workspace_id, project_id, title, summary, "proposed", stamp, stamp, proposal_invocation_id))
         for index, step in enumerate(steps):
             connection.execute(
                 """INSERT INTO agent_plan_steps(id,plan_id,position,title,description,expected_outcome,verification,verification_commands_json)
