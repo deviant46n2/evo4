@@ -108,6 +108,18 @@ class HandoffContractTests(unittest.TestCase):
         with self.assertRaises(HandoffError):
             validate_handoff_payload("unrestricted_chat", {})
 
+    def test_rejects_unhashable_enum_values_without_leaking_type_errors(self):
+        with self.assertRaises(HandoffError):
+            validate_handoff_payload("critique", {"summary": "x", "findings": [{
+                "finding_id": "F1", "severity": [], "target": "src/a.py",
+                "issue": "x", "recommendation": "y",
+            }]})
+        with self.assertRaises(HandoffError):
+            validate_context_references([{
+                "reference_id": "x", "source_type": [], "scope": "workspace:1",
+                "trust_label": "untrusted_input",
+            }])
+
     def test_context_references_are_typed_unique_and_bounded(self):
         value = validate_context_references([{
             "reference_id": "task-1", "source_type": "task_statement",
@@ -205,6 +217,15 @@ class HandoffPersistenceTests(unittest.TestCase):
         self.assertEqual(fetched["handoff_json"]["source_participant_id"], self.selected.participant.participant_id)
         self.assertNotIn("never-persist-this", fetched["handoff_json"].__repr__())
         self.assertEqual(len(list_handoffs(self.store, self.runtime.workspace_id, "task-1")), 1)
+
+    def test_synthesis_may_be_a_terminal_handoff_without_model_target(self):
+        result = create_handoff(
+            self.store, self.selected, invocation_id=self.invocation_id, task_id="task-2",
+            role="synthesis", target_participant_id=None,
+            payload={"summary": "Candidate synthesized.", "dispositions": []},
+            budget=HandoffBudget(10, 10, self.deadline),
+        )
+        self.assertIsNone(result["target_participant_id"])
 
     def test_rejects_wrong_target_and_non_succeeded_invocation(self):
         with self.assertRaises(HandoffError):

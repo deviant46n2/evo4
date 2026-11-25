@@ -91,6 +91,12 @@ def _parse_deadline(value):
     return parsed.astimezone(timezone.utc)
 
 
+def _enum(value, allowed, field):
+    if not isinstance(value, str) or value not in allowed:
+        raise HandoffError(f"{field} is unsupported")
+    return value
+
+
 def validate_context_references(references):
     if not isinstance(references, (list, tuple)) or len(references) > MAX_CONTEXT_REFERENCES:
         raise HandoffError("context references must be a bounded list")
@@ -104,13 +110,17 @@ def validate_context_references(references):
             }
         _exact_keys(item, {"reference_id", "source_type", "scope", "trust_label"})
         reference_id = _text(item["reference_id"], "context reference id", maximum=128)
-        source_type = item["source_type"]
-        if source_type not in {"task_statement", "repository_revision", "artifact", "verification", "handoff"}:
-            raise HandoffError("context reference source_type is unsupported")
+        source_type = _enum(
+            item["source_type"],
+            {"task_statement", "repository_revision", "artifact", "verification", "handoff"},
+            "context reference source_type",
+        )
         scope = _text(item["scope"], "context reference scope", maximum=256)
-        trust_label = item["trust_label"]
-        if trust_label not in {"trusted_policy", "untrusted_input", "derived_output", "verified_evidence"}:
-            raise HandoffError("context reference trust_label is unsupported")
+        trust_label = _enum(
+            item["trust_label"],
+            {"trusted_policy", "untrusted_input", "derived_output", "verified_evidence"},
+            "context reference trust_label",
+        )
         if reference_id in seen:
             raise HandoffError("context references must be unique")
         seen.add(reference_id)
@@ -123,8 +133,7 @@ def validate_context_references(references):
 
 def validate_handoff_payload(role, payload):
     """Validate one role-specific JSON object and return a detached canonical value."""
-    if role not in HANDOFF_ROLES:
-        raise HandoffError("handoff role is unsupported")
+    role = _enum(role, HANDOFF_ROLES, "handoff role")
     if role == "proposal":
         _exact_keys(payload, {"summary", "plan"}, {"artifact_references"})
         _text(payload["summary"], "proposal summary")
@@ -158,11 +167,13 @@ def validate_handoff_payload(role, payload):
             if finding_id in ids:
                 raise HandoffError("critique finding IDs must be unique")
             ids.add(finding_id)
-            if finding["severity"] not in {"critical", "high", "medium", "low", "informational"}:
-                raise HandoffError("critique finding severity is unsupported")
+            severity = _enum(
+                finding["severity"], {"critical", "high", "medium", "low", "informational"},
+                "critique finding severity",
+            )
             findings.append({
                 "finding_id": finding_id,
-                "severity": finding["severity"],
+                "severity": severity,
                 "target": _text(finding["target"], "finding target", maximum=512),
                 "issue": _text(finding["issue"], "finding issue", maximum=4096),
                 "recommendation": _text(finding["recommendation"], "finding recommendation", maximum=2048),
@@ -181,10 +192,12 @@ def validate_handoff_payload(role, payload):
             if finding_id in ids:
                 raise HandoffError("synthesis finding dispositions must be unique")
             ids.add(finding_id)
-            if item["disposition"] not in {"accepted", "rejected", "deferred"}:
-                raise HandoffError("synthesis disposition is unsupported")
+            disposition = _enum(
+                item["disposition"], {"accepted", "rejected", "deferred"},
+                "synthesis disposition",
+            )
             dispositions.append({
-                "finding_id": finding_id, "disposition": item["disposition"],
+                "finding_id": finding_id, "disposition": disposition,
                 "reason": _text(item["reason"], "disposition reason", maximum=2048),
             })
         result = {"summary": payload["summary"], "dispositions": dispositions}
@@ -192,8 +205,7 @@ def validate_handoff_payload(role, payload):
             result["artifact_references"] = _reference_list(payload["artifact_references"], "artifact_references")
     else:
         _exact_keys(payload, {"reviewer_type", "criteria_results", "notes"})
-        if payload["reviewer_type"] not in {"human", "deterministic"}:
-            raise HandoffError("adjudication reviewer_type must be human or deterministic")
+        reviewer_type = _enum(payload["reviewer_type"], {"human", "deterministic"}, "adjudication reviewer_type")
         _text(payload["notes"], "adjudication notes", maximum=4096, allow_empty=True)
         if not isinstance(payload["criteria_results"], list) or not 1 <= len(payload["criteria_results"]) <= 100:
             raise HandoffError("adjudication requires 1 to 100 criteria results")
@@ -204,13 +216,12 @@ def validate_handoff_payload(role, payload):
             if criterion_id in ids:
                 raise HandoffError("adjudication criterion IDs must be unique")
             ids.add(criterion_id)
-            if item["status"] not in {"pass", "fail", "unknown"}:
-                raise HandoffError("adjudication criterion status is unsupported")
+            status = _enum(item["status"], {"pass", "fail", "unknown"}, "adjudication criterion status")
             criteria.append({
-                "criterion_id": criterion_id, "status": item["status"],
+                "criterion_id": criterion_id, "status": status,
                 "evidence_references": _reference_list(item["evidence_references"], "evidence_references", maximum=32),
             })
-        result = {"reviewer_type": payload["reviewer_type"], "criteria_results": criteria, "notes": payload["notes"]}
+        result = {"reviewer_type": reviewer_type, "criteria_results": criteria, "notes": payload["notes"]}
     encoded = _canonical(result)
     if len(encoded.encode("utf-8")) > MAX_HANDOFF_BYTES:
         raise HandoffError("handoff payload exceeds the byte limit")
@@ -282,8 +293,7 @@ def create_handoff(
     payload, context_references=(), budget,
 ):
     """Persist a handoff only from a succeeded invocation on this exact runtime revision."""
-    if role not in PERSISTABLE_ROLES:
-        raise HandoffError("only proposal, critique, and synthesis handoffs may be persisted in this slice")
+    role = _enum(role, PERSISTABLE_ROLES, "persistable handoff role")
     task_id = _text(task_id, "task_id", maximum=128)
     if not isinstance(budget, HandoffBudget):
         raise HandoffError("handoff requires a validated aggregate budget and deadline")
@@ -295,18 +305,21 @@ def create_handoff(
         raise HandoffError("handoff source must be a selected participant runtime")
     if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
         raise HandoffError("invocation_id is invalid")
-    if not isinstance(target_participant_id, str) or not target_participant_id.strip() or len(target_participant_id) > 128:
-        raise HandoffError("target participant ID is required")
-    if role == "proposal" and target_participant_id == selected.participant.participant_id:
-        raise HandoffError("proposal must target a distinct participant")
-    if role == "critique" and target_participant_id == selected.participant.participant_id:
-        raise HandoffError("critique must target a distinct participant")
-    participants = {item.participant_id for item in parent.participants}
-    if target_participant_id not in participants:
-        raise HandoffError("handoff target is not bound to the pinned runtime revision")
+    if target_participant_id is not None:
+        if not isinstance(target_participant_id, str) or not target_participant_id.strip() or len(target_participant_id) > 128:
+            raise HandoffError("target participant ID is invalid")
+        if role in {"proposal", "critique"} and target_participant_id == selected.participant.participant_id:
+            raise HandoffError(f"{role} must target a distinct participant")
+        participants = {item.participant_id for item in parent.participants}
+        if target_participant_id not in participants:
+            raise HandoffError("handoff target is not bound to the pinned runtime revision")
+    elif role in {"proposal", "critique"}:
+        raise HandoffError(f"{role} requires a target participant from the pinned runtime revision")
     parent.assert_current(store)
     created_at = utc_now()
     deadline = _parse_deadline(budget.deadline_utc)
+    if deadline <= datetime.now(timezone.utc):
+        raise HandoffError("handoff deadline must be in the future")
     payload_record = {
         "schema_version": HANDOFF_SCHEMA_VERSION,
         "contract_version": HANDOFF_CONTRACT_VERSION,
@@ -339,6 +352,19 @@ def create_handoff(
             raise HandoffError("handoff source invocation or snapshot is missing")
         if invocation["status"] != "succeeded":
             raise HandoffError("handoff source invocation must have succeeded")
+        try:
+            snapshot_payload = json.loads(snapshot["snapshot_json"])
+        except (TypeError, ValueError) as exc:
+            raise HandoffError("handoff source snapshot is malformed") from exc
+        if sha256(snapshot["snapshot_json"].encode("utf-8")).hexdigest() != snapshot["snapshot_hash"]:
+            raise HandoffError("handoff source snapshot integrity check failed")
+        snapshot_participant = snapshot_payload.get("participant", {})
+        if (
+            snapshot_payload.get("invocation_kind") != "participant_completion"
+            or snapshot_participant.get("participant_id") != selected.participant.participant_id
+            or snapshot_participant.get("integration_id") != selected.participant.integration_id
+        ):
+            raise HandoffError("handoff source snapshot does not identify the selected participant")
         if (
             invocation["participant_id"] != selected.participant.participant_id
             or invocation["workspace_id"] != parent.workspace_id
