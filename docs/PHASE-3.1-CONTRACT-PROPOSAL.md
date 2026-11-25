@@ -1,7 +1,7 @@
 # Phase 3.1 — Executable Configuration and Participant Contract Proposal
 
-**Status: approved by the user on 2026-11-24; P3.1 implementation authorized. This does not authorize P3.2 or live Registry-bound dispatch.**  
-**Parent plan:** `docs/PHASE-3-TECHNICAL-PLAN.md`  
+**Status: approved by the user on 2026-11-24; P3.1 implementation authorized. This does not authorize P3.2 or live Registry-bound dispatch.**
+**Parent plan:** `docs/PHASE-3-TECHNICAL-PLAN.md`
 **Authority:** `ROADMAP.md` governs phase order and acceptance.
 
 ## 1. Purpose and boundary
