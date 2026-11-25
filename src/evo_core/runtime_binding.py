@@ -1,7 +1,8 @@
 """Registry-driven, revision-pinned assistant runtime construction.
 
-P3.2 binds a workspace to a complete assistant configuration, but deliberately
-keeps live Registry-bound provider dispatch disabled until P3.5 admission exists.
+Workspace-bound provider dispatch remains disabled by default. The opt-in P3.5
+bridge installs only code-owned authorization and admission logic; it does not
+accept dispatch callbacks or permissions from workspace configuration.
 """
 from dataclasses import dataclass, replace
 from hashlib import sha256
