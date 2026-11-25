@@ -140,8 +140,8 @@ class ResourceAdmissionTests(unittest.TestCase):
 
     def test_provider_budget_requires_positive_integer_limits(self):
         with self.assertRaises(ValueError):
-            ProviderBudget(0, 1024, 4096)
-        budget = ProviderBudget(20, 4096, 32768)
+            ProviderBudget("integration-1", 0, 1024, 4096)
+        budget = ProviderBudget("integration-1", 20, 4096, 32768)
         self.assertEqual(budget.maximum_requests_per_utc_day, 20)
 
 
