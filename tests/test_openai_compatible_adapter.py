@@ -343,7 +343,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         )
         participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
         bad = envelope("p", input_json='{"messages":[{"role":"user","content":"hi"}],"max_tokens":8,"extra":true}')
-        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+        with self.assertRaisesRegex(ParticipantAdapterError, "unsupported fields"):
             list(adapter.invoke(participant, bad))
 
 
