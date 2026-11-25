@@ -117,7 +117,7 @@ class DeterministicVerifierParticipantTests(unittest.TestCase):
         self.assertEqual(preflight.state, "unknown")
         probe = adapter.probe_completion(participant, timeout_seconds=2)
         self.assertTrue(probe.transport_reachable)
-        self.assertTrue(probe.model_advertised)
+        self.assertIsNone(probe.model_advertised)
         self.assertTrue(probe.completion_verified)
         self.assertEqual(probe.state, "available")
 
