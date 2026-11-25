@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization/admission/lifecycle is implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests), with formal acceptance pending. P3.6 and P3.7 remain outstanding. Dispatch remains disabled by default.
+**Status (2026-11-25):** P3.1–P3.5 and P3-R4 accepted. P3.5 was formally accepted at validated implementation SHA `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests) and merged through PR #3 at `ab01f90547c435ed158dc914583dbb21485e221f`. P3.6 read-only API/configuration inspection is in progress; P3.7 remains outstanding. Dispatch remains disabled by default.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
