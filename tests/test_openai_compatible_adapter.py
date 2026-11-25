@@ -189,7 +189,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
 
     def test_dispatch_and_completion_probe_are_disabled_without_p35_authorizer(self):
         adapter = OpenAICompatibleParticipantAdapter(provider_factory=FakeProvider)
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         with self.assertRaises(ParticipantDispatchDisabledError):
             adapter.probe_completion(participant, timeout_seconds=2)
         with self.assertRaises(ParticipantDispatchDisabledError):
@@ -211,7 +211,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             provider_factory=FakeProvider,
             dispatch_authorizer=lambda operation, participant, request: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         records = list(adapter.invoke(participant, envelope("p")))
         self.assertEqual(records[0].event_type, "started")
         self.assertEqual(records[1].event_type, "text_delta")
@@ -229,7 +229,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             provider_factory=RateLimited,
             dispatch_authorizer=lambda *args: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         result = list(adapter.invoke(participant, envelope("p")))[-1]
         self.assertEqual(result.status, "rate_limited")
         self.assertEqual(result.error_code, "provider_rate_limited")
@@ -263,7 +263,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             resolver=self.resolver,
             dispatch_authorizer=lambda *args: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         result = list(adapter.invoke(participant, envelope("p")))[-1]
         self.assertEqual(result.status, "rate_limited")
         self.assertEqual(result.error_code, "provider_rate_limited")
@@ -289,7 +289,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             provider_factory=TimedOut,
             dispatch_authorizer=lambda *args: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         result = list(adapter.invoke(participant, envelope("p")))[-1]
         self.assertEqual(result.status, "timed_out")
 
@@ -298,7 +298,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             resolver=self.resolver,
             dispatch_authorizer=lambda *args: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         records = list(adapter.invoke(participant, envelope("p")))
         deltas = [json.loads(item.payload_json)["text"] for item in records if getattr(item, "event_type", None) == "text_delta"]
         self.assertEqual(deltas, ["hello"])
@@ -371,7 +371,7 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
             provider_factory=FakeProvider,
             dispatch_authorizer=lambda *args: True,
         )
-        participant = adapter.bind_component(model_component(self.endpoint), {"participant_id": "p"})
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
         bad = envelope("p", input_json='{"messages":[{"role":"user","content":"hi"}],"max_tokens":8,"extra":true}')
         with self.assertRaisesRegex(ParticipantAdapterError, "unsupported fields"):
             list(adapter.invoke(participant, bad))
