@@ -36,11 +36,14 @@ class AdapterHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        body = (
-            b'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'
-            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
-            b'data: [DONE]\n\n'
-        )
+        if self.server.malformed_sse:
+            body = b'data: {"choices":"invalid"}\n\ndata: [DONE]\n\n'
+        else:
+            body = (
+                b'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'
+                b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+                b'data: [DONE]\n\n'
+            )
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Content-Length", str(len(body)))
