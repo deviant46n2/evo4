@@ -153,12 +153,12 @@ class DispatchingProvider:
             effective_timeout = min(effective_timeout, max(1, int(timeout_seconds)))
         effective_timeout = min(600, effective_timeout)
         now = datetime.now(timezone.utc)
-        deadline = now + timedelta(seconds=effective_timeout)
+        deadline = now + timedelta(seconds=600)
         deadline_utc = deadline.isoformat().replace("+00:00", "Z")
         # Leave time for snapshot persistence and the atomic admission
         # transaction; the transport itself remains bounded by the pinned
         # participant timeout and this envelope deadline.
-        request_seconds = max(0.1, effective_timeout - 1.0)
+        request_seconds = min(float(effective_timeout), 590.0)
         request = {
             "messages": messages,
             "max_tokens": max_tokens,
@@ -216,7 +216,6 @@ class DispatchingProvider:
         combined_cancel = _CombinedCancellation(cancellation_event, lease_lost)
         heartbeat_thread = None
         terminal = None
-        admission_rejected = False
 
         def heartbeat_loop():
             while not heartbeat_stop.wait(4.0):
@@ -306,7 +305,6 @@ class DispatchingProvider:
             if lifecycle is not None and lifecycle.get("status") in {"denied", "deferred", "rate_limited", "budget_exhausted"}:
                 decision = lifecycle.get("decision") or {}
                 reason = decision.get("reason", "dispatch_not_admitted")
-                admission_rejected = True
                 raise DispatchProviderError(f"Provider dispatch was not admitted: {reason}") from exc
             self._abandon_if_running(invocation_id, "adapter_error")
             raise DispatchProviderError("Provider adapter rejected the invocation") from exc
