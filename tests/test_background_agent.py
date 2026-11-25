@@ -42,6 +42,15 @@ class BackgroundAgentLedgerTests(unittest.TestCase):
         self.assertEqual(queued["payload"]["project_id"], "project-1")
         self.assertEqual(queued["payload"]["workspace_id"], "workspace-1")
 
+    def test_malformed_metadata_creates_explicitly_unscoped_task(self):
+        self.db.execute(
+            """INSERT INTO agent_runs(id,kind,status,started_at,metadata_json)
+               VALUES('run-malformed','coding','running','now','{not json')"""
+        )
+        task = create(self.db, "run-malformed")
+        self.assertIsNone(task["project_id"])
+        self.assertIsNone(task["workspace_id"])
+
     def test_scope_metadata_rejects_workspace_without_project(self):
         self.db.execute(
             "UPDATE agent_runs SET metadata_json=? WHERE id='run-1'",
