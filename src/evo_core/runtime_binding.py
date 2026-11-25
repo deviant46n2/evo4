@@ -209,7 +209,7 @@ def build_workspace_runtime(store, base_config, workspace_id):
                 "component_version": model_component["component_version"],
             },
             secret_values=secret_values,
-            assistant_settings=assistant_settings,
+            runtime_settings=assistant_settings,
         )
         # User-authored persona guidance is explicitly delimited as untrusted
         # behavior guidance. It cannot replace the operator's global policy.
