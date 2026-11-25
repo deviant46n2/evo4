@@ -1,10 +1,15 @@
+import copy
 import os
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from evo_core.ai_configurations import create_configuration, create_revision
+from evo_core.ai_configurations import (
+    ConfigurationValidationError,
+    create_configuration,
+    create_revision,
+)
 from evo_core.config import EvoConfig
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
@@ -148,6 +153,59 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         verifier_adapter, bound_verifier = runtime.additional_participant_bindings[0]
         self.assertEqual(bound_verifier.component_key, "verifier")
         self.assertIsNone(verifier_adapter._dispatch_authorizer)
+
+    def test_additional_model_participant_is_bound_to_exact_workspace_revision(self):
+        definition = schema2_definition()
+        definition["components"]["secondary_model"] = {
+            "type": "model",
+            "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {
+                "endpoint": "http://127.0.0.1:18997/v1",
+                "model": "model-b",
+                "timeout_seconds": 45,
+            },
+            "secret_refs": {},
+        }
+        definition["components"]["assistant_runtime"]["settings"]["additional_model_components"] = [
+            "secondary_model"
+        ]
+        created = create_configuration(self.store, definition, name="multi-model config")
+        workspace = create_workspace(
+            self.store, "Multi-model workspace", self.project["project_id"],
+            created["configuration"]["configuration_id"], created["revision"]["revision_id"],
+            checkout_id=self.checkout["checkout_id"],
+        )
+        runtime = build_workspace_runtime(self.store, self.base_config, workspace["workspace_id"])
+        model_participants = [item for item in runtime.participants if item.participant_type == "model"]
+        self.assertEqual(len(model_participants), 2)
+        primary, secondary_descriptor = model_participants
+        self.assertNotEqual(primary.participant_id, secondary_descriptor.participant_id)
+        self.assertNotEqual(primary.integration_id, secondary_descriptor.integration_id)
+        self.assertEqual(secondary_descriptor.component_key, "secondary_model")
+        self.assertEqual(
+            secondary_descriptor.configuration_revision_id, created["revision"]["revision_id"]
+        )
+        selected = runtime.select_participant(secondary_descriptor.participant_id)
+        self.assertEqual(selected.bound_participant.model, "model-b")
+        self.assertIs(selected.participant, secondary_descriptor)
+        self.assertIsNot(selected.participant_adapter, runtime.participant_adapter)
+        self.assertEqual(
+            selected.participant_adapter._provider_for(selected.bound_participant).model, "model-b"
+        )
+        self.assertEqual(selected.provenance["secret_reference_names"], ())
+        self.assertIsNone(selected.participant_adapter._dispatch_authorizer)
+
+    def test_schema_rejects_secondary_model_with_same_integration_as_primary(self):
+        definition = schema2_definition()
+        definition["components"]["secondary_model"] = copy.deepcopy(
+            definition["components"]["primary_model"]
+        )
+        definition["components"]["assistant_runtime"]["settings"]["additional_model_components"] = [
+            "secondary_model"
+        ]
+        with self.assertRaises(ConfigurationValidationError):
+            create_configuration(self.store, definition, name="duplicate integration")
 
     def test_global_model_changes_do_not_change_bound_runtime(self):
         changed = replace(self.base_config, model="other-global", base_url="https://elsewhere.invalid",

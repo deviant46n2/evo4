@@ -10,7 +10,8 @@ from urllib.parse import urlsplit
 from datetime import datetime, timezone
 
 from .store import utc_now
-from .participant_contracts import UnsupportedAdapterError, resolve_adapter_contract
+from .participant_contracts import UnsupportedAdapterError, resolve_adapter_contract, stable_integration_id
+from .provider_endpoint import normalize_provider_origin
 
 SENSITIVE_KEYS = {
     "api_key",
@@ -289,9 +290,11 @@ def _validate_schema2_component(key, component):
             "model_component", "persona_prompt", "max_output_tokens", "temperature",
             "context_window_tokens", "history_messages", "max_history_chars", "memory_limit",
         }
-        if set(settings) != required:
+        optional = {"additional_model_components"}
+        if not required.issubset(settings) or set(settings) - required - optional:
             raise ConfigurationValidationError(
-                f"assistant_runtime component {key!r} must define exactly {sorted(required)}"
+                f"assistant_runtime component {key!r} must define {sorted(required)} "
+                f"and only optional {sorted(optional)}"
             )
         model_key = settings["model_component"]
         if not isinstance(model_key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", model_key):
@@ -352,9 +355,45 @@ def _validate_schema2_mapping(value):
         raise ConfigurationValidationError("entrypoints.assistant must reference an existing component")
     if components[assistant_key]["type"] != "assistant_runtime":
         raise ConfigurationValidationError("entrypoints.assistant must reference an assistant_runtime")
-    model_key = components[assistant_key]["settings"]["model_component"]
+    assistant_settings = components[assistant_key]["settings"]
+    model_key = assistant_settings["model_component"]
     if model_key not in components or components[model_key]["type"] != "model":
         raise ConfigurationValidationError("assistant_runtime must reference an existing model component")
+    additional_model_keys = assistant_settings.get("additional_model_components", [])
+    if (
+        not isinstance(additional_model_keys, list)
+        or len(additional_model_keys) > 8
+        or any(
+            not isinstance(item, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", item)
+            for item in additional_model_keys
+        )
+    ):
+        raise ConfigurationValidationError(
+            "assistant_runtime.additional_model_components must be a list of at most 8 component keys"
+        )
+    if len(additional_model_keys) != len(set(additional_model_keys)) or model_key in additional_model_keys:
+        raise ConfigurationValidationError(
+            "assistant_runtime model participant component references must be unique"
+        )
+    integration_ids = set()
+    for participant_key in [model_key, *additional_model_keys]:
+        participant_component = components.get(participant_key)
+        if not isinstance(participant_component, dict) or participant_component.get("type") != "model":
+            raise ConfigurationValidationError(
+                f"assistant_runtime participant {participant_key!r} must reference an existing model component"
+            )
+        participant_settings = participant_component["settings"]
+        parsed_endpoint = urlsplit(participant_settings["endpoint"])
+        origin = normalize_provider_origin(f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}")
+        integration_id = stable_integration_id(
+            participant_component["adapter"]["id"], origin, participant_settings["model"]
+        )
+        if integration_id in integration_ids:
+            raise ConfigurationValidationError(
+                "assistant_runtime model participants must have distinct integration identities"
+            )
+        integration_ids.add(integration_id)
     if "extensions" in value:
         extensions = value["extensions"]
         if not isinstance(extensions, dict):

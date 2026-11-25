@@ -266,6 +266,56 @@ class Schema2ValidationTests(unittest.TestCase):
         with self.assertRaises(ConfigurationValidationError):
             validate_definition(value)
 
+    def test_schema2_accepts_distinct_additional_model_participants(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["secondary_model"] = copy.deepcopy(value["components"]["primary_model"])
+        value["components"]["secondary_model"]["settings"]["model"] = "different-model"
+        value["components"]["assistant"]["settings"]["additional_model_components"] = ["secondary_model"]
+        normalized = validate_definition(value)
+        self.assertEqual(
+            normalized["components"]["assistant"]["settings"]["additional_model_components"],
+            ["secondary_model"],
+        )
+
+    def test_schema2_rejects_duplicate_additional_model_component_references(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["secondary_model"] = copy.deepcopy(value["components"]["primary_model"])
+        value["components"]["secondary_model"]["settings"]["model"] = "different-model"
+        value["components"]["assistant"]["settings"]["additional_model_components"] = [
+            "secondary_model", "secondary_model"
+        ]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_additional_model_with_duplicate_integration_identity(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["secondary_model"] = copy.deepcopy(value["components"]["primary_model"])
+        value["components"]["assistant"]["settings"]["additional_model_components"] = ["secondary_model"]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_missing_or_non_model_additional_participant(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["settings"]["additional_model_components"] = ["missing_model"]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        value["components"]["assistant"]["settings"]["additional_model_components"] = ["verifier"]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
+    def test_schema2_rejects_more_than_eight_additional_models(self):
+        value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
+        for index in range(9):
+            key = f"secondary_{index}"
+            value["components"][key] = copy.deepcopy(value["components"]["primary_model"])
+            value["components"][key]["settings"]["model"] = f"model-{index}"
+        value["components"]["assistant"]["settings"]["additional_model_components"] = [
+            f"secondary_{index}" for index in range(9)
+        ]
+        with self.assertRaises(ConfigurationValidationError):
+            validate_definition(value)
+
     def test_schema2_rejects_unknown_component_fields(self):
         value = copy.deepcopy(VALID_SCHEMA2_DEFINITION)
         value["components"]["primary_model"]["settings"]["arbitrary"] = True

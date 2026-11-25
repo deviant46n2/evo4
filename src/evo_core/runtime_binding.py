@@ -429,11 +429,112 @@ def build_workspace_runtime(store, base_config, workspace_id):
             runtime_settings=assistant_settings,
         )
 
+        # Additional model participants are declared by component key in the
+        # assistant entrypoint and are bound from this same immutable revision.
+        # Each gets its own adapter instance and code-owned dispatch authorizer.
+        additional_participants = []
+        additional_participant_bindings = []
+        additional_participant_provenance = []
+        model_integration_ids = {integration_id}
+        model_participant_ids = {participant_id}
+        for additional_model_key in assistant_settings.get("additional_model_components", ()):
+            additional_component = _component(definition, additional_model_key, "model")
+            additional_adapter_spec = additional_component["adapter"]
+            additional_contract = resolve_adapter_contract(
+                additional_adapter_spec["id"], additional_adapter_spec["contract_version"], "model"
+            )
+            additional_settings = additional_component["settings"]
+            additional_endpoint = additional_settings["endpoint"]
+            additional_parsed = urlsplit(additional_endpoint)
+            additional_origin = normalize_provider_origin(
+                f"{additional_parsed.scheme}://{additional_parsed.netloc}"
+            )
+            additional_integration_id = stable_integration_id(
+                additional_adapter_spec["id"], additional_origin, additional_settings["model"]
+            )
+            additional_participant_id = stable_participant_id(
+                additional_integration_id,
+                binding["configuration_id"],
+                binding["configuration_revision_id"],
+                additional_model_key,
+                additional_component["component_version"],
+            )
+            if (
+                additional_integration_id in model_integration_ids
+                or additional_participant_id in model_participant_ids
+            ):
+                raise RuntimeBindingError("workspace revision contains duplicate model participant identities")
+            model_integration_ids.add(additional_integration_id)
+            model_participant_ids.add(additional_participant_id)
+            additional_secret_values = resolve_secret_references(
+                additional_component.get("secret_refs", {}),
+                base_config.allowed_secret_env_vars,
+            )
+            additional_descriptor = ParticipantDescriptor(
+                participant_id=additional_participant_id,
+                integration_id=additional_integration_id,
+                participant_type="model",
+                display_name=additional_settings["model"],
+                adapter_id=additional_adapter_spec["id"],
+                adapter_contract_version=additional_adapter_spec["contract_version"],
+                adapter_implementation_version=additional_contract.implementation_version,
+                capabilities=additional_contract.capabilities,
+                input_contract_versions=(1,),
+                output_contract_versions=(1,),
+                execution_location=additional_contract.execution_location,
+                availability="unknown",
+                availability_observed_at=None,
+                resource_requirements=(),
+                limits=(
+                    ("timeout_seconds", additional_settings["timeout_seconds"]),
+                    ("max_output_tokens", assistant_settings["max_output_tokens"]),
+                    ("context_window_tokens", assistant_settings["context_window_tokens"]),
+                ),
+                configuration_id=binding["configuration_id"],
+                configuration_revision_id=binding["configuration_revision_id"],
+                component_key=additional_model_key,
+                component_version=additional_component["component_version"],
+                compliance_reference=None,
+            )
+            additional_adapter_reference = {} if dispatch_controller is not None else None
+            additional_adapter = OpenAICompatibleParticipantAdapter(
+                allowed_origins=base_config.allowed_provider_origins,
+                dispatch_authorizer=(
+                    dispatch_controller.authorizer_for(additional_adapter_reference)
+                    if dispatch_controller is not None else None
+                ),
+            )
+            if additional_adapter_reference is not None:
+                additional_adapter_reference["adapter"] = additional_adapter
+            additional_bound = additional_adapter.bind_component(
+                additional_component,
+                {
+                    "participant_id": additional_participant_id,
+                    "project_id": binding["project_id"],
+                    "workspace_id": binding["workspace_id"],
+                    "configuration_id": binding["configuration_id"],
+                    "configuration_revision_id": binding["configuration_revision_id"],
+                    "component_key": additional_model_key,
+                    "component_version": additional_component["component_version"],
+                },
+                secret_values=additional_secret_values,
+                runtime_settings=assistant_settings,
+            )
+            additional_participants.append(additional_descriptor)
+            additional_participant_bindings.append((additional_adapter, additional_bound))
+            additional_participant_provenance.append((
+                additional_participant_id,
+                {
+                    "secret_reference_names": tuple(sorted(
+                        (str(name), str(reference))
+                        for name, reference in additional_component.get("secret_refs", {}).items()
+                    )),
+                },
+            ))
+
         # Bind any configured deterministic verifier components from this exact
         # immutable revision. These are local-only, inert until P3.5, and never
         # receive secrets or arbitrary tool/network capabilities.
-        additional_participants = []
-        additional_participant_bindings = []
         for verifier_key, verifier_component in sorted(definition["components"].items()):
             if verifier_component.get("type") != "deterministic_verifier":
                 continue
@@ -531,6 +632,7 @@ def build_workspace_runtime(store, base_config, workspace_id):
             provenance=provenance,
             additional_participants=tuple(additional_participants),
             additional_participant_bindings=tuple(additional_participant_bindings),
+            additional_participant_provenance=tuple(additional_participant_provenance),
         )
         if dispatch_controller is not None:
             from .dispatch_provider import DispatchingProvider
