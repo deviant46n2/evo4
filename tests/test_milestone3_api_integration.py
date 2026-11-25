@@ -946,7 +946,8 @@ class WorkspaceParticipantInspectionApiTests(unittest.TestCase):
                 f"{listed['participant_id']}/availability?timeout_seconds=4",
             )
         self.assertEqual(status, 200)
-        self.assertEqual(body["availability"], "available")
+        self.assertEqual(body["availability"], "unknown")
+        self.assertEqual(body["metadata_preflight"], "model_advertised")
         self.assertTrue(body["transport_reachable"])
         self.assertTrue(body["model_advertised"])
         self.assertIsNone(body["completion_verified"])
