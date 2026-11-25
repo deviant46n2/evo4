@@ -256,17 +256,11 @@ class CommandPolicyVerificationTests(unittest.TestCase):
     def test_empty_project_policy_denies_command(self):
         self._make_app([["python", "-c"]], {"command_policy": {"allowed_commands": []}})
         with patch("evo_core.workspace.Workspace.run") as run_mock:
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
-                self.plan["id"], project_id=self.project["project_id"],
-                workspace_id=self.workspace["workspace_id"])
-            run_id = result["run_id"]
-            run = self._wait_terminal(run_id)
-            self.assertEqual(run["status"], "failed")
-            store = self.app.state.store
-            stored = store.get_agent_run(run_id)
-            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
-            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
-            self.assertIsNone(metadata.get("pending_approval_id"))
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                    self.plan["id"], project_id=self.project["project_id"],
+                    workspace_id=self.workspace["workspace_id"])
+            self.assertEqual(raised.exception.status_code, 409)
             run_mock.assert_not_called()
 
     def test_malformed_project_policy_fails_closed_before_execution(self):
@@ -302,17 +296,38 @@ class CommandPolicyVerificationTests(unittest.TestCase):
             orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
             self.plan = plan
         with patch("evo_core.workspace.Workspace.run") as run_mock:
-            result = self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
-                self.plan["id"], project_id=self.project["project_id"],
-                workspace_id=self.workspace["workspace_id"])
-            run_id = result["run_id"]
-            run = self._wait_terminal(run_id)
-            self.assertEqual(run["status"], "failed")
-            store = self.app.state.store
-            stored = store.get_agent_run(run_id)
-            metadata = __import__("json").loads(stored["metadata_json"] or "{}")
-            self.assertNotEqual(metadata.get("lifecycle"), "awaiting_approval")
-            self.assertIsNone(metadata.get("pending_approval_id"))
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                    self.plan["id"], project_id=self.project["project_id"],
+                    workspace_id=self.workspace["workspace_id"])
+            self.assertEqual(raised.exception.status_code, 409)
+            run_mock.assert_not_called()
+
+    def test_plan_without_verification_commands_is_rejected_before_execution(self):
+        self._make_app([["python", "-c"]], {"command_policy": {"allowed_commands": [["python", "-c"]]}})
+        with self.app.state.lab_db.lock:
+            plan = orchestration.create_plan(
+                self.app.state.lab_db.connection,
+                "Unverified plan",
+                self.workspace["workspace_id"],
+                str(self.checkout_dir),
+                {"title": "Unverified plan", "summary": "Change files without a verification command.",
+                 "steps": [{"title": "Implement", "description": "Create a file.",
+                            "expected_outcome": "The file exists.",
+                            "verification": "No command supplied.",
+                            "verification_commands": []}]},
+                project_id=self.project["project_id"],
+                store=self.app.state.store,
+            )
+            orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
+            self.plan = plan
+        with patch("evo_core.workspace.Workspace.run") as run_mock:
+            with self.assertRaises(HTTPException) as raised:
+                self.routes[("/api/v1/agents/plans/{plan_id}/execute", "POST")](
+                    self.plan["id"], project_id=self.project["project_id"],
+                    workspace_id=self.workspace["workspace_id"])
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertIn("no configured verification command", raised.exception.detail)
             run_mock.assert_not_called()
 
     def test_persisted_verification_command_no_longer_allowed(self):
