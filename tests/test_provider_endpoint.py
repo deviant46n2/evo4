@@ -227,6 +227,69 @@ class PinnedProviderTransportTests(unittest.TestCase):
         self.assertEqual(captured["server_hostname"], "localhost")
         self.assertEqual(self.server.host_headers[-1], f"localhost:{self.server.server_port}")
 
+
+    def test_ipv6_dns_scope_id_is_rejected(self):
+        def resolver(host, port, type=socket.SOCK_STREAM):
+            return [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:4860:4860::8888", port, 0, 7))
+            ]
+        transport = PinnedProviderTransport(
+            EndpointPolicy(("https://api.example.test",)), resolver=resolver
+        )
+        with self.assertRaisesRegex(ProviderEndpointError, "scoped address"):
+            transport.resolve_destination("https://api.example.test/v1")
+
+    def test_https_ipv6_uses_unbracketed_ip_for_tls_identity(self):
+        captured = {}
+
+        class FakeResponse:
+            status = 200
+            def read(self):
+                return b"ok"
+
+        class FakeTLSContext:
+            check_hostname = True
+            verify_mode = 2
+            def wrap_socket(self, sock, server_hostname):
+                captured["server_hostname"] = server_hostname
+                return sock
+
+        class FakeConnection:
+            def __init__(self, host, port, **kwargs):
+                captured["connection_host"] = host
+                self.sock = None
+            def putrequest(self, *args, **kwargs):
+                pass
+            def putheader(self, name, value):
+                if name.lower() == "host":
+                    captured["host_header"] = value
+            def endheaders(self, body):
+                pass
+            def getresponse(self):
+                return FakeResponse()
+            def close(self):
+                pass
+
+        def resolver(host, port, type=socket.SOCK_STREAM):
+            return [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:4860:4860::8888", port, 0, 0))
+            ]
+
+        endpoint = "https://[2001:4860:4860::8888]/v1"
+        transport = PinnedProviderTransport(
+            EndpointPolicy(("https://[2001:4860:4860::8888]",)), resolver=resolver
+        )
+        with (
+            patch.object(transport, "_connect_pinned", return_value=object()),
+            patch("evo_core.provider_endpoint.ssl.create_default_context", return_value=FakeTLSContext()),
+            patch("evo_core.provider_endpoint.http.client.HTTPSConnection", FakeConnection),
+        ):
+            with transport.open_response(endpoint, "GET", "/models") as response:
+                self.assertEqual(response.status, 200)
+        self.assertEqual(captured["server_hostname"], "2001:4860:4860::8888")
+        self.assertEqual(captured["connection_host"], "[2001:4860:4860::8888]")
+        self.assertEqual(captured["host_header"], "[2001:4860:4860::8888]")
+
     def test_connection_failure_does_not_fall_back_to_another_dns_answer(self):
         def resolver(host, port, type=socket.SOCK_STREAM):
             return [
