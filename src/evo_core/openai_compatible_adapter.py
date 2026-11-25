@@ -349,7 +349,6 @@ class OpenAICompatibleParticipantAdapter:
         outcome. The blocking HTTP request itself remains bounded by timeout;
         the current transport cannot forcibly interrupt an in-flight read.
         """
-        self._authorize("participant_invocation", participant, envelope)
         if not isinstance(envelope, InvocationEnvelope):
             raise TypeError("invocation envelope is required")
         for field_name in ("invocation_id", "objective", "task_role", "correlation_id"):
@@ -472,6 +471,11 @@ class OpenAICompatibleParticipantAdapter:
             validate_participant_result(cancelled)
             yield cancelled
             return
+        # Authorization/admission happens only after the complete envelope and
+        # request have passed validation and after pre-dispatch cancellation has
+        # been observed. The callback must atomically acquire the lease and move
+        # the invocation to running before this provider thread can start.
+        self._authorize("participant_invocation", participant, envelope)
         # Start provider work before yielding: a generator suspends at yield,
         # so starting afterward would prevent cancellation observation until
         # the caller requested another event.
