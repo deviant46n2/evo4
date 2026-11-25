@@ -273,7 +273,7 @@ The sample is an observation, not a lock on resources owned by other processes. 
 Reuse the existing telemetry sampler and its allowlisted metrics. The existing `assess_workload` and hardware scheduler remain advisory workload-management features; they do not become participant admission. In particular, the workload scheduler's expiring queue reservations and process-control-free lifecycle are not substitutes for P3.5's durable provider-dispatch lease, whose abandoned state must remain blocking until safe recovery. Do not merge the two lease models.
 
 This proposal resolves the P3-R4 design questions if independently accepted. It does not implement P3.5, provider budgets, authorization, invocation persistence, or dispatch.
- 
+
 ## 7. Security, isolation, and failure requirements
 
 - Resolve the exact workspace-pinned configuration revision at dispatch time. Reject missing/mismatched revisions and archived/inactive workspace, project, or configuration relationships. Do not reject an older pinned revision merely because the configuration's current revision has advanced.
