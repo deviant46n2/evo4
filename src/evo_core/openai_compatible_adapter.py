@@ -29,6 +29,7 @@ from .provider import (
     ProviderHTTPError,
     ProviderMalformedResponseError,
     ProviderTimeoutError,
+    ProviderTransportError,
 )
 from .provider_endpoint import EndpointPolicy, PinnedProviderTransport
 
@@ -269,10 +270,10 @@ class OpenAICompatibleParticipantAdapter:
                 True, None, None, _utc_now(),
                 "openai_compatible:model_listing_malformed",
             )
-        except ProviderTimeoutError:
+        except (ProviderTimeoutError, ProviderTransportError):
             return AvailabilityEvidence(
                 False, None, None, _utc_now(),
-                "openai_compatible:model_listing_timed_out",
+                "openai_compatible:model_listing_unreachable",
             )
         except ProviderError:
             return AvailabilityEvidence(
@@ -315,6 +316,11 @@ class OpenAICompatibleParticipantAdapter:
             return AvailabilityEvidence(
                 False, None, None, _utc_now(),
                 "openai_compatible:completion_probe_timed_out",
+            )
+        except ProviderTransportError:
+            return AvailabilityEvidence(
+                False, None, None, _utc_now(),
+                "openai_compatible:completion_probe_unreachable",
             )
         except ProviderError:
             # Transport-policy and transient failures do not prove that the
@@ -548,6 +554,10 @@ class OpenAICompatibleParticipantAdapter:
                         status, code, message = "timed_out", "provider_timeout", "Provider request timed out"
                     elif isinstance(exc, ProviderHTTPError) and exc.status_code == 429:
                         status, code, message = "rate_limited", "provider_rate_limited", "Provider rate limit was reached"
+                    elif isinstance(exc, ProviderHTTPError) and exc.status_code in {404, 503}:
+                        status, code, message = "unavailable", "provider_unavailable", "Configured provider or model is unavailable"
+                    elif isinstance(exc, ProviderTransportError):
+                        status, code, message = "unavailable", "provider_unavailable", "Provider transport is unavailable"
                     elif isinstance(exc, ProviderHTTPError) and exc.status_code in {401, 403}:
                         status, code, message = "denied", "provider_denied", "Provider rejected the request"
                     elif isinstance(exc, ProviderHTTPError) and exc.status_code in {408, 504}:
