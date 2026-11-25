@@ -77,6 +77,16 @@ class RegistryBoundRuntime:
     additional_participant_bindings: tuple[tuple[object, object], ...] = ()
 
     @property
+    def participants(self):
+        """All revision-bound production participants, in deterministic order."""
+        return (self.participant,) + self.additional_participants
+
+    @property
+    def participant_bindings(self):
+        """Adapter/bound-instance pairs; presence does not grant invocation authority."""
+        return ((self.participant_adapter, self.bound_participant),) + self.additional_participant_bindings
+
+    @property
     def dispatch_enabled(self):
         return False
 
