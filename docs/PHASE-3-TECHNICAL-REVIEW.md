@@ -91,3 +91,18 @@ The current test files provide meaningful coverage for scope persistence, retrie
 7. **Independent challenge completed and contract approved.** The challenge found the revised R1–R3 designs sound with the implementation traps and clarifications incorporated into Sections 4, 8, 9, and the required acceptance tests. P3.1 implementation is authorized; R4 remains open for P3.5 admission design.
 
 No application code, database schema, API behavior, provider calls, or services were changed as part of this review.
+
+## P3.1 implementation acceptance
+
+**Disposition: ACCEPTED on 2026-11-24/25.** The P3.1 contract and security foundations are implemented on `agent-plan-verification-hardening-v1`, current checkpoint `0b3f283879900c7bb73f40a2aceb7199fd4d4dde`.
+
+Acceptance evidence:
+- Independent local verification at `d3e0e320883de8f7f2769b19d9edac742f29d66e`: `python -m compileall -q src tests` passed; the full unittest suite passed (810 tests, zero failures/errors/skips).
+- Independent source review found no concrete code defects. The only finding was trailing whitespace in this document's companion P3.1 proposal.
+- The whitespace-only documentation correction is present in the current checkpoint. Independent detached-worktree `git diff --check fc656fcad9d964b3ca5dc4033745c861d30f4ae0..HEAD` passed with exit 0 and no findings.
+- The candidate branch currently points to the exact checkpoint above. The user's original checkout remains on `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`; the verification report confirms its status and all 32 pre-existing worktrees were preserved.
+
+Acceptance is deliberately limited to P3.1's executable configuration contract, participant contracts, configuration validation, provider endpoint/secret/approval foundations, and associated tests/documentation. It does **not** mean live Registry-bound dispatch exists or is enabled. The pinned transport is not wired into the legacy TOML provider path; a later Registry adapter must consume the secured transport. No P3.2 runtime factory/routing, P3.5 admission/lease service, provider invocation, or merge into `local-demo-ready-v1` is authorized by this acceptance.
+
+P3-R4 remains open and must be resolved before finalizing P3.5 admission. The Phase 2 acceptance gate also remains open. Proceeding to P3.2 requires separate explicit user authorization.
+
