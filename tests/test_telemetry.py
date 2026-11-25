@@ -33,7 +33,7 @@ class HardwareTelemetryTests(unittest.TestCase):
 
     def test_sample_timestamp_is_not_taken_before_gpu_probes_finish(self):
         fixed = datetime(2026, 11, 25, 12, 0, 1, tzinfo=timezone.utc)
-        gpu = Mock(stdout='"NVIDIA Test GPU", 10, 1024, 8192, 55, 100.0\\n')
+        gpu = Mock(stdout='"NVIDIA Test GPU", 10, 1024, 8192, 55, 100.0\n')
         processes = Mock(stdout="")
         events = []
         with patch.object(monitor, "datetime") as clock, \
