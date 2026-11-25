@@ -1149,7 +1149,10 @@ def create_app(config_path="config.toml", provider_name=None):
             invocation_id = run_metadata.get("invocation_id")
             if not isinstance(invocation_id, str) or not invocation_id:
                 raise RuntimeSnapshotError("Agent run has no runtime invocation snapshot reference")
-            assert_runtime_matches_snapshot(store, runtime, invocation_id)
+            assert_runtime_matches_snapshot(
+                store, runtime, invocation_id,
+                expected_kind="plan_execution" if plan_id else "coding_agent",
+            )
             runtime.require_dispatch_enabled()
             effective_allowed_commands = runtime.effective_allowed_commands
         except (RuntimeBindingError, RuntimeSnapshotError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
