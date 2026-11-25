@@ -43,3 +43,8 @@ Application shutdown resolves pending approvals as denied and signals the normal
 ## Validation boundaries
 
 Automated tests cover task claims, lifecycle transitions, cancellation persistence, ordered/incremental event retrieval, and restart interruption. Production build and full API/agent integration must be independently validated. No browser or live-model claim is made by this document.
+
+
+## Persisted project/workspace scope
+
+Background-agent task rows persist `project_id` and `workspace_id` as first-class columns, populated from the corresponding run's creation metadata. The queued lifecycle event also records those identifiers. The columns survive cancellation, terminal transitions, and restart recovery; recovery changes task status to `interrupted` without dropping or rewriting scope. Legacy runs without scope metadata remain explicitly unscoped. A workspace identifier without a project identifier is rejected when creating a task. Scope columns are provenance and queryable ownership data; they do not themselves grant authorization.
