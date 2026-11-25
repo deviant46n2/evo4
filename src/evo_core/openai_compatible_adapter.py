@@ -496,7 +496,7 @@ class OpenAICompatibleParticipantAdapter:
                     yield cancelled
                     return
                 remaining = deadline_monotonic - time.monotonic()
-                if remaining <= 0:
+                if remaining <= 0 and not provider_completed.is_set():
                     stop.set()
                     partial = {"content": "".join(streamed_text), "partial": True}
                     partial_json = json.dumps(partial, separators=(",", ":"), ensure_ascii=False) if streamed_text else None
@@ -511,7 +511,9 @@ class OpenAICompatibleParticipantAdapter:
                     yield result
                     return
                 try:
-                    event_type, payload = events.get(timeout=min(0.1, remaining + 0.1))
+                    event_type, payload = events.get(
+                        timeout=0.1 if provider_completed.is_set() else min(0.1, remaining + 0.1)
+                    )
                 except Empty:
                     continue
                 if event_type == "finished":
