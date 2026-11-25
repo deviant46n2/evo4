@@ -631,3 +631,49 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         })
         self.assertEqual(status, 404)
         self.assertEqual(self._workspace_snapshots(), [])
+
+
+    def test_coding_worker_fails_closed_if_workspace_is_rebound_after_api_admission(self):
+        from concurrent.futures import Future
+        from evo_core.workspace_binding_history import rebind_workspace
+
+        submitted = []
+        future = Future()
+
+        def capture_submit(fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return future
+
+        definition = json.loads(json.dumps(VALID_DEFINITION))
+        definition["components"]["primary_model"]["settings"]["model"] = "rebound-model"
+        rebound = create_configuration(self.store, definition, name="rebound-cfg")
+
+        with patch(
+            "evo_core.runtime_binding.RegistryBoundRuntime.require_dispatch_enabled",
+            return_value=None,
+        ), patch.object(self.app.state.chat_executor, "submit", side_effect=capture_submit):
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+                "request": "inspect",
+                "workspace_id": self.workspace["workspace_id"],
+            })
+            self.assertEqual(status, 202)
+            self.assertEqual(len(submitted), 1)
+
+            rebind_workspace(
+                self.store,
+                self.workspace["workspace_id"],
+                configuration_id=rebound["configuration"]["configuration_id"],
+                configuration_revision_id=rebound["revision"]["revision_id"],
+                checkout_id=self.checkout["checkout_id"],
+                expected_version=self.workspace["version"],
+                actor="test",
+                reason="Verify worker rejects a changed runtime binding",
+            )
+
+            worker, args, kwargs = submitted[0]
+            worker(*args, **kwargs)
+
+        run = self.store.get_agent_run(body["run_id"])
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("does not match", run.get("error", "") + run.get("result", ""))
+        future.set_result(None)
