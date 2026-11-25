@@ -274,6 +274,57 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         self.assertEqual(deltas, ["hello"])
         self.assertEqual(records[-1].status, "succeeded")
 
+    def test_cancellation_before_dispatch_returns_cancelled_without_provider_call(self):
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=FakeProvider,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        cancellation = threading.Event()
+        cancellation.set()
+        records = list(adapter.invoke(participant, envelope("p"), cancellation_event=cancellation))
+        self.assertEqual(records[0].event_type, "started")
+        self.assertEqual(records[-1].status, "cancelled")
+        self.assertFalse(hasattr(participant.provider, "called"))
+
+    def test_cancellation_during_request_suppresses_late_events(self):
+        class BlockingProvider(FakeProvider):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.started = threading.Event()
+                self.release = threading.Event()
+                self.called = False
+            def chat(self, *args, **kwargs):
+                self.called = True
+                self.started.set()
+                self.release.wait(timeout=2)
+                callback = kwargs.get("on_token")
+                if callback:
+                    callback("late output")
+                return {
+                    "content": "late output", "tool_calls": [],
+                    "finish_reason": "stop", "truncated": False,
+                }
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=BlockingProvider,
+            dispatch_authorizer=lambda *args: True,
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        cancellation = threading.Event()
+        iterator = adapter.invoke(participant, envelope("p"), cancellation_event=cancellation)
+        try:
+            self.assertEqual(next(iterator).event_type, "started")
+            self.assertTrue(participant.provider.started.wait(timeout=1))
+            cancellation.set()
+            terminal = next(iterator)
+            self.assertEqual(terminal.status, "cancelled")
+            self.assertIn("may continue until timeout", terminal.error_message)
+            with self.assertRaises(StopIteration):
+                next(iterator)
+        finally:
+            participant.provider.release.set()
+            iterator.close()
+
     def test_invocation_rejects_workspace_or_revision_provenance_drift(self):
         from dataclasses import replace
         adapter = OpenAICompatibleParticipantAdapter(
