@@ -174,7 +174,7 @@ class OpenAICompatibleParticipantAdapter:
         provenance: Mapping[str, str],
         *,
         secret_values: Mapping[str, str] | None = None,
-        assistant_settings: Mapping[str, Any] | None = None,
+        runtime_settings: Mapping[str, Any] | None = None,
     ) -> BoundOpenAICompatibleParticipant:
         self.validate_component(component)
         if not isinstance(provenance, Mapping):
@@ -199,9 +199,9 @@ class OpenAICompatibleParticipantAdapter:
             raise ParticipantAdapterError("resolved provider credential is invalid")
         if bool(component.get("secret_refs")) != ("api_key" in secrets):
             raise ParticipantAdapterError("resolved provider credentials do not match declared secret references")
-        if assistant_settings is not None and not isinstance(assistant_settings, Mapping):
+        if runtime_settings is not None and not isinstance(runtime_settings, Mapping):
             raise ParticipantAdapterError("assistant generation settings are invalid")
-        generation = assistant_settings or {}
+        generation = runtime_settings or {}
         max_output_tokens = generation.get("max_output_tokens", 32768)
         temperature = generation.get("temperature", 0.2)
         if (
