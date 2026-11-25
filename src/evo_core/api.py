@@ -1118,13 +1118,13 @@ def create_app(config_path="config.toml", provider_name=None):
             return
 
         try:
-            effective_allowed_commands = effective_project_command_prefixes(
-                config.allowed_commands,
-                binding.get("revision") if isinstance(binding, dict) else getattr(binding, "revision", None),
-            )
-        except CommandPolicyError as exc:
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+            runtime.require_dispatch_enabled()
+            effective_allowed_commands = runtime.effective_allowed_commands
+        except (RuntimeBindingError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
             _finalize_agent_run(
-                run_id, "failed", f"Command policy could not be resolved: {exc}", plan_id)
+                run_id, "failed", f"Workspace runtime binding is not dispatchable: {exc}", plan_id)
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
                 agent_futures.pop(run_id, None)
@@ -1173,13 +1173,13 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
-            conversation_id = assistant.new_conversation(
+            conversation_id = runtime.assistant.new_conversation(
                 "Agent: " + request_text[:80],
                 project_id=conversation_project_id,
                 workspace_id=conversation_workspace_id,
             )
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
-            agent = CodingAgent(assistant, workspace, effective_allowed_commands)
+            agent = CodingAgent(runtime.assistant, workspace, effective_allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
                           stop_event=stop_event, on_progress=progress,
