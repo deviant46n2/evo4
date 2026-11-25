@@ -8,6 +8,8 @@ from evo_core.ai_configurations import create_configuration, create_revision
 from evo_core.config import EvoConfig
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
+from evo_core.openai_compatible_adapter import ParticipantDispatchDisabledError
+from evo_core.provider_endpoint import PinnedProviderTransport
 from evo_core.runtime_binding import (
     RegistryDispatchDisabledError,
     RuntimeBindingError,
@@ -128,6 +130,10 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertIn("Trusted Evo policy.", runtime.assistant.config.system_prompt)
         self.assertEqual(runtime.assistant.provider.model, "model-a")
         self.assertEqual(runtime.participant.configuration_revision_id, self.revision["revision_id"])
+        self.assertEqual(runtime.bound_participant.model, "model-a")
+        self.assertEqual(runtime.bound_participant.max_output_tokens, 777)
+        self.assertEqual(runtime.bound_participant.temperature, 0.35)
+        self.assertIsInstance(runtime.bound_participant.provider.transport, PinnedProviderTransport)
         self.assertEqual(runtime.effective_allowed_commands, (("python", "-m", "unittest"),))
 
     def test_global_model_changes_do_not_change_bound_runtime(self):
@@ -162,6 +168,8 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
             runtime.require_dispatch_enabled()
         with self.assertRaises(RegistryDispatchDisabledError):
             runtime.assistant.provider.chat([])
+        with self.assertRaises(ParticipantDispatchDisabledError):
+            list(runtime.participant_adapter.invoke(runtime.bound_participant, None))
 
     def test_binding_change_invalidates_existing_runtime(self):
         runtime = self.build()
@@ -206,6 +214,8 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
             runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"],
                                               provider_factory=FakeProvider)
             self.assertEqual(runtime.assistant.provider.api_key, "runtime-secret-value")
+            self.assertEqual(runtime.bound_participant.provider.api_key, "runtime-secret-value")
+            self.assertNotIn("runtime-secret-value", repr(runtime.bound_participant))
             self.assertNotIn("runtime-secret-value", repr(runtime.provenance))
             self.assertNotIn("runtime-secret-value", repr(runtime.participant))
         finally:
