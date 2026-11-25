@@ -12,7 +12,6 @@ import math
 import uuid
 
 from . import workspaces
-from .runtime_invocation_snapshots import get_runtime_invocation_snapshot
 from .store import utc_now
 
 
@@ -614,11 +613,18 @@ def admit_invocation(
 def mark_invocation_running(store, invocation_id):
     def operation(db):
         row = db.execute(
-            "SELECT status FROM participant_invocations WHERE invocation_id=?",
+            "SELECT status,adapter_id FROM participant_invocations WHERE invocation_id=?",
             (invocation_id,),
         ).fetchone()
         if row is None or row["status"] != "admitted":
             return False
+        if row["adapter_id"] == "openai_compatible_chat":
+            lease = db.execute(
+                "SELECT state FROM dispatch_leases WHERE invocation_id=?",
+                (invocation_id,),
+            ).fetchone()
+            if lease is None or lease["state"] != "active":
+                return False
         now = utc_now()
         db.execute(
             "UPDATE participant_invocations SET status='running',started_at=?,updated_at=? WHERE invocation_id=? AND status='admitted'",
@@ -648,7 +654,7 @@ def heartbeat_dispatch_lease(store, invocation_id):
     return workspaces._write(store, operation)
 
 
-def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=None, error_message=None, provider_settled=True):
+def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=None, error_message=None, provider_settled=False):
     if status not in TERMINAL_STATUSES - {"denied", "abandoned"}:
         raise ValueError("invocation terminal status is invalid")
     if usage is not None and not isinstance(usage, dict):
