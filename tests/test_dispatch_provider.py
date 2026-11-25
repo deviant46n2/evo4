@@ -6,7 +6,9 @@ from unittest.mock import patch
 
 from evo_core.ai_configurations import create_configuration
 from evo_core.config import EvoConfig
-from evo_core.dispatch_admission import ProviderBudget, get_invocation_lifecycle
+from evo_core.dispatch_admission import (
+    ProviderBudget, get_invocation_lifecycle, initialize_invocation_lifecycle,
+)
 from evo_core.dispatch_provider import DispatchProviderError
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
@@ -189,7 +191,7 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 event["event_type"] == "invocation_started"
                 for event in lifecycle["events"]
             ))
-        self.assertEqual(tuple(usage), (0, 0, 4))
+        self.assertEqual(tuple(usage), (2, 0, 4))
 
     def test_missing_budget_blocks_before_provider_request(self):
         runtime, fake = self._enabled_config(with_budget=False)
@@ -243,6 +245,7 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 cancellation_event=cancelled,
             )
         self.assertEqual(fake.calls, 0)
+        initialize_invocation_lifecycle(self.store)
         with self.store.lock:
             snapshots = self.store.db.execute(
                 "SELECT COUNT(*) FROM runtime_invocation_snapshots"
