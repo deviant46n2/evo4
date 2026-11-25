@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch, Mock
 
 from evo_experiments import monitor
@@ -18,6 +19,32 @@ class HardwareTelemetryTests(unittest.TestCase):
         self.assertIn("load_average_1m", sample)
         self.assertFalse(sample["gpu_available"])
         self.assertIsNone(sample["gpu_memory_used_percent"])
+
+    def test_sample_timestamp_is_recorded_after_collection(self):
+        fixed = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+        with patch.object(monitor, "datetime") as clock, \
+             patch.object(monitor.time, "monotonic", side_effect=[10.0, 10.375]), \
+             patch.object(monitor.shutil, "which", return_value=None):
+            clock.now.return_value = fixed
+            sample = monitor.sample_nvidia_smi()
+        clock.now.assert_called_once_with(timezone.utc)
+        self.assertEqual(sample["sampled_at"], "2026-11-25T12:00:00Z")
+        self.assertEqual(sample["collection_duration_seconds"], 0.375)
+
+    def test_sample_timestamp_is_not_taken_before_gpu_probes_finish(self):
+        fixed = datetime(2026, 11, 25, 12, 0, 1, tzinfo=timezone.utc)
+        gpu = Mock(stdout='"NVIDIA Test GPU", 10, 1024, 8192, 55, 100.0\\n')
+        processes = Mock(stdout="")
+        with patch.object(monitor, "datetime") as clock, \
+             patch.object(monitor.time, "monotonic", side_effect=[20.0, 20.5]), \
+             patch.object(monitor.shutil, "which", return_value="/usr/bin/nvidia-smi"), \
+             patch.object(monitor.subprocess, "run", side_effect=[gpu, processes]) as run:
+            clock.now.return_value = fixed
+            sample = monitor.sample_nvidia_smi()
+            self.assertFalse(clock.now.called)
+            self.assertEqual(run.call_count, 2)
+        self.assertEqual(sample["sampled_at"], "2026-11-25T12:00:01Z")
+        self.assertEqual(sample["collection_duration_seconds"], 0.5)
 
     def test_cpu_utilization_uses_counter_delta(self):
         with patch.object(monitor.Path, "read_text", return_value="cpu 100 0 100 800 0 0 0 0 0 0"):
