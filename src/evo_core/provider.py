@@ -97,11 +97,11 @@ class OpenAICompatibleProvider:
             text = text.replace(str(self.api_key), "[REDACTED]")
         return text[:500]
 
-    def list_models(self):
+    def list_models(self, *, timeout_seconds=None):
         request = urllib.request.Request(self.base_url + "/v1/models",
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"})
         try:
-            with self._open_response(request, "GET", "/models", min(self.timeout,10)) as response:
+            with self._open_response(request, "GET", "/models", min(self.timeout, 10) if timeout_seconds is None else min(self.timeout, timeout_seconds, 10)) as response:
                 status = getattr(response, "status", 200)
                 if status >= 400:
                     raise ProviderHTTPError(status, "Model-list")
@@ -121,7 +121,7 @@ class OpenAICompatibleProvider:
                 raise ProviderError("Model-list request failed endpoint policy") from exc
             raise
 
-    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
+    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None, *, timeout_seconds=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
                    "stream_options":{"include_usage":True},"max_tokens":max_tokens,"temperature":temperature}
         if tools:
@@ -143,7 +143,7 @@ class OpenAICompatibleProvider:
         malformed_event = False
         finish_reason = None
         try:
-            with self._open_response(request, "POST", "/chat/completions", self.timeout) as response:
+            with self._open_response(request, "POST", "/chat/completions", self.timeout if timeout_seconds is None else min(self.timeout, timeout_seconds)) as response:
                 status = getattr(response, "status", 200)
                 if status >= 400:
                     raise ProviderHTTPError(status, "Chat completion")
