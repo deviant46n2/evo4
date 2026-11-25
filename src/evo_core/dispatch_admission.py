@@ -444,7 +444,7 @@ def admit_invocation(
     approval=None,
     provider_budget: ProviderBudget | None = None,
     telemetry=None,
-    resource_demand: ResourceDemand,
+    local_profile=None,
     policy=AdmissionPolicy(),
     owner_id=None,
     now=None,
@@ -461,8 +461,12 @@ def admit_invocation(
         raise ValueError("now must be a timezone-aware datetime")
     now = now.astimezone(timezone.utc)
     deadline, requested_tokens = _validate_envelope(runtime, envelope, now)
-    if not isinstance(resource_demand, ResourceDemand):
-        raise AdmissionError("a code-owned resource demand is required")
+    try:
+        resource_demand = derive_resource_demand(runtime, local_profile=local_profile)
+    except AdmissionError:
+        raise
+    except Exception as exc:
+        raise AdmissionError("participant resource declaration is invalid") from exc
     if not isinstance(policy, AdmissionPolicy):
         raise AdmissionError("an explicit admission policy is required")
     participant_limits = dict(runtime.participant.limits)
