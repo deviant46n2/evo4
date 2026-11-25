@@ -51,11 +51,6 @@ def definition(secret=False):
     }
 
 
-class FakeProvider:
-    def __init__(self, endpoint, api_key, model, timeout):
-        self.base_url, self.api_key, self.model, self.timeout = endpoint, api_key, model, timeout
-
-
 class RuntimeInvocationSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -88,7 +83,6 @@ class RuntimeInvocationSnapshotTests(unittest.TestCase):
     def build(self, config=None):
         return build_workspace_runtime(
             self.store, config or self.base_config, self.workspace["workspace_id"],
-            provider_factory=FakeProvider,
         )
 
     def test_persists_exact_secret_safe_snapshot_and_integrity_hash(self):
