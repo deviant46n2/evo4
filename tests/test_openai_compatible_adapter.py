@@ -195,6 +195,17 @@ class OpenAICompatibleParticipantAdapterTests(unittest.TestCase):
         with self.assertRaises(ParticipantDispatchDisabledError):
             list(adapter.invoke(participant, envelope("p")))
 
+    def test_authorized_bounded_completion_probe_verifies_exact_model(self):
+        adapter = OpenAICompatibleParticipantAdapter(
+            provider_factory=FakeProvider,
+            dispatch_authorizer=lambda operation, participant, envelope: operation == "availability_probe",
+        )
+        participant = adapter.bind_component(model_component(self.endpoint), provenance("p"))
+        evidence = adapter.probe_completion(participant, timeout_seconds=3)
+        self.assertTrue(evidence.transport_reachable)
+        self.assertTrue(evidence.completion_verified)
+        self.assertEqual(evidence.state, "available")
+
     def test_admitted_test_invocation_yields_normalized_events_and_result(self):
         adapter = OpenAICompatibleParticipantAdapter(
             provider_factory=FakeProvider,
