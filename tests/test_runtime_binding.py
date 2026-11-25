@@ -60,14 +60,6 @@ def schema2_definition(*, model="model-a", endpoint="http://127.0.0.1:18997/v1",
     }
 
 
-class FakeProvider:
-    def __init__(self, endpoint, api_key, model, timeout):
-        self.base_url = endpoint
-        self.api_key = api_key
-        self.model = model
-        self.timeout = timeout
-
-
 class RegistryRuntimeBindingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -112,8 +104,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
 
     def build(self, **kwargs):
         return build_workspace_runtime(
-            self.store, self.base_config, self.workspace["workspace_id"],
-            provider_factory=FakeProvider, **kwargs
+            self.store, self.base_config, self.workspace["workspace_id"], **kwargs
         )
 
     def test_runtime_uses_exact_revision_not_global_toml(self):
@@ -140,7 +131,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         changed = replace(self.base_config, model="other-global", base_url="https://elsewhere.invalid",
                           max_tokens=123, temperature=1.7, context_window_tokens=8192)
         runtime = build_workspace_runtime(
-            self.store, changed, self.workspace["workspace_id"], provider_factory=FakeProvider
+            self.store, changed, self.workspace["workspace_id"]
         )
         self.assertEqual(runtime.assistant.config.model, "model-a")
         self.assertEqual(runtime.assistant.config.max_tokens, 777)
@@ -198,7 +189,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeBindingError):
             build_workspace_runtime(self.store, self.base_config, workspace["workspace_id"],
-                                    provider_factory=FakeProvider)
+                                    )
 
     def test_secret_resolution_is_transient_and_not_in_provenance(self):
         secret_config = schema2_definition(secret_refs={"api_key": "env:EVO_RUNTIME_TEST_KEY"})
@@ -212,8 +203,8 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         try:
             config = replace(self.base_config, allowed_secret_env_vars=("EVO_RUNTIME_TEST_KEY",))
             runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"],
-                                              provider_factory=FakeProvider)
-            self.assertEqual(runtime.assistant.provider.api_key, "runtime-secret-value")
+                                              )
+            self.assertEqual(runtime.assistant.config.api_key, "no-key")
             self.assertEqual(runtime.participant_adapter._provider_for(runtime.bound_participant).api_key, "runtime-secret-value")
             self.assertNotIn("runtime-secret-value", repr(runtime.bound_participant))
             self.assertNotIn("runtime-secret-value", repr(runtime.provenance))
