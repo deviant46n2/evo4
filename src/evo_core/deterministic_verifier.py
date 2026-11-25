@@ -238,7 +238,7 @@ class DeterministicVerifierParticipantAdapter:
             },
             json.dumps(sample, separators=(",", ":")),
         )
-        return AvailabilityEvidence(True, True, outcome.valid, _utc_now(), "local deterministic self-test")
+        return AvailabilityEvidence(True, None, outcome.valid, _utc_now(), "local deterministic self-test")
 
     def invoke(self, participant: BoundDeterministicVerifier, envelope: InvocationEnvelope, *, cancellation_event=None):
         if not isinstance(participant, BoundDeterministicVerifier):
