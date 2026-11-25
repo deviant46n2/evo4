@@ -318,12 +318,30 @@ class VerifiedCodingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "passing verification evidence"):
             orchestration.finish_plan(self.db, self.plan["id"], "completed")
 
-    def test_propose_with_model_requires_effective_allowlist(self):
-        class NeverCalledProvider:
-            def chat(self, *args, **kwargs):
-                raise AssertionError("provider must not be called without an allowlist")
-        with self.assertRaisesRegex(ValueError, "No effective command allowlist"):
-            orchestration.propose_with_model(NeverCalledProvider(), "request", "/w", allowed_commands=[])
+    def test_empty_allowlist_is_disclosed_and_executable_plan_is_rejected(self):
+        class CapturingProvider:
+            def __init__(self):
+                self.messages = None
+            def chat(self, messages, **kwargs):
+                self.messages = messages
+                return {"content": json.dumps({
+                    "title": "Inspect",
+                    "summary": "Inspection only.",
+                    "steps": [{"title": "Inspect", "description": "Read files.",
+                               "expected_outcome": "Understand the project.",
+                               "verification": "Manual inspection.",
+                               "verification_commands": []}],
+                })}
+        provider = CapturingProvider()
+        proposal = orchestration.propose_with_model(
+            provider, "inspect", "/w", allowed_commands=[]
+        )
+        self.assertEqual(proposal["title"], "Inspect")
+        self.assertIn("none configured", provider.messages[0]["content"])
+        with self.assertRaisesRegex(ValueError, "effective command allowlist"):
+            orchestration.create_plan(
+                self.db, "inspect", "/w", proposal, allowed_commands=[]
+            )
 
     def test_propose_with_model_receives_allowlist(self):
         class FakeProvider:
