@@ -14,7 +14,7 @@ from .store import utc_now
 
 
 MIGRATION_NAME = "runtime_invocation_snapshots_v1"
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 2
 MAX_SNAPSHOT_BYTES = 262144
 
 
