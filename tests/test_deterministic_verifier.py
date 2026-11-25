@@ -161,6 +161,16 @@ class DeterministicVerifierParticipantTests(unittest.TestCase):
         self.assertIn("missing_required_field:evidence", parsed["issues"])
         self.assertIn("unexpected_field:extra", parsed["issues"])
 
+    def test_evidence_reference_count_is_bounded(self):
+        adapter, participant = self.bind(authorizer=lambda p, e: True)
+        refs = [f"run:{index}" for index in range(129)]
+        output = json.dumps({"status": "ok", "evidence": refs})
+        result = list(adapter.invoke(participant, envelope(participant, output)))[-1]
+        parsed = json.loads(result.output_json)
+        self.assertFalse(parsed["valid"])
+        self.assertIn("too_many_evidence_references", parsed["issues"])
+        self.assertEqual(result.evidence_references, ())
+
     def test_wrong_participant_identity_is_rejected(self):
         adapter, participant = self.bind(authorizer=lambda p, e: True)
         request = envelope(participant, '{"status":"ok","evidence":["run:1"]}', participant_id="other")
