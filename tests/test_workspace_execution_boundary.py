@@ -454,17 +454,20 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         plan_id = body["id"]
         with self.app.state.lab_db.lock:
             approve_plan(self.app.state.lab_db.connection, plan_id)
-        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
+        status, first_execution = asgi_request(
+            self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {}
+        )
         self.assertEqual(status, 202)
-        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
+        status, body = asgi_request(
+            self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {}
+        )
         self.assertEqual(status, 409)
         cancel_status, cancel_body = asgi_request(
-            self.app, "POST", self._scoped_path(f"/api/v1/agents/{body.get('run_id', '')}/cancel"), {}
-        ) if body.get("run_id") else (None, {})
-        # The first execution owns the plan; its pending verification approval is cancelled
-        # to keep this lifecycle test isolated and avoid leaving a worker waiting.
-        if cancel_status is not None:
-            self.assertEqual(cancel_status, 200)
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/{first_execution['run_id']}/cancel"), {},
+        )
+        self.assertEqual(cancel_status, 200)
+        self.assertTrue(cancel_body["cancelled"])
 
     def test_plan_worker_revalidation_finalizes_plan(self):
         calls = {"count": 0}
