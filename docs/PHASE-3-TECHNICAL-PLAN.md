@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status: P3.1 accepted; P3.2 implementation complete and independently validated, pending explicit phase acceptance.** The validated candidate includes workspace runtime binding, immutable invocation snapshots, API-boundary wiring, and fail-closed worker continuity. P3.5 live dispatch remains gated.  
+**Status: P3.1 accepted; P3.2 implementation complete and independently validated, pending explicit phase acceptance.** The validated candidate includes workspace runtime binding, immutable invocation snapshots, API-boundary wiring, and fail-closed worker continuity. P3.5 live dispatch remains gated.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
