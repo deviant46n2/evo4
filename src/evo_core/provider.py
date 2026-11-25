@@ -62,11 +62,14 @@ def _reject_json_constant(value):
 
 
 def _strict_json_loads(value):
-    return json.loads(
-        value,
-        object_pairs_hook=_unique_json_pairs,
-        parse_constant=_reject_json_constant,
-    )
+    try:
+        return json.loads(
+            value,
+            object_pairs_hook=_unique_json_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except RecursionError as exc:
+        raise ValueError("JSON nesting exceeds the parser limit") from exc
 
 
 class ProviderError(RuntimeError):
@@ -143,7 +146,9 @@ class OpenAICompatibleProvider:
             if self.transport is None:
                 raise ProviderError("Model-list request failed") from exc
             raise ProviderTimeoutError("Model-list request timed out") from exc
-        except (urllib.error.URLError, OSError, http.client.HTTPException, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise ProviderMalformedResponseError("Model-list response is malformed") from exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise ProviderError("Model-list request failed") from exc
         except ProviderEndpointError as exc:
             if "timed out" in str(exc):
@@ -187,7 +192,11 @@ class OpenAICompatibleProvider:
                         raise ProviderMalformedResponseError("Chat completion stream exceeds the size limit")
                     if len(raw) == 1_048_577 and not raw.endswith(b"\\n"):
                         raise ProviderMalformedResponseError("Chat completion SSE line exceeds the size limit")
-                    line = raw.decode("utf-8",errors="replace").strip()
+                    try:
+                        line = raw.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        malformed_event = True
+                        continue
                     if not line.startswith("data:"):
                         continue
                     saw_event = True
