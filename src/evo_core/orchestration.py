@@ -301,7 +301,7 @@ def finish_step(connection, plan_id, step_id, outcome, result="", verification_s
             raise ValueError("A step with configured verification commands cannot be marked not-required")
         if commands and verification_status == "passed":
             checks = [dict(item) for item in connection.execute(
-                "SELECT command_json,status FROM agent_plan_step_verifications WHERE plan_id=? AND step_id=? ORDER BY id",
+                "SELECT command_json,status,exit_code FROM agent_plan_step_verifications WHERE plan_id=? AND step_id=? ORDER BY id",
                 (plan_id, step_id),
             ).fetchall()]
             for check in checks:
@@ -326,6 +326,8 @@ def finish_step(connection, plan_id, step_id, outcome, result="", verification_s
 def record_verification(connection, plan_id, step_id, command, status, exit_code=None, stdout="", stderr=""):
     if status not in {"passed", "failed", "denied", "error", "timed_out"}:
         raise ValueError("Invalid verification status")
+    if status == "passed" and (type(exit_code) is not int or exit_code != 0):
+        raise ValueError("Passing verification evidence requires exit code 0")
     if not isinstance(command, (list, tuple)) or not command or not all(
         isinstance(part, str) and part.strip() for part in command
     ):
@@ -362,7 +364,7 @@ def step_verification_status(step):
         return "not_configured"
     if not checks:
         return "not_run"
-    if any(check.get("status") != "passed" for check in checks):
+    if any(check.get("status") != "passed" or check.get("exit_code") != 0 for check in checks):
         return "failed"
     remaining = [list(command) for command in commands]
     for check in checks:
@@ -403,7 +405,7 @@ def finish_plan(connection, plan_id, outcome, error=""):
             for step_row in steps:
                 step = _step(step_row)
                 checks = [dict(item) for item in connection.execute(
-                    "SELECT command_json,status FROM agent_plan_step_verifications WHERE plan_id=? AND step_id=? ORDER BY id",
+                    "SELECT command_json,status,exit_code FROM agent_plan_step_verifications WHERE plan_id=? AND step_id=? ORDER BY id",
                     (plan_id, step["id"]),
                 ).fetchall()]
                 for check in checks:
