@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+import time
 
 
 _cpu_lock = threading.Lock()
@@ -87,8 +88,8 @@ def _gpu_processes(binary):
 
 
 def sample_nvidia_smi():
+    collection_started = time.monotonic()
     sample = {
-        "sampled_at": datetime.now(timezone.utc).isoformat(),
         "gpu_name": None, "gpu_utilization_percent": None,
         "gpu_memory_used_mib": None, "gpu_memory_total_mib": None,
         "gpu_memory_used_percent": None, "gpu_temperature_c": None,
@@ -125,6 +126,10 @@ def sample_nvidia_smi():
                 sample["gpu_processes"] = _gpu_processes(binary)
         except (subprocess.SubprocessError, OSError, IndexError):
             pass
+    # Timestamp only after every bounded probe has completed. Admission freshness
+    # must describe when this complete snapshot became available, not when it began.
+    sample["sampled_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    sample["collection_duration_seconds"] = round(max(0.0, time.monotonic() - collection_started), 6)
     return sample
 
 
