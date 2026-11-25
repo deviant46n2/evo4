@@ -191,6 +191,49 @@ class ConversationApiScopeTests(unittest.TestCase):
         self.assertEqual(row2["project_id"], self.project["project_id"])
 
 
+
+class WorkspaceRuntimeBindingDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.config = make_config(self.root)
+        self.app = create_app(self.config)
+        self.store = self.app.state.store
+        project = register_project(self.store, "Runtime diagnostics project")
+        checkout_path = self.root / "runtime-checkout"
+        checkout_path.mkdir()
+        checkout = register_checkout(self.store, project["project_id"], checkout_path)
+        created = create_configuration(
+            self.store, schema2_workspace_definition(), name="Runtime diagnostics config"
+        )
+        self.workspace = create_workspace(
+            self.store, "Runtime diagnostics workspace", project["project_id"],
+            created["configuration"]["configuration_id"], created["revision"]["revision_id"],
+            checkout_id=checkout["checkout_id"],
+        )
+
+    def tearDown(self):
+        self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
+        self.app.state.assistant.close()
+        self.app.state.lab_db.close()
+        self.temp.cleanup()
+
+    def test_runtime_binding_exposes_non_secret_integration_identity(self):
+        status, body = asgi_request(
+            self.app, "GET",
+            f"/api/v1/workspaces/{self.workspace['workspace_id']}/runtime-binding",
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["integration_id"].startswith("integration_"))
+        self.assertEqual(body["origin"], "http://127.0.0.1:18997")
+        self.assertEqual(body["provider_budget_configured"], False)
+        self.assertEqual(body["local_resource_profile_configured"], False)
+        self.assertEqual(body["provider_approval_status"], "unknown")
+        self.assertFalse(body["dispatch_enabled"])
+        self.assertNotIn("api_key", body)
+        self.assertNotIn("secret", _json.dumps(body).lower())
+
+
 if __name__ == "__main__":
     unittest.main()
 
