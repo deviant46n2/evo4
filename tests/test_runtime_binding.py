@@ -102,9 +102,9 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.store.db.close()
         self.temp.cleanup()
 
-    def build(self, **kwargs):
+    def build(self):
         return build_workspace_runtime(
-            self.store, self.base_config, self.workspace["workspace_id"], **kwargs
+            self.store, self.base_config, self.workspace["workspace_id"]
         )
 
     def test_runtime_uses_exact_revision_not_global_toml(self):
@@ -188,8 +188,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
             checkout_id=self.checkout["checkout_id"],
         )
         with self.assertRaises(RuntimeBindingError):
-            build_workspace_runtime(self.store, self.base_config, workspace["workspace_id"],
-                                    )
+            build_workspace_runtime(self.store, self.base_config, workspace["workspace_id"])
 
     def test_secret_resolution_is_transient_and_not_in_provenance(self):
         secret_config = schema2_definition(secret_refs={"api_key": "env:EVO_RUNTIME_TEST_KEY"})
@@ -202,8 +201,7 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         os.environ["EVO_RUNTIME_TEST_KEY"] = "runtime-secret-value"
         try:
             config = replace(self.base_config, allowed_secret_env_vars=("EVO_RUNTIME_TEST_KEY",))
-            runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"],
-                                              )
+            runtime = build_workspace_runtime(self.store, config, workspace["workspace_id"])
             self.assertEqual(runtime.assistant.config.api_key, "no-key")
             self.assertEqual(runtime.participant_adapter._provider_for(runtime.bound_participant).api_key, "runtime-secret-value")
             self.assertNotIn("runtime-secret-value", repr(runtime.bound_participant))
