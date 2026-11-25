@@ -193,6 +193,11 @@ class PinnedProviderTransportTests(unittest.TestCase):
         resolved = transport.resolve_destination("https://private.example.test/v1")
         self.assertEqual(str(resolved[-1]), "10.20.30.40")
 
+    def test_ipv4_mapped_loopback_endpoint_is_accepted(self):
+        transport = PinnedProviderTransport(EndpointPolicy())
+        parsed = transport.validate_origin("http://[::ffff:127.0.0.1]:18997/v1")
+        self.assertTrue(parsed[-1])
+
     def test_ipv4_mapped_ipv6_is_normalized(self):
         def resolver(host, port, type=socket.SOCK_STREAM):
             return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:127.0.0.1", port, 0, 0))]
