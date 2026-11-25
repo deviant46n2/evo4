@@ -103,6 +103,8 @@ class OpenAICompatibleParticipantAdapter:
             )
         except (TypeError, ValueError) as exc:
             raise ParticipantAdapterError("model adapter declaration is unsupported") from exc
+        if adapter.get("id") != self.adapter_id or adapter.get("contract_version") != self.contract_version:
+            raise ParticipantAdapterError("model component does not target this adapter version")
         settings = component.get("settings")
         if not isinstance(settings, Mapping) or set(settings) != {
             "endpoint", "model", "timeout_seconds"
@@ -174,10 +176,8 @@ class OpenAICompatibleParticipantAdapter:
         if not isinstance(timeout_seconds, int) or isinstance(timeout_seconds, bool) or not 1 <= timeout_seconds <= 10:
             raise ValueError("preflight timeout must be between 1 and 10 seconds")
         provider = participant.provider
-        original_timeout = provider.timeout
-        provider.timeout = min(original_timeout, timeout_seconds)
         try:
-            models = provider.list_models()
+            models = provider.list_models(timeout_seconds=timeout_seconds)
             return AvailabilityEvidence(
                 True, participant.model in models, None, _utc_now(),
                 "openai_compatible:/v1/models",
@@ -202,9 +202,7 @@ class OpenAICompatibleParticipantAdapter:
                 False, None, None, _utc_now(),
                 "openai_compatible:model_listing_unreachable",
             )
-        finally:
-            provider.timeout = original_timeout
-
+        
     def probe_completion(
         self,
         participant: BoundOpenAICompatibleParticipant,
@@ -219,7 +217,7 @@ class OpenAICompatibleParticipantAdapter:
         try:
             result = participant.provider.chat(
                 [{"role": "user", "content": "Reply with OK."}],
-                max_tokens=1, temperature=0.0,
+                max_tokens=1, temperature=0.0, timeout_seconds=timeout,
             )
             verified = bool(result.get("content")) and not result.get("truncated")
             return AvailabilityEvidence(
@@ -255,9 +253,17 @@ class OpenAICompatibleParticipantAdapter:
             or envelope.adapter_contract_version != self.contract_version
         ):
             raise ParticipantAdapterError("invocation identity does not match the bound participant")
-        if envelope.deadline_utc and not isinstance(envelope.deadline_utc, str):
+        if not isinstance(envelope.deadline_utc, str) or not envelope.deadline_utc:
             raise ParticipantAdapterError("invocation deadline is invalid")
+        try:
+            deadline = datetime.fromisoformat(envelope.deadline_utc.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ParticipantAdapterError("invocation deadline is invalid") from exc
+        if deadline.tzinfo is None or deadline <= datetime.now(timezone.utc):
+            raise ParticipantAdapterError("invocation deadline is expired or lacks a timezone")
         request = _strict_json_object(envelope.input_json, "invocation input")
+        if len(envelope.input_json.encode("utf-8")) > 1_048_576:
+            raise ParticipantAdapterError("invocation input exceeds the size limit")
         if set(request) - {"messages", "max_tokens", "temperature", "tools"}:
             raise ParticipantAdapterError("invocation input contains unsupported fields")
         messages = request.get("messages")
@@ -265,6 +271,14 @@ class OpenAICompatibleParticipantAdapter:
         temperature = request.get("temperature", 0.2)
         if not isinstance(messages, list) or not messages or len(messages) > 256:
             raise ParticipantAdapterError("invocation messages are invalid")
+        for message in messages:
+            if (
+                not isinstance(message, dict)
+                or message.get("role") not in {"system", "developer", "user", "assistant", "tool"}
+                or set(message) - {"role", "content", "name", "tool_call_id", "tool_calls"}
+                or not isinstance(message.get("content", ""), (str, list, type(None)))
+            ):
+                raise ParticipantAdapterError("invocation message shape is invalid")
         if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or not 1 <= max_tokens <= 32768:
             raise ParticipantAdapterError("invocation output token limit is invalid")
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not 0 <= temperature <= 2:
