@@ -69,7 +69,11 @@ class AgentPlanScopeTests(unittest.TestCase):
         self.directory = self.root / "checkout"
         self.directory.mkdir()
         self.checkout = register_checkout(self.store, self.project["project_id"], self.directory)
-        config_result = create_configuration(self.store, {"schema_version": 1, "components": {}}, name="cfg")
+        config_result = create_configuration(
+            self.store,
+            {"schema_version": 1, "components": {"command_policy": {"allowed_commands": [["python", "-c"]]}}},
+            name="cfg",
+        )
         self.configuration = config_result["configuration"]
         self.revision = config_result["revision"]
         self.workspace = create_workspace(
@@ -91,7 +95,7 @@ class AgentPlanScopeTests(unittest.TestCase):
                 "request",
                 self.workspace["workspace_id"],
                 str(self.directory),
-                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d"}]},
+                {"title": "t", "summary": "s", "steps": [{"title": "a", "description": "b", "expected_outcome": "c", "verification": "d", "verification_commands": [["python", "-c", "print('ok')"]]}]},
                 project_id=self.project["project_id"],
                 store=self.store,
             )
@@ -102,6 +106,13 @@ class AgentPlanScopeTests(unittest.TestCase):
         metadata = _json.loads(run["metadata_json"])
         self.assertEqual(metadata.get("project_id"), self.project["project_id"])
         self.assertEqual(metadata.get("workspace_id"), self.workspace["workspace_id"])
+        cancel_status, cancel_body = asgi_request(
+            self.app, "POST",
+            f"/api/v1/agents/{body['run_id']}/cancel?project_id={self.project['project_id']}&workspace_id={self.workspace['workspace_id']}",
+            {},
+        )
+        self.assertEqual(cancel_status, 200)
+        self.assertTrue(cancel_body["cancelled"])
 
     def test_list_plans_filters_before_limit(self):
         from evo_core.orchestration import create_plan, list_plans
