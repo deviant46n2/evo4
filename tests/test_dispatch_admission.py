@@ -1,4 +1,7 @@
+import json
+import sqlite3
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,7 +14,13 @@ from evo_core.dispatch_admission import (
     ResourceDemand,
     derive_resource_demand,
     evaluate_resource_admission,
+    acknowledge_abandoned_dispatch_recovery,
+    finalize_invocation,
+    get_invocation_lifecycle,
+    heartbeat_dispatch_lease,
     initialize_invocation_lifecycle,
+    mark_invocation_running,
+    mark_stale_dispatch_leases_abandoned,
 )
 from evo_core.store import EvoStore
 
@@ -174,6 +183,106 @@ class ResourceDeclarationTests(unittest.TestCase):
             derive_resource_demand(runtime),
             ResourceDemand("local_process", 0.10, 64.0),
         )
+
+
+class InvocationLifecycleTransitionTests(unittest.TestCase):
+    def _store_with_invocation(self, *, heartbeat_age_seconds=0):
+        now = datetime.now(timezone.utc)
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("CREATE TABLE schema_migrations(name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
+        connection.execute("CREATE TABLE runtime_invocation_snapshots(invocation_id TEXT PRIMARY KEY)")
+        store = SimpleNamespace(db=connection, lock=threading.RLock())
+        initialize_invocation_lifecycle(store)
+        connection.execute("INSERT INTO runtime_invocation_snapshots(invocation_id) VALUES('inv-1')")
+        connection.execute(
+            """INSERT INTO participant_invocations(
+                invocation_id,workspace_id,project_id,participant_id,integration_id,adapter_id,
+                configuration_id,revision_id,revision_hash,snapshot_hash,status,decision_json,
+                deadline_utc,requested_output_tokens,budget_day_utc,created_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ("inv-1","ws-1","project-1","participant-1","integration-1",
+             "openai_compatible_chat","config-1","revision-1","revhash","snaphash",
+             "running",json.dumps({"decision":"admitted"}),
+             (now + timedelta(minutes=2)).isoformat().replace("+00:00","Z"),
+             100,"2026-11-25",now.isoformat().replace("+00:00","Z"),
+             now.isoformat().replace("+00:00","Z")),
+        )
+        heartbeat = (now - timedelta(seconds=heartbeat_age_seconds)).isoformat().replace("+00:00","Z")
+        connection.execute(
+            """INSERT INTO dispatch_leases(
+                lease_key,invocation_id,owner_id,state,acquired_at,heartbeat_at,deadline_utc
+            ) VALUES(?,?,?,?,?,?,?)""",
+            ("global_provider_dispatch","inv-1","owner-1","active",heartbeat,heartbeat,
+             (now + timedelta(minutes=2)).isoformat().replace("+00:00","Z")),
+        )
+        connection.commit()
+        return store, now
+
+    def test_running_transition_requires_active_provider_lease(self):
+        store, _ = self._store_with_invocation()
+        try:
+            store.db.execute("UPDATE participant_invocations SET status='admitted' WHERE invocation_id='inv-1'")
+            store.db.execute("DELETE FROM dispatch_leases WHERE invocation_id='inv-1'")
+            store.db.commit()
+            self.assertFalse(mark_invocation_running(store, "inv-1"))
+        finally:
+            store.db.close()
+
+    def test_heartbeat_refreshes_only_an_active_unexpired_lease(self):
+        store, _ = self._store_with_invocation()
+        try:
+            self.assertTrue(heartbeat_dispatch_lease(store, "inv-1"))
+            store.db.execute("UPDATE dispatch_leases SET state='abandoned' WHERE invocation_id='inv-1'")
+            store.db.commit()
+            self.assertFalse(heartbeat_dispatch_lease(store, "inv-1"))
+        finally:
+            store.db.close()
+
+    def test_unsettled_cancellation_abandons_lease_until_operator_acknowledges_idle(self):
+        store, _ = self._store_with_invocation()
+        try:
+            self.assertTrue(finalize_invocation(store, "inv-1", "cancelled", provider_settled=False))
+            lease = store.db.execute("SELECT state FROM dispatch_leases WHERE invocation_id='inv-1'").fetchone()
+            self.assertEqual(lease["state"], "abandoned")
+            with self.assertRaises(AdmissionError):
+                acknowledge_abandoned_dispatch_recovery(
+                    store, actor="operator", reason="not checked", endpoint_idle_confirmed=False
+                )
+            result = acknowledge_abandoned_dispatch_recovery(
+                store, actor="operator", reason="Verified inference server is idle",
+                endpoint_idle_confirmed=True,
+            )
+            self.assertTrue(result["released"])
+            self.assertIsNone(store.db.execute("SELECT 1 FROM dispatch_leases").fetchone())
+            lifecycle = get_invocation_lifecycle(store, "inv-1")
+            self.assertEqual(lifecycle["status"], "cancelled")
+            self.assertIn("abandoned_lease_operator_recovery", [event["event_type"] for event in lifecycle["events"]])
+        finally:
+            store.db.close()
+
+    def test_stale_lease_is_marked_abandoned_but_never_auto_released(self):
+        store, now = self._store_with_invocation(heartbeat_age_seconds=30)
+        try:
+            self.assertEqual(
+                mark_stale_dispatch_leases_abandoned(store, stale_after_seconds=15, now=now),
+                1,
+            )
+            lease = store.db.execute("SELECT state FROM dispatch_leases WHERE invocation_id='inv-1'").fetchone()
+            self.assertEqual(lease["state"], "abandoned")
+            self.assertIsNotNone(store.db.execute("SELECT 1 FROM dispatch_leases").fetchone())
+        finally:
+            store.db.close()
+
+    def test_provider_settled_after_stale_heartbeat_can_release_lease(self):
+        store, now = self._store_with_invocation(heartbeat_age_seconds=30)
+        try:
+            mark_stale_dispatch_leases_abandoned(store, stale_after_seconds=15, now=now)
+            self.assertTrue(finalize_invocation(store, "inv-1", "succeeded", provider_settled=True))
+            self.assertIsNone(store.db.execute("SELECT 1 FROM dispatch_leases").fetchone())
+        finally:
+            store.db.close()
 
 
 class InvocationLifecycleSchemaTests(unittest.TestCase):
