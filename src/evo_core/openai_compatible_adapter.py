@@ -280,7 +280,7 @@ class OpenAICompatibleParticipantAdapter:
                 None, None, None, _utc_now(),
                 "openai_compatible:model_listing_unverified",
             )
-        
+
     def probe_completion(
         self,
         participant: BoundOpenAICompatibleParticipant,
