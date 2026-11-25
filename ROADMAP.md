@@ -29,7 +29,7 @@ Phase status is evidence-based. "Designed" is not implemented; "implemented" is 
 
 1. **Governance, baseline, and architecture reconciliation — in progress.** Reconcile current implementation facts, accepted decisions, security boundaries, document authority, and development governance. This pass is a substantial revision, not phase completion.
 2. **Project, workspace, instruction, and context isolation — partially implemented.** Complete the Registry-based project/workspace boundary; provision safe project checkouts; enforce path and checkout isolation; establish minimum global-versus-project scoping for conversations, memories, lessons, research, instructions, tasks, and command policy. This phase establishes the trust boundaries required before multi-participant work.
-3. **Participant contracts and runtime integration — designed in part, not implemented as a common runtime contract.** Define provider/model/agent/tool/human participant identity, capabilities, availability, compliance, trust evidence, scoped assignments, permissions, context envelopes, messages, handoffs, and verification. Explicitly bind versioned AI Configuration definitions to concrete runtime adapters and dispatch. Establish minimal per-dispatch resource admission and provider budgets before any cooperative execution.
+3. **Participant contracts and runtime integration — partially implemented.** P3.1–P3.4 and P3-R4 are accepted. P3.5 authorization, provider budgets, resource admission, and invocation lifecycle are implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests); formal acceptance remains pending. P3.6 read-only API/configuration inspection and P3.7 independent review/Phase 3 acceptance remain. Phase 3 is not complete.
 4. **First Evo-managed cooperative vertical slice — not started.** Execute a bounded benchmark task end-to-end inside Evo using at least two distinct Evo-connected participants and the Phase 3 contracts. Demonstrate complementary contributions, synthesis, challenge, adjudication, deterministic verification where available, and inspectable outcomes. GPT-6/Kilo is design inspiration and a human-mediated development workflow only; it is not the Phase 4 runtime test.
 5. **Durable, bounded orchestration — partially implemented foundations.** Generalize only what the vertical slice proves necessary: durable task/assignment state, typed communication, validated handoffs, interruption/cancellation propagation, resumption, recovery, approval, concurrency controls, and resource admission. Enforce least privilege and budgets at every execution boundary.
 6. **Advanced shared context and persistent memory — partially implemented foundations.** Build on Phase 2's minimum scope partitioning with provenance, epistemic status, context reconstruction, correction/supersession, retrieval evaluation, and explicit user-controlled cross-project consultation. This phase may improve memory quality; it must not be the first point at which project isolation exists.
@@ -432,3 +432,19 @@ Acceptance closes P3-R4's resource-admission design and telemetry-freshness prer
 Independent detached-worktree validation of the exact implementation target: compileall passed; full unittest suite passed (843 tests, zero failures/errors/skips); focused runtime, workspace-boundary, invocation-snapshot, and orchestration tests passed (100 tests). The sole review finding was trailing whitespace in documentation, corrected in the documentation-only follow-up; no application code or tests changed in that cleanup. Subsequent cumulative validation for P3.3 (863 tests), P3.4 (877 tests), and P3-R4 (879 tests) also passed, with cumulative diff checks clean.
 
 Source review found no remaining P3.2 implementation blocker: workspace chat, plan proposal, plan execution, and coding-agent entrypoints create typed invocation snapshots; worker continuity verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert and cannot dispatch to a live provider before P3.5. This acceptance covers P3.2 runtime binding and invocation-snapshot continuity only; it does not implement or accept P3.5, enable live dispatch, or imply that external provider calls occurred.
+
+
+## P3.5 dispatch integration — independent validation PASS; formal acceptance pending
+
+**Validation target:** `922051067fa41ecd75038714aafe96e514333f28` on `agent-p35-dispatch-admission-v1`; base `3ab42edac54a46a28ae09112b24cf61f10d9a871`.
+
+Independent detached-worktree validation reported:
+- `python -m compileall -q src tests`: exit 0.
+- Focused seven-module suite: 117/117 passed.
+- Full unittest suite: 916/916 passed; zero failures, errors, or skips.
+- `git diff --check 3ab42edac54a46a28ae09112b24cf61f10d9a871..HEAD`: exit 0.
+- Independent source/security review: no remaining findings; workspace-bound provider execution crosses authorization/admission before provider worker startup; budgets, approvals, resource checks, snapshots, leases, cancellation, timeout, recovery, and secret-safe diagnostics were reviewed.
+- The three findings from the preceding validation were corrected and revalidated.
+- Original checkout remained `local-demo-ready-v1` at `a8ab59324caceab5b6fb2e5c674276c5ba96d072`, status unchanged; all 32 pre-existing worktrees were preserved.
+
+This is a validation record, **not a formal acceptance record**. No external provider calls were performed. `dispatch.enabled` remains false by default; this validation does not enable live dispatch or authorize changing the operator's local configuration. P3.6 and P3.7 remain outstanding.
