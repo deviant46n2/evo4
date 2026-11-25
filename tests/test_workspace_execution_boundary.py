@@ -23,8 +23,30 @@ from evo_core.workspaces import (
 )
 
 VALID_DEFINITION = {
-    "schema_version": 1,
-    "components": {"command_policy": {"allowed_commands": [["python", "-c"]]}},
+    "schema_version": 2,
+    "components": {
+        "primary_model": {
+            "type": "model", "component_version": 1,
+            "adapter": {"id": "openai_compatible_chat", "contract_version": 1},
+            "settings": {"endpoint": "http://127.0.0.1:18997/v1", "model": "test-model", "timeout_seconds": 30},
+        },
+        "assistant_runtime": {
+            "type": "assistant_runtime", "component_version": 1,
+            "adapter": {"id": "evo_assistant_runtime", "contract_version": 1},
+            "settings": {
+                "model_component": "primary_model", "persona_prompt": "",
+                "max_output_tokens": 256, "temperature": 0.0,
+                "context_window_tokens": 4096, "history_messages": 4,
+                "max_history_chars": 4000, "memory_limit": 2,
+            },
+        },
+        "project_policy": {
+            "type": "command_policy", "component_version": 1,
+            "adapter": {"id": "evo_command_policy", "contract_version": 1},
+            "settings": {"allowed_commands": [["python", "-c"]]},
+        },
+    },
+    "entrypoints": {"assistant": "assistant_runtime"},
 }
 
 
@@ -293,15 +315,15 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
             self.app, "GET", self._scoped_path(f"/api/v1/agents/{run_id}"))
         return status, body
 
-    def test_valid_workspace_starts_run(self):
+    def test_valid_schema2_workspace_is_denied_before_agent_run_creation(self):
+        before = len(self.store.list_agent_runs(limit=1000))
         status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
             "request": "inspect",
             "workspace_id": self.workspace["workspace_id"],
         })
-        self.assertEqual(status, 202)
-        run = self.store.get_agent_run(body["run_id"])
-        metadata = json.loads(run["metadata_json"])
-        self.assertEqual(metadata.get("workspace_id"), self.workspace["workspace_id"])
+        self.assertEqual(status, 503)
+        self.assertIn("P3.5", body["detail"])
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), before)
 
     def test_missing_workspace_id_rejected(self):
         status, body = asgi_request(self.app, "POST", "/api/v1/agents", {"request": "inspect"})
@@ -337,13 +359,13 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         after = len(self.store.list_agent_runs(limit=1000))
         self.assertEqual(before, after)
 
-    def test_plan_persists_workspace_id(self):
+    def test_plan_proposal_is_denied_before_provider_dispatch(self):
         status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
             "request": "plan",
             "workspace_id": self.workspace["workspace_id"],
         })
-        self.assertEqual(status, 201)
-        self.assertEqual(body["workspace_id"], self.workspace["workspace_id"])
+        self.assertEqual(status, 503)
+        self.assertIn("P3.5", body["detail"])
 
     def test_plan_creation_uses_resolved_path(self):
         with patch("evo_core.orchestration.propose_with_model") as mocked:
@@ -364,8 +386,8 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
                 "request": "plan",
                 "workspace_id": self.workspace["workspace_id"],
             })
-            self.assertEqual(status, 201)
-            self.assertEqual(mocked.call_args.args[2], str(self.directory.resolve()))
+            self.assertEqual(status, 503)
+            mocked.assert_not_called()
 
     def test_legacy_plan_cannot_execute(self):
         with self.app.state.lab_db.lock:
@@ -391,107 +413,120 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         status, body = asgi_request(self.app, "POST", f"/api/v1/agents/plans/{plan['id']}/execute", {})
         self.assertEqual(status, 409)
 
-    def test_plan_execution_uses_workspace_id(self):
-        status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
-            "request": "plan",
-            "workspace_id": self.workspace["workspace_id"],
-        })
-        self.assertEqual(status, 201)
-        plan_id = body["id"]
+    def test_approved_plan_is_not_scheduled_before_dispatch_admission(self):
         with self.app.state.lab_db.lock:
-            approve_plan(self.app.state.lab_db.connection, plan_id)
-        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
-        self.assertEqual(status, 202)
-        run = self.store.get_agent_run(body["run_id"])
-        metadata = json.loads(run["metadata_json"])
-        self.assertEqual(metadata.get("workspace_id"), self.workspace["workspace_id"])
-        cancel_status, cancel_body = asgi_request(
-            self.app, "POST", self._scoped_path(f"/api/v1/agents/{body['run_id']}/cancel"), {}
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved plan", "summary": "Plan used to test dispatch admission.",
+                    "steps": [{
+                        "title": "Step", "description": "Do work", "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        before = len(self.store.list_agent_runs(limit=1000))
+        status, body = asgi_request(
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute"), {},
         )
-        self.assertEqual(cancel_status, 200)
-        self.assertTrue(cancel_body["cancelled"])
+        self.assertEqual(status, 503)
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), before)
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
 
     def test_plan_workspace_invalidated_after_approval(self):
-        status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
-            "request": "plan",
-            "workspace_id": self.workspace["workspace_id"],
-        })
-        plan_id = body["id"]
         with self.app.state.lab_db.lock:
-            approve_plan(self.app.state.lab_db.connection, plan_id)
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved plan", "summary": "Plan used to test dispatch admission.",
+                    "steps": [{
+                        "title": "Step", "description": "Do work", "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
         from evo_core.workspaces import archive_workspace
-
         archive_workspace(self.store, self.workspace["workspace_id"], expected_version=self.workspace["version"])
-        status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
+        status, body = asgi_request(
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute"), {},
+        )
         self.assertEqual(status, 409)
 
-    def test_worker_revalidation_failure_finalizes_run(self):
-        calls = {"count": 0}
-        original = __import__("evo_core.workspaces", fromlist=["resolve_executable_workspace"]).resolve_executable_workspace
-
-        def flaky(store, workspace_id):
-            calls["count"] += 1
-            if calls["count"] == 1:
-                return original(store, workspace_id)
-            raise __import__("evo_core.workspaces", fromlist=["WorkspaceRelationshipError"]).WorkspaceRelationshipError("invalidated")
-
-        with patch("evo_core.api.workspace_registry.resolve_executable_workspace", side_effect=flaky):
+    def test_worker_is_not_submitted_before_dispatch_admission(self):
+        with patch.object(self.app.state.execution_executor, "submit") as submit:
             status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
                 "request": "inspect",
                 "workspace_id": self.workspace["workspace_id"],
             })
-            self.assertEqual(status, 202)
-            run_id = body["run_id"]
-            run_status, run_body = self._run_status(run_id)
-            self.assertEqual(run_status, 200)
-            self.assertEqual(run_body["status"], "failed")
+        self.assertEqual(status, 503)
+        submit.assert_not_called()
 
-    def test_plan_cannot_execute_twice(self):
-        status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
-            "request": "plan",
-            "workspace_id": self.workspace["workspace_id"],
-        })
-        plan_id = body["id"]
+    def test_plan_remains_approved_when_dispatch_is_disabled(self):
         with self.app.state.lab_db.lock:
-            approve_plan(self.app.state.lab_db.connection, plan_id)
-        status, first_execution = asgi_request(
-            self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {}
-        )
-        self.assertEqual(status, 202)
-        status, body = asgi_request(
-            self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {}
-        )
-        self.assertEqual(status, 409)
-        cancel_status, cancel_body = asgi_request(
-            self.app, "POST",
-            self._scoped_path(f"/api/v1/agents/{first_execution['run_id']}/cancel"), {},
-        )
-        self.assertEqual(cancel_status, 200)
-        self.assertTrue(cancel_body["cancelled"])
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved plan", "summary": "Plan used to test dispatch admission.",
+                    "steps": [{
+                        "title": "Step", "description": "Do work", "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        path = self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute")
+        first_status, _ = asgi_request(self.app, "POST", path, {})
+        second_status, _ = asgi_request(self.app, "POST", path, {})
+        self.assertEqual(first_status, 503)
+        self.assertEqual(second_status, 503)
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
 
-    def test_plan_worker_revalidation_finalizes_plan(self):
-        calls = {"count": 0}
-        original = __import__("evo_core.workspaces", fromlist=["resolve_executable_workspace"]).resolve_executable_workspace
-
-        def flaky(store, workspace_id):
-            calls["count"] += 1
-            if calls["count"] < 3:
-                return original(store, workspace_id)
-            raise __import__("evo_core.workspaces", fromlist=["WorkspaceRelationshipError"]).WorkspaceRelationshipError("invalidated")
-
-        with patch("evo_core.api.workspace_registry.resolve_executable_workspace", side_effect=flaky):
-            status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
-                "request": "plan",
-                "workspace_id": self.workspace["workspace_id"],
-            })
-            self.assertEqual(status, 201)
-            plan_id = body["id"]
-            with self.app.state.lab_db.lock:
-                approve_plan(self.app.state.lab_db.connection, plan_id)
-            status, body = asgi_request(self.app, "POST", self._scoped_path(f"/api/v1/agents/plans/{plan_id}/execute"), {})
-            self.assertEqual(status, 202)
-            run_id = body["run_id"]
-            self._run_status(run_id)
-            with self.app.state.lab_db.lock:
-                plan = get_plan(self.app.state.lab_db.connection, plan_id)
-            self.assertEqual(plan["status"], "failed")
+    def test_plan_worker_is_not_submitted_before_dispatch_admission(self):
+        with self.app.state.lab_db.lock:
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved plan", "summary": "Plan used to test dispatch admission.",
+                    "steps": [{
+                        "title": "Step", "description": "Do work", "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        with patch.object(self.app.state.execution_executor, "submit") as submit:
+            status, body = asgi_request(
+                self.app, "POST",
+                self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute"), {},
+            )
+        self.assertEqual(status, 503)
+        submit.assert_not_called()
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
