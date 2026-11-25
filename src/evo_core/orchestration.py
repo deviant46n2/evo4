@@ -454,10 +454,6 @@ def propose_with_model(provider, request, workspace, max_tokens=1800, allowed_co
     allowed_text = "none configured"
     if allowed_commands:
         allowed_text = ", ".join(" ".join(str(part) for part in prefix) for prefix in allowed_commands if prefix)
-    else:
-        raise ValueError(
-            "No effective command allowlist is configured; an executable plan cannot be proposed safely."
-        )
     system = (
         "You are Evo's task planner. Return ONLY one JSON object with keys title, summary, steps. "
         "Create 2-8 sequential, concrete steps. Each step must have title, description, expected_outcome, "
