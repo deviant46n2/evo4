@@ -415,10 +415,18 @@ def _validate_envelope(runtime, envelope, now):
     remaining = (deadline - now).total_seconds()
     if remaining <= 0 or remaining > 600:
         raise AdmissionError("invocation deadline must be in the next 1–600 seconds")
-    if envelope.retry_limit != 0:
+    if isinstance(envelope.retry_limit, bool) or not isinstance(envelope.retry_limit, int) or envelope.retry_limit != 0:
         raise AdmissionError("automatic retries are not enabled")
-    if not isinstance(envelope.input_json, str) or len(envelope.input_json.encode("utf-8")) > 1_048_576:
+    if (
+        not isinstance(envelope.input_json, str)
+        or len(envelope.input_json) > 1_048_576
+    ):
         raise AdmissionError("invocation input is missing or oversized")
+    try:
+        if len(envelope.input_json.encode("utf-8")) > 1_048_576:
+            raise AdmissionError("invocation input is missing or oversized")
+    except UnicodeEncodeError as exc:
+        raise AdmissionError("invocation input encoding is invalid") from exc
     return deadline, _output_token_request(envelope)
 
 
@@ -467,8 +475,13 @@ def admit_invocation(
     # approval and an explicit operator-configured daily budget.
     is_provider = runtime.participant.adapter_id == "openai_compatible_chat"
     if is_provider:
-        expected_status = "local_only" if resource_demand.locality == "local_endpoint" else "approved"
-        if (
+        from .provider_endpoint import is_loopback_provider_origin
+        endpoint_is_local = is_loopback_provider_origin(origin)
+        expected_locality = "local_endpoint" if endpoint_is_local else "remote_service"
+        expected_status = "local_only" if endpoint_is_local else "approved"
+        if resource_demand.locality != expected_locality:
+            approval_result = {"decision": "denied", "reason": "resource_locality_does_not_match_endpoint"}
+        elif (
             approval is None
             or approval.status != expected_status
             or approval.adapter_id != runtime.participant.adapter_id
@@ -518,10 +531,6 @@ def admit_invocation(
         "provider_origin": origin,
         "requested_output_tokens": requested_tokens,
     }
-    if is_provider:
-        expected_locality = "local_endpoint" if approval is not None and approval.status == "local_only" else "remote_service"
-        if resource_demand.locality != expected_locality:
-            resource_result = {"decision": "denied", "reason": "resource_locality_does_not_match_endpoint"}
     if approval_result["decision"] != "admitted":
         decision.update(approval_result)
     elif budget_result["decision"] != "admitted":
@@ -660,7 +669,7 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
         ).fetchone()
         if row is None:
             return False
-        if row["status"] in TERMINAL_STATUSES:
+        if row["status"] in TERMINAL_STATUSES and not (row["status"] == "abandoned" and provider_settled):
             return False
         now = utc_now()
         db.execute(
@@ -677,7 +686,7 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
             (invocation_id,),
         ).fetchone()
         if lease is not None:
-            if provider_settled and lease["state"] == "active":
+            if provider_settled:
                 db.execute("DELETE FROM dispatch_leases WHERE invocation_id=?", (invocation_id,))
             else:
                 db.execute(
