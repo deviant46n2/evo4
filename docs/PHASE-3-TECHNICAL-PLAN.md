@@ -354,3 +354,12 @@ The precise Python names and persistence details remain implementation choices, 
 ---
 
 **Implementation boundary:** P3.1 contract foundations are accepted and P3.2 implementation is authorized. Continue only within the documented phase sequence. Do not enable live dispatch before P3.5 authorization/admission, and resolve P3-R4 before finalizing P3.5 admission.
+
+
+## P3.3 acceptance checkpoint (2026-11-25)
+
+P3.3 OpenAI-compatible participant adapter is **accepted** at exact candidate `30cc9e8cc68cfb0f519c8e5515d33fe935df6ff1` (parent `9227983befe938b9bd605acd9f54400861869def`). Independent detached-worktree validation: compileall passed; 148 focused tests passed; full suite 863/863 passed with zero failures/errors/skips; cumulative diff-check from `6c12cf467cde61166be74e1e501e58de1c8decf6` passed. Checkout/worktree preservation was confirmed.
+
+The adapter uses the pinned Registry transport, strict bounded parsing, secret redaction, immutable runtime-bound settings, and cooperative cancellation with bounded request timeouts. Actual CR/LF injection, worker ordering, pre-cancel behavior, provenance completeness, and the transport/security boundaries were verified. No live provider calls or live dispatch occurred; the API/worker dispatch gate remains closed.
+
+This does not accept P3.2 formally, resolve P3-R4, authorize P3.5, or authorize a merge. Resolve P3-R4 before finalizing P3.5 admission. P3.5 remains the first milestone that may enable live dispatch.
