@@ -1,6 +1,6 @@
 # Phase 3 Technical Plan — Participant Contracts and Runtime Integration
 
-**Status (2026-11-25): P3.1, P3.2, P3.3, P3.4, and P3-R4 accepted. P3.5 authorization, budgets, durable atomic admission, and invocation-lifecycle implementation remain outstanding. Participant invocation remains gated; P3.5 is the first milestone that may enable live dispatch.
+**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization, budgets, durable admission, and invocation lifecycle are implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests); formal acceptance remains pending. P3.6 API/configuration inspection and P3.7 independent review/Phase 3 acceptance remain outstanding. `dispatch.enabled` remains false by default.
 **Authority:** `ROADMAP.md` remains the sole authority for phase order and acceptance. This document decomposes Phase 3 into an implementation-ready sequence. It does not authorize implementation beyond the planning/documentation work explicitly requested.
 
 ## 1. Objective
@@ -450,3 +450,17 @@ This closes the P3-R4 design/freshness prerequisite only. P3.2 is separately acc
 Independent validation: compileall passed; full suite 843/843 passed; focused runtime/workspace/snapshot/orchestration tests 100/100 passed. The only finding was trailing whitespace in documentation, fixed in the docs-only follow-up. No source or tests changed in that cleanup. Later cumulative P3.3/P3.4/P3-R4 validations passed 863/863, 877/877, and 879/879 respectively, with cumulative diff checks clean.
 
 The accepted implementation constructs workspace runtimes from exact pinned revisions, records invocation snapshots at workspace-bound entrypoints, and verifies the pinned runtime again in the worker before any execution. Assistant messages retain the invocation ID. Runtime dispatch remains inert and fail-closed until P3.5. No live provider calls were made.
+
+
+## P3.5 implementation and validation status (2026-11-25)
+
+P3.5 implementation candidate `922051067fa41ecd75038714aafe96e514333f28` on `agent-p35-dispatch-admission-v1` passed independent detached-worktree validation:
+- Compileall exit 0.
+- Focused seven-module suite: 117/117 passed.
+- Full suite: 916/916 passed, zero failures/errors/skips.
+- Cumulative diff-check against `3ab42edac54a46a28ae09112b24cf61f10d9a871`: exit 0.
+- Independent security/integration review: no findings. All workspace-bound provider completions cross admission before provider worker startup; the reviewed controls include exact revision/participant identity, provider approval, integration/origin binding, provider budgets, fresh resource telemetry, durable single-flight lease, heartbeats, cancellation/timeout handling, conservative abandoned-lease recovery, and secret-safe diagnostics.
+- Prior findings on daily request accounting and test setup were corrected and revalidated.
+- Original checkout and all 32 pre-existing worktrees were preserved.
+
+**Disposition: IMPLEMENTED; INDEPENDENT VALIDATION PASS; FORMAL ACCEPTANCE PENDING.** No live provider calls were made. Dispatch remains disabled by default. P3.6 and P3.7 are not complete.

@@ -265,6 +265,43 @@ def create_app(config_path="config.toml", provider_name=None):
         except RegistryDispatchDisabledError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    @app.get("/api/v1/workspaces/{workspace_id}/runtime-binding")
+    def workspace_runtime_binding_info(workspace_id: str):
+        """Expose only non-secret runtime identity needed for operator policy setup."""
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        from .provider_endpoint import normalize_provider_origin
+        from .provider_approvals import find_provider_approval
+        origin = normalize_provider_origin(
+            f"{urlsplit(runtime.bound_participant.endpoint).scheme}://"
+            f"{urlsplit(runtime.bound_participant.endpoint).netloc}"
+        )
+        approval = find_provider_approval(
+            config.provider_approvals, origin,
+            runtime.participant.adapter_id, "chat_completion",
+        )
+        return {
+            "workspace_id": runtime.workspace_id,
+            "project_id": runtime.project_id,
+            "configuration_id": runtime.configuration_id,
+            "configuration_revision_id": runtime.revision_id,
+            "revision_hash": runtime.revision_hash,
+            "participant_id": runtime.participant.participant_id,
+            "integration_id": runtime.participant.integration_id,
+            "adapter_id": runtime.participant.adapter_id,
+            "model": runtime.participant.display_name,
+            "origin": origin,
+            "dispatch_enabled": runtime.dispatch_enabled,
+            "provider_budget_configured": any(
+                item.integration_id == runtime.participant.integration_id
+                for item in config.provider_budgets
+            ),
+            "local_resource_profile_configured": any(
+                integration_id == runtime.participant.integration_id
+                for integration_id, _profile in config.local_resource_profiles
+            ),
+            "provider_approval_status": approval.status if approval is not None else "unknown",
+        }
+
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
 

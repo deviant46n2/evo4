@@ -379,13 +379,20 @@ class CodingAgent:
                     provider_attempts += 1
                     try:
                         self._enforce_context_budget(messages)
-                        result = self.assistant.provider.chat(
-                            messages,
-                            max_tokens=self.assistant.config.max_tokens,
-                            temperature=self.assistant.config.temperature,
-                            on_token=on_token,
-                            tools=TOOL_SPECS,
-                        )
+                        provider = self.assistant.provider
+                        provider_args = {
+                            "max_tokens": self.assistant.config.max_tokens,
+                            "temperature": self.assistant.config.temperature,
+                            "on_token": on_token,
+                            "tools": TOOL_SPECS,
+                        }
+                        if getattr(provider, "dispatch_enabled", False):
+                            provider_args.update({
+                                "cancellation_event": stop_event,
+                                "parent_task_id": run_id,
+                                "task_role": "coding_agent",
+                            })
+                        result = provider.chat(messages, **provider_args)
                         for call in result.get("tool_calls") or []:
                             if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
                                 raise InvalidToolCallError(

@@ -136,7 +136,7 @@ def envelope(participant_id, *, input_json=None):
         approval_requirements=(),
         deadline_utc=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
         retry_limit=0,
-        remaining_budgets=(),
+        remaining_budgets=(("output_tokens", 8), ("request_seconds", 10)),
         correlation_id="correlation-1",
     )
 

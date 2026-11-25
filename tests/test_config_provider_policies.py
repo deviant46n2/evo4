@@ -166,5 +166,99 @@ data_handling_reference = "handling-v2"
             parse_provider_approvals([unknown_use])
 
 
+    def test_loads_bounded_provider_budgets_and_local_resource_profiles(self):
+        text = BASE_CONFIG + """
+[[dispatch.provider_budgets]]
+integration_id = "integration_0123456789abcdef0123456789abcdef"
+maximum_requests_per_utc_day = 100
+maximum_output_tokens_per_invocation = 4096
+maximum_reserved_output_tokens_per_utc_day = 65536
+
+[[dispatch.local_resource_profiles]]
+integration_id = "integration_0123456789abcdef0123456789abcdef"
+compute_mode = "gpu"
+cpu_cores = 1.0
+ram_mib = 1024
+gpu_vram_mib = 2048
+memory_mode = "persistent_incremental"
+maximum_gpu_temperature_c = 83
+"""
+        temp = tempfile.TemporaryDirectory()
+        path = Path(temp.name) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        try:
+            config = load_config(path)
+            self.assertEqual(len(config.provider_budgets), 1)
+            self.assertEqual(config.provider_budgets[0].maximum_requests_per_utc_day, 100)
+            self.assertEqual(config.local_resource_profiles[0][0], "integration_0123456789abcdef0123456789abcdef")
+            self.assertEqual(config.local_resource_profiles[0][1]["gpu_vram_mib"], 2048)
+        finally:
+            temp.cleanup()
+
+    def test_dispatch_policy_rejects_duplicate_and_invalid_profiles(self):
+        duplicate_budget = BASE_CONFIG + """
+[[dispatch.provider_budgets]]
+integration_id = "integration_same"
+maximum_requests_per_utc_day = 10
+maximum_output_tokens_per_invocation = 1024
+maximum_reserved_output_tokens_per_utc_day = 8192
+
+[[dispatch.provider_budgets]]
+integration_id = "integration_same"
+maximum_requests_per_utc_day = 10
+maximum_output_tokens_per_invocation = 1024
+maximum_reserved_output_tokens_per_utc_day = 8192
+"""
+        invalid_profile = BASE_CONFIG + """
+[[dispatch.local_resource_profiles]]
+integration_id = "integration_same"
+compute_mode = "gpu"
+cpu_cores = 1
+ram_mib = 1024
+memory_mode = "persistent_incremental"
+"""
+        for text in (duplicate_budget, invalid_profile):
+            with self.subTest(text=text):
+                temp = tempfile.TemporaryDirectory()
+                path = Path(temp.name) / "config.toml"
+                path.write_text(text, encoding="utf-8")
+                try:
+                    with self.assertRaises(ValueError):
+                        load_config(path)
+                finally:
+                    temp.cleanup()
+
+    def test_dispatch_policy_rejects_unknown_fields(self):
+        text = BASE_CONFIG + """
+[dispatch]
+allow_everything = true
+"""
+        temp = tempfile.TemporaryDirectory()
+        path = Path(temp.name) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            temp.cleanup()
+
+
+    def test_dispatch_enabled_requires_a_boolean_and_defaults_off(self):
+        config, temp = self._load(BASE_CONFIG)
+        try:
+            self.assertFalse(config.dispatch_enabled)
+        finally:
+            temp.cleanup()
+        text = BASE_CONFIG + "\\n[dispatch]\\nenabled = \"yes\"\\n"
+        temp = tempfile.TemporaryDirectory()
+        path = Path(temp.name) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        try:
+            with self.assertRaises(ValueError):
+                load_config(path)
+        finally:
+            temp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

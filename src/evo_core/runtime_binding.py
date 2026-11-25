@@ -1,7 +1,8 @@
 """Registry-driven, revision-pinned assistant runtime construction.
 
-P3.2 binds a workspace to a complete assistant configuration, but deliberately
-keeps live Registry-bound provider dispatch disabled until P3.5 admission exists.
+Workspace-bound provider dispatch remains disabled by default. The opt-in P3.5
+bridge installs only code-owned authorization and admission logic; it does not
+accept dispatch callbacks or permissions from workspace configuration.
 """
 from dataclasses import dataclass, replace
 from hashlib import sha256
@@ -88,12 +89,14 @@ class RegistryBoundRuntime:
 
     @property
     def dispatch_enabled(self):
-        return False
+        return bool(getattr(self.assistant.provider, "dispatch_enabled", False))
 
     def require_dispatch_enabled(self):
-        raise RegistryDispatchDisabledError(
-            "Registry-bound invocation is not enabled; P3.5 authorization and admission are required"
-        )
+        if not self.dispatch_enabled:
+            raise RegistryDispatchDisabledError(
+                "Registry-bound invocation is disabled; set dispatch.enabled only after P3.5 acceptance"
+            )
+        return True
 
     def assert_current(self, store):
         """Re-resolve the registered binding and reject any identity drift."""
@@ -140,9 +143,8 @@ def _component(definition, component_key, expected_type):
 def build_workspace_runtime(store, base_config, workspace_id):
     """Build a complete assistant runtime from the exact workspace-pinned revision.
 
-    The assistant's provider is always non-network-capable before P3.5.
-    The separate participant adapter is bound for inspection/contract tests,
-    but has no dispatch authorizer installed.
+    The assistant receives a non-network-capable provider unless the operator
+    explicitly enables the P3.5 dispatch gate in local Evo configuration.
     """
     try:
         binding = workspaces.resolve_executable_workspace(store, workspace_id)
@@ -208,10 +210,19 @@ def build_workspace_runtime(store, base_config, workspace_id):
             component_version=model_component["component_version"],
             compliance_reference=None,
         )
-        # Construct the Registry adapter with the pinned transport, but do not
-        # install a dispatch authorizer. P3.5 must supply that gate explicitly.
+        # Dispatch remains disabled by default. When the operator explicitly
+        # enables the P3.5 gate after acceptance, the adapter receives only the
+        # code-owned controller callback; workspace configuration cannot supply
+        # or replace authorization logic.
+        dispatch_controller = None
+        if getattr(base_config, "dispatch_enabled", False):
+            from .dispatch_provider import RuntimeDispatchController
+            dispatch_controller = RuntimeDispatchController(store, base_config)
         participant_adapter = OpenAICompatibleParticipantAdapter(
             allowed_origins=base_config.allowed_provider_origins,
+            dispatch_authorizer=(
+                dispatch_controller.authorize if dispatch_controller is not None else None
+            ),
         )
         bound_participant = participant_adapter.bind_component(
             model_component,
@@ -314,7 +325,7 @@ def build_workspace_runtime(store, base_config, workspace_id):
                 for key, reference in model_component.get("secret_refs", {}).items()
             )),
         })
-        return RegistryBoundRuntime(
+        runtime = RegistryBoundRuntime(
             workspace_id=binding["workspace_id"],
             project_id=binding["project_id"],
             configuration_id=binding["configuration_id"],
@@ -331,6 +342,11 @@ def build_workspace_runtime(store, base_config, workspace_id):
             additional_participants=tuple(additional_participants),
             additional_participant_bindings=tuple(additional_participant_bindings),
         )
+        if dispatch_controller is not None:
+            from .dispatch_provider import DispatchingProvider
+            dispatch_controller.bind_runtime(runtime)
+            assistant.provider = DispatchingProvider(store, runtime, dispatch_controller)
+        return runtime
     except (ConfigurationValidationError, CommandPolicyError, SecretResolutionError, ParticipantAdapterError, DeterministicVerifierError) as exc:
         raise RuntimeBindingError("workspace configuration cannot be bound to an executable runtime") from exc
     except workspaces.WorkspaceNotFoundError:

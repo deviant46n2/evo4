@@ -1,6 +1,6 @@
 # Phase 3 Technical Review — GPT-6 Engineering Challenge
 
-**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization/admission/lifecycle implementation remains outstanding. No live Registry-bound dispatch is enabled.
+**Status (2026-11-25):** P3.1–P3.4 and P3-R4 accepted. P3.5 authorization/admission/lifecycle is implemented and independently validated at `922051067fa41ecd75038714aafe96e514333f28` (916/916 tests), with formal acceptance pending. P3.6 and P3.7 remain outstanding. Dispatch remains disabled by default.
 **Reviewed:** `docs/PHASE-3-TECHNICAL-PLAN.md`, `docs/PHASE-3.1-CONTRACT-PROPOSAL.md`, and the current Phase 2/3 statements in `ROADMAP.md`.
 **Review standard:** Challenge correctness, operability, security, and testability before implementation. The roadmap remains the authority for sequence and acceptance.
 
@@ -219,3 +219,19 @@ P3-R4 is closed as the resource-admission design and telemetry-freshness prerequ
 Independent detached-worktree validation: compileall passed; full unittest suite passed (843 tests, zero failures/errors/skips); focused runtime, workspace-boundary, invocation-snapshot, and orchestration tests passed (100 tests). The sole finding was trailing whitespace in documentation, corrected in the docs-only follow-up. No application code or tests changed in that cleanup. Later cumulative P3.3, P3.4, and P3-R4 validation passed 863, 877, and 879 tests respectively, with cumulative diff checks clean.
 
 Review found no remaining implementation blocker: all workspace-bound entrypoints create typed invocation snapshots; worker continuity re-resolves and verifies the exact pinned runtime and fails closed on revision drift; assistant turns persist invocation identity on both messages. Runtime construction remains inert. This acceptance does not implement P3.5 or enable live dispatch/provider calls.
+
+
+## P3.5 independent validation disposition — PASS (formal acceptance pending)
+
+Exact candidate: `922051067fa41ecd75038714aafe96e514333f28`, branch `agent-p35-dispatch-admission-v1`, base `3ab42edac54a46a28ae09112b24cf61f10d9a871`.
+
+Independent detached-worktree validation:
+- Compileall exit 0.
+- Focused tests: 117/117 passed.
+- Full suite: 916/916 passed, zero failures/errors/skips.
+- Diff-check exit 0.
+- Independent source/security review reported no findings.
+- The three findings from the prior candidate were resolved: daily request allowance semantics clarified and tested; pre-dispatch cancellation test initializes lifecycle schema; disabled-dispatch test no longer passes an invalid envelope.
+- Original checkout remained unchanged at `local-demo-ready-v1` / `a8ab59324caceab5b6fb2e5c674276c5ba96d072`; 32 pre-existing worktrees were restored.
+
+This is evidence of implementation and independent validation, not a formal acceptance decision. No live provider calls occurred and dispatch remains disabled by default. P3.6 read-only API/configuration inspection and P3.7 independent Phase 3 review remain.

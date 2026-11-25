@@ -7,6 +7,7 @@ authorization callback, which is intentionally absent before P3.5.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 import re
 from queue import Empty, Queue
 import threading
@@ -349,7 +350,6 @@ class OpenAICompatibleParticipantAdapter:
         outcome. The blocking HTTP request itself remains bounded by timeout;
         the current transport cannot forcibly interrupt an in-flight read.
         """
-        self._authorize("participant_invocation", participant, envelope)
         if not isinstance(envelope, InvocationEnvelope):
             raise TypeError("invocation envelope is required")
         for field_name in ("invocation_id", "objective", "task_role", "correlation_id"):
@@ -381,7 +381,22 @@ class OpenAICompatibleParticipantAdapter:
         remaining_seconds = (deadline - datetime.now(timezone.utc)).total_seconds()
         if remaining_seconds <= 0:
             raise ParticipantAdapterError("invocation deadline has expired")
-        request_timeout = min(float(participant.timeout_seconds), remaining_seconds)
+        try:
+            remaining_budgets = dict(envelope.remaining_budgets)
+            request_budget = remaining_budgets.get("request_seconds")
+        except (TypeError, ValueError):
+            raise ParticipantAdapterError("invocation request-time budget is invalid")
+        if (
+            isinstance(request_budget, bool)
+            or not isinstance(request_budget, (int, float))
+            or not math.isfinite(request_budget)
+            or request_budget <= 0
+            or request_budget > 600
+        ):
+            raise ParticipantAdapterError("invocation request-time budget is invalid")
+        request_timeout = min(
+            float(participant.timeout_seconds), remaining_seconds, float(request_budget)
+        )
         if not isinstance(envelope.input_json, str):
             raise ParticipantAdapterError("invocation input must be JSON text")
         try:
@@ -472,6 +487,11 @@ class OpenAICompatibleParticipantAdapter:
             validate_participant_result(cancelled)
             yield cancelled
             return
+        # Authorization/admission happens only after the complete envelope and
+        # request have passed validation and after pre-dispatch cancellation has
+        # been observed. The callback must atomically acquire the lease and move
+        # the invocation to running before this provider thread can start.
+        self._authorize("participant_invocation", participant, envelope)
         # Start provider work before yielding: a generator suspends at yield,
         # so starting afterward would prevent cancellation observation until
         # the caller requested another event.
