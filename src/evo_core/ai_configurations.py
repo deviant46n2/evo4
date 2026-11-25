@@ -331,8 +331,8 @@ def _validate_schema2_mapping(value):
     if set(value) - {"extensions"} != {"schema_version", "components", "entrypoints"}:
         raise ConfigurationValidationError("schema 2 requires schema_version, components, and entrypoints")
     components = value["components"]
-    if not isinstance(components, dict) or not components:
-        raise ConfigurationValidationError("schema-2 components must be a non-empty object")
+    if not isinstance(components, dict) or not components or len(components) > 64:
+        raise ConfigurationValidationError("schema-2 components must be an object with 1 through 64 entries")
     for key, component in components.items():
         _validate_schema2_component(key, component)
     entrypoints = value["entrypoints"]
@@ -360,10 +360,12 @@ def _validate_schema2_mapping(value):
                 or set(extension) != {"version", "data"}
                 or isinstance(extension.get("version"), bool)
                 or not isinstance(extension.get("version"), int)
-                or extension["version"] < 1
+                or not 1 <= extension["version"] <= 2_147_483_647
                 or not isinstance(extension.get("data"), dict)
             ):
                 raise ConfigurationValidationError(f"extension {name!r} must contain version and object data")
+    if len(canonical_json(value).encode("utf-8")) > 2_097_152:
+        raise ConfigurationValidationError("schema-2 definition exceeds the 2 MiB size limit")
     _reject_non_finite(value)
     _check_json_compatible(value)
     _check_sensitive_keys(value)
