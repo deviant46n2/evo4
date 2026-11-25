@@ -337,15 +337,27 @@ class DeterministicVerifierParticipantAdapter:
                 request["output"],
             )
             evidence = []
+            evidence_overflow = False
             if "malformed_json" not in outcome.issues and "output_must_be_object" not in outcome.issues:
                 parsed = _strict_json_object(request["output"], "participant output")
                 for field in participant.evidence_fields:
                     values = parsed.get(field)
                     if isinstance(values, list):
-                        evidence.extend(value for value in values if isinstance(value, str) and value.strip())
+                        for value in values:
+                            if isinstance(value, str) and value.strip():
+                                evidence.append(value)
+                                if len(evidence) > 128:
+                                    evidence_overflow = True
+                                    break
+                    if evidence_overflow:
+                        break
+            issues = list(outcome.issues)
+            if evidence_overflow:
+                issues.append("too_many_evidence_references")
+            valid = outcome.valid and not evidence_overflow
             result_payload = {
-                "valid": outcome.valid,
-                "issues": list(outcome.issues),
+                "valid": valid,
+                "issues": issues,
                 "output_bytes": outcome.output_bytes,
                 "evidence_reference_shape_only": True,
             }
@@ -355,7 +367,7 @@ class DeterministicVerifierParticipantAdapter:
                 "succeeded",
                 _utc_now(),
                 output_json=json.dumps(result_payload, sort_keys=True, separators=(",", ":")),
-                evidence_references=tuple(evidence[:128]) if outcome.valid else (),
+                evidence_references=tuple(evidence) if valid else (),
             )
         except (DeterministicVerifierError, TypeError, ValueError, UnicodeEncodeError):
             result = ParticipantResult(
