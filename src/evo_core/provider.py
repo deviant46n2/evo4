@@ -331,6 +331,8 @@ class OpenAICompatibleProvider:
             )
         if not pieces and not tool_call_parts and finish_reason != "length":
             raise ProviderMalformedResponseError("Server returned an empty completion")
+        if self.transport is not None and finish_reason is None:
+            raise ProviderMalformedResponseError("Server returned no terminal finish reason")
         finished = time.perf_counter()
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")
