@@ -35,14 +35,22 @@ class HardwareTelemetryTests(unittest.TestCase):
         fixed = datetime(2026, 11, 25, 12, 0, 1, tzinfo=timezone.utc)
         gpu = Mock(stdout='"NVIDIA Test GPU", 10, 1024, 8192, 55, 100.0\\n')
         processes = Mock(stdout="")
+        events = []
         with patch.object(monitor, "datetime") as clock, \
              patch.object(monitor.time, "monotonic", side_effect=[20.0, 20.5]), \
              patch.object(monitor.shutil, "which", return_value="/usr/bin/nvidia-smi"), \
-             patch.object(monitor.subprocess, "run", side_effect=[gpu, processes]) as run:
-            clock.now.return_value = fixed
+             patch.object(
+                 monitor.subprocess,
+                 "run",
+                 side_effect=lambda *args, **kwargs: (
+                     events.append("gpu_probe" if not events else "process_probe"),
+                     gpu if not events[:-1] else processes,
+                 )[1],
+             ) as run:
+            clock.now.side_effect = lambda *_: (events.append("timestamp"), fixed)[1]
             sample = monitor.sample_nvidia_smi()
-            self.assertFalse(clock.now.called)
             self.assertEqual(run.call_count, 2)
+        self.assertEqual(events, ["gpu_probe", "process_probe", "timestamp"])
         self.assertEqual(sample["sampled_at"], "2026-11-25T12:00:01Z")
         self.assertEqual(sample["collection_duration_seconds"], 0.5)
 
