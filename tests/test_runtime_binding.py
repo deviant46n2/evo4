@@ -55,6 +55,17 @@ def schema2_definition(*, model="model-a", endpoint="http://127.0.0.1:18997/v1",
                 "adapter": {"id": "evo_command_policy", "contract_version": 1},
                 "settings": {"allowed_commands": allowed_commands or [["python", "-m", "unittest"]]},
             },
+            "verifier": {
+                "type": "deterministic_verifier",
+                "component_version": 1,
+                "adapter": {"id": "evo_deterministic_verifier", "contract_version": 1},
+                "settings": {
+                    "required_fields": ["status", "evidence"],
+                    "evidence_fields": ["evidence"],
+                    "max_output_bytes": 4096,
+                    "allow_additional_fields": False,
+                },
+            },
         },
         "entrypoints": {"assistant": "assistant_runtime"},
     }
@@ -126,6 +137,17 @@ class RegistryRuntimeBindingTests(unittest.TestCase):
         self.assertEqual(runtime.bound_participant.temperature, 0.35)
         self.assertIsInstance(runtime.participant_adapter._provider_for(runtime.bound_participant).transport, PinnedProviderTransport)
         self.assertEqual(runtime.effective_allowed_commands, (("python", "-m", "unittest"),))
+        self.assertEqual(len(runtime.additional_participants), 1)
+        verifier = runtime.additional_participants[0]
+        self.assertEqual(verifier.adapter_id, "evo_deterministic_verifier")
+        self.assertEqual(verifier.participant_type, "deterministic_tool")
+        self.assertEqual(verifier.execution_location, "local_process")
+        self.assertEqual(verifier.configuration_revision_id, self.revision["revision_id"])
+        verifier_adapter, bound_verifier = runtime.additional_participant_bindings[0]
+        self.assertEqual(bound_verifier.component_key, "verifier")
+        with self.assertRaises(Exception) as disabled:
+            list(verifier_adapter.invoke(bound_verifier, None))
+        self.assertIn("P3.5", str(disabled.exception))
 
     def test_global_model_changes_do_not_change_bound_runtime(self):
         changed = replace(self.base_config, model="other-global", base_url="https://elsewhere.invalid",
