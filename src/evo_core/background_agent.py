@@ -41,6 +41,31 @@ def initialize(connection):
     for column in ("project_id", "workspace_id"):
         if column not in existing:
             connection.execute(f"ALTER TABLE background_agent_tasks ADD COLUMN {column} TEXT")
+    # Backfill scope for tasks created by earlier versions. Missing or malformed
+    # legacy metadata remains explicitly unscoped rather than being guessed.
+    rows = connection.execute(
+        """SELECT task.run_id, run.metadata_json
+           FROM background_agent_tasks AS task
+           JOIN agent_runs AS run ON run.id=task.run_id
+           WHERE task.project_id IS NULL AND task.workspace_id IS NULL"""
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row[1] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        project_id = metadata.get("project_id")
+        workspace_id = metadata.get("workspace_id")
+        if (
+            isinstance(project_id, str) and project_id.strip()
+            and (workspace_id is None or isinstance(workspace_id, str) and workspace_id.strip())
+        ):
+            connection.execute(
+                "UPDATE background_agent_tasks SET project_id=?,workspace_id=? WHERE run_id=?",
+                (project_id.strip(), workspace_id.strip() if isinstance(workspace_id, str) else None, row[0]),
+            )
     connection.commit()
 
 def _run_scope(connection, run_id):
@@ -50,9 +75,11 @@ def _run_scope(connection, run_id):
     if row is None:
         raise ValueError("Agent run not found")
     try:
-        metadata = json.loads(row["metadata_json"] or "{}")
+        metadata = json.loads(row[0] or "{}")
     except (TypeError, ValueError) as exc:
         raise ValueError("Agent run scope metadata is malformed") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("Agent run scope metadata must be an object")
     project_id = metadata.get("project_id")
     workspace_id = metadata.get("workspace_id")
     if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
@@ -61,7 +88,8 @@ def _run_scope(connection, run_id):
         raise ValueError("Agent run workspace_id metadata is invalid")
     if workspace_id is not None and project_id is None:
         raise ValueError("Agent run workspace_id requires project_id")
-    return project_id, workspace_id
+    return (project_id.strip() if isinstance(project_id, str) else None,
+            workspace_id.strip() if isinstance(workspace_id, str) else None)
 
 def create(connection, run_id):
     stamp = now()
