@@ -245,7 +245,8 @@ class CodingAgent:
             raise ValueError("An approval callback is required")
 
         requested_target = instruction_target
-        if requested_target is None:            requested_target = target_path
+        if requested_target is None:
+            requested_target = target_path
         if requested_target is None:
             requested_target = target
         if requested_target is None:
