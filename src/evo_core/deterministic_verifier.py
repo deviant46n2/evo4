@@ -7,6 +7,7 @@ resolve references, prove claims, or grant authority.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -83,12 +84,19 @@ class DeterministicVerifierParticipantAdapter:
 
     adapter_id = "evo_deterministic_verifier"
     contract_version = 1
+    __slots__ = ("_dispatch_authorizer", "_sealed")
     _MAX_INPUT_BYTES = 1_052_672
 
     def __init__(self, *, dispatch_authorizer=None):
         if dispatch_authorizer is not None and not callable(dispatch_authorizer):
             raise TypeError("dispatch_authorizer must be callable or None")
-        self._dispatch_authorizer = dispatch_authorizer
+        object.__setattr__(self, "_dispatch_authorizer", dispatch_authorizer)
+        object.__setattr__(self, "_sealed", True)
+
+    def __setattr__(self, name, value):
+        if getattr(self, "_sealed", False):
+            raise AttributeError("verifier adapter configuration is immutable")
+        object.__setattr__(self, name, value)
 
     def validate_component(self, component: Mapping[str, Any]) -> None:
         if not isinstance(component, Mapping) or set(component) != {
@@ -121,7 +129,11 @@ class DeterministicVerifierParticipantAdapter:
             if (
                 not isinstance(values, (list, tuple))
                 or len(values) > 128
-                or any(not isinstance(value, str) or not value for value in values)
+                or any(
+                    not isinstance(value, str)
+                    or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}", value) is None
+                    for value in values
+                )
                 or len(values) != len(set(values))
             ):
                 raise DeterministicVerifierError(f"verifier {name} is invalid")
@@ -295,7 +307,17 @@ class DeterministicVerifierParticipantAdapter:
             )
             return
 
-        if len(envelope.input_json.encode("utf-8")) > self._MAX_INPUT_BYTES:
+        if not isinstance(envelope.input_json, str):
+            yield ParticipantResult(
+                envelope.invocation_id, participant.participant_id, "malformed_output", _utc_now(),
+                error_code="invalid_input", error_message="verifier input must be text",
+            )
+            return
+        try:
+            input_size = len(envelope.input_json.encode("utf-8"))
+        except UnicodeEncodeError:
+            input_size = self._MAX_INPUT_BYTES + 1
+        if input_size > self._MAX_INPUT_BYTES:
             yield ParticipantResult(
                 envelope.invocation_id, participant.participant_id, "malformed_output", _utc_now(),
                 error_code="input_too_large", error_message="verifier input exceeds the size limit",
