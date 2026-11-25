@@ -459,12 +459,11 @@ class OpenAICompatibleParticipantAdapter:
 
         worker = threading.Thread(target=run_provider, name="evo-participant-provider", daemon=True)
         sequence = 0
-        yield ParticipantEvent(
-            str(uuid4()), envelope.invocation_id, participant.participant_id,
-            sequence, "started", _utc_now(), "{}", "openai_compatible_chat/1",
-        )
-        sequence += 1
         if cancellation_event is not None and cancellation_event.is_set():
+            yield ParticipantEvent(
+                str(uuid4()), envelope.invocation_id, participant.participant_id,
+                sequence, "started", _utc_now(), "{}", "openai_compatible_chat/1",
+            )
             cancelled = ParticipantResult(
                 envelope.invocation_id, participant.participant_id,
                 "cancelled", _utc_now(), error_code="cancelled",
@@ -473,7 +472,15 @@ class OpenAICompatibleParticipantAdapter:
             validate_participant_result(cancelled)
             yield cancelled
             return
+        # Start provider work before yielding: a generator suspends at yield,
+        # so starting afterward would prevent cancellation observation until
+        # the caller requested another event.
         worker.start()
+        yield ParticipantEvent(
+            str(uuid4()), envelope.invocation_id, participant.participant_id,
+            sequence, "started", _utc_now(), "{}", "openai_compatible_chat/1",
+        )
+        sequence += 1
         deadline_monotonic = time.monotonic() + request_timeout
         try:
             while True:
