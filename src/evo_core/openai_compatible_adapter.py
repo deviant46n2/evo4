@@ -10,6 +10,7 @@ import json
 import re
 from queue import Empty, Queue
 import threading
+import time
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -295,8 +296,13 @@ class OpenAICompatibleParticipantAdapter:
         if authorized is not True:
             raise ParticipantDispatchDisabledError("participant dispatch was not admitted")
 
-    def invoke(self, participant, envelope: InvocationEnvelope):
-        """Yield normalized events and one terminal result after explicit admission."""
+    def invoke(self, participant, envelope: InvocationEnvelope, *, cancellation_event=None):
+        """Yield normalized events and a terminal result after explicit admission.
+
+        Cancellation suppresses further event forwarding and records a cancelled
+        outcome. The blocking HTTP request itself remains bounded by timeout;
+        the current transport cannot forcibly interrupt an in-flight read.
+        """
         self._authorize("participant_invocation", participant, envelope)
         if not isinstance(envelope, InvocationEnvelope):
             raise TypeError("invocation envelope is required")
@@ -358,9 +364,12 @@ class OpenAICompatibleParticipantAdapter:
         if tools is not None and (not isinstance(tools, list) or len(tools) > 128):
             raise ParticipantAdapterError("invocation tools are invalid")
 
+        if cancellation_event is not None and not callable(getattr(cancellation_event, "is_set", None)):
+            raise TypeError("cancellation_event must expose is_set()")
         events = Queue(maxsize=32)
         stop = threading.Event()
         finished = object()
+        streamed_text = []
 
         def publish(event_type, payload):
             while not stop.is_set():
@@ -384,18 +393,42 @@ class OpenAICompatibleParticipantAdapter:
                 publish("finished", finished)
 
         worker = threading.Thread(target=run_provider, name="evo-participant-provider", daemon=True)
-        worker.start()
         sequence = 0
         yield ParticipantEvent(
             str(uuid4()), envelope.invocation_id, participant.participant_id,
             sequence, "started", _utc_now(), "{}", "openai_compatible_chat/1",
         )
         sequence += 1
+        if cancellation_event is not None and cancellation_event.is_set():
+            cancelled = ParticipantResult(
+                envelope.invocation_id, participant.participant_id,
+                "cancelled", _utc_now(), error_code="cancelled",
+                error_message="Cancellation was observed before provider dispatch",
+            )
+            validate_participant_result(cancelled)
+            yield cancelled
+            return
+        worker.start()
+        deadline_monotonic = time.monotonic() + request_timeout
         try:
             while True:
-                try:
-                    event_type, payload = events.get(timeout=request_timeout + 2)
-                except Empty:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    stop.set()
+                    partial = {"content": "".join(streamed_text), "partial": True}
+                    partial_json = json.dumps(partial, separators=(",", ":"), ensure_ascii=False) if streamed_text else None
+                    cancelled = ParticipantResult(
+                        envelope.invocation_id, participant.participant_id,
+                        "cancelled", _utc_now(), output_json=partial_json,
+                        error_code="cancelled",
+                        error_message="Cancellation observed; provider request may continue until timeout",
+                        partial_output=bool(partial_json),
+                    )
+                    validate_participant_result(cancelled)
+                    yield cancelled
+                    return
+                remaining = deadline_monotonic - time.monotonic()
+                if remaining <= 0:
+                    stop.set()
                     result = ParticipantResult(
                         envelope.invocation_id, participant.participant_id,
                         "timed_out", _utc_now(), error_code="provider_timeout",
@@ -404,9 +437,14 @@ class OpenAICompatibleParticipantAdapter:
                     validate_participant_result(result)
                     yield result
                     return
+                try:
+                    event_type, payload = events.get(timeout=min(0.1, remaining + 0.1))
+                except Empty:
+                    continue
                 if event_type == "finished":
                     return
                 if event_type == "text_delta":
+                    streamed_text.append(payload.get("text", ""))
                     yield ParticipantEvent(
                         str(uuid4()), envelope.invocation_id, participant.participant_id,
                         sequence, "text_delta", _utc_now(),
