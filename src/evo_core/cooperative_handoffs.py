@@ -277,6 +277,8 @@ def initialize_cooperative_handoffs(store):
                     revision_id TEXT NOT NULL,
                     revision_hash TEXT NOT NULL,
                     snapshot_hash TEXT NOT NULL,
+                    participant_id TEXT NOT NULL,
+                    task_role TEXT NOT NULL CHECK(task_role IN ('proposal','critique','synthesis')),
                     output_json TEXT NOT NULL,
                     output_hash TEXT NOT NULL,
                     created_at TEXT NOT NULL
@@ -338,8 +340,9 @@ def initialize_cooperative_handoffs(store):
             raise
 
 
-def record_participant_output(store, invocation_id, output_json):
+def record_participant_output(store, invocation_id, output_json, *, task_role):
     """Persist a bounded structured-role completion after successful settlement."""
+    task_role = _enum(task_role, PERSISTABLE_ROLES, "participant output task role")
     initialize_cooperative_handoffs(store)
     if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
         raise HandoffError("invocation_id is invalid")
@@ -387,12 +390,13 @@ def record_participant_output(store, invocation_id, output_json):
         db.execute(
             """INSERT INTO participant_invocation_outputs(
                 invocation_id,workspace_id,project_id,configuration_id,revision_id,
-                revision_hash,snapshot_hash,output_json,output_hash,created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                revision_hash,snapshot_hash,participant_id,task_role,output_json,output_hash,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 invocation_id.strip(), row["workspace_id"], row["project_id"],
                 row["configuration_id"], row["revision_id"], row["revision_hash"],
-                row["snapshot_hash"], output_json, output_hash, created_at,
+                row["snapshot_hash"], row["participant_id"], task_role,
+                output_json, output_hash, created_at,
             ),
         )
         return {"invocation_id": invocation_id.strip(), "output_hash": output_hash, "created_at": created_at}
@@ -501,7 +505,9 @@ def create_handoff(
         if sha256(output_record["output_json"].encode("utf-8")).hexdigest() != output_record["output_hash"]:
             raise HandoffError("persisted participant output integrity check failed")
         if (
-            output_record["snapshot_hash"] != snapshot["snapshot_hash"]
+            output_record["participant_id"] != selected.participant.participant_id
+            or output_record["task_role"] != role
+            or output_record["snapshot_hash"] != snapshot["snapshot_hash"]
             or output_record["workspace_id"] != parent.workspace_id
             or output_record["project_id"] != parent.project_id
             or output_record["configuration_id"] != parent.configuration_id

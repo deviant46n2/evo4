@@ -326,7 +326,9 @@ class DispatchingProvider:
 
             if terminal.status == "succeeded" and task_role in PERSISTABLE_ROLES:
                 try:
-                    record_participant_output(self.store, invocation_id, terminal.output_json)
+                    record_participant_output(
+                        self.store, invocation_id, terminal.output_json, task_role=task_role
+                    )
                 except HandoffError as exc:
                     # The provider result is settled, but it cannot enter the
                     # cooperative handoff chain without a durable exact artifact.

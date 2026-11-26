@@ -208,7 +208,9 @@ class HandoffPersistenceTests(unittest.TestCase):
             "content": json.dumps(self.payload, separators=(",", ":")),
             "tool_calls": [], "finish_reason": "stop", "truncated": False,
         }, separators=(",", ":"))
-        record_participant_output(self.store, self.invocation_id, self.output_json)
+        record_participant_output(
+            self.store, self.invocation_id, self.output_json, task_role="proposal"
+        )
 
     def tearDown(self):
         self.store.db.close()
