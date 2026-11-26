@@ -545,8 +545,32 @@ def reserve_experiment_usage(db, experiment_id, invocation_id, participant_id,
     return True
 
 
+def _experiment_usage_schema_available(db):
+    """Distinguish legacy non-experiment databases from a partially installed ledger."""
+    tables = {
+        row[0] for row in db.execute(
+            """SELECT name FROM sqlite_master WHERE type='table'
+               AND name IN (
+                   'cooperative_experiment_usage_reservations',
+                   'cooperative_experiment_usage_settlements'
+               )"""
+        ).fetchall()
+    }
+    expected = {
+        "cooperative_experiment_usage_reservations",
+        "cooperative_experiment_usage_settlements",
+    }
+    if not tables:
+        return False
+    if tables != expected:
+        raise ExperimentError("experiment usage ledger schema is incomplete")
+    return True
+
+
 def settle_experiment_usage(db, invocation_id, input_tokens, output_tokens):
     """Append exact provider-reported usage; unknown usage conservatively retains its reservation."""
+    if not _experiment_usage_schema_available(db):
+        return False
     reservation = db.execute(
         "SELECT invocation_id FROM cooperative_experiment_usage_reservations WHERE invocation_id=?",
         (invocation_id,),
@@ -567,6 +591,8 @@ def settle_experiment_usage(db, invocation_id, input_tokens, output_tokens):
 
 def release_experiment_usage(db, invocation_id):
     """Release a reservation only when admission proves the provider worker never started."""
+    if not _experiment_usage_schema_available(db):
+        return False
     reservation = db.execute(
         "SELECT invocation_id FROM cooperative_experiment_usage_reservations WHERE invocation_id=?",
         (invocation_id,),
