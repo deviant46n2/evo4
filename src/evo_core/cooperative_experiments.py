@@ -150,6 +150,45 @@ def initialize_cooperative_experiments(store):
                 )
             """)
             db.execute("""
+                CREATE TABLE IF NOT EXISTS cooperative_experiment_usage_reservations (
+                    invocation_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL REFERENCES cooperative_experiments(experiment_id) ON DELETE RESTRICT,
+                    participant_id TEXT NOT NULL,
+                    reserved_input_bytes INTEGER NOT NULL CHECK(reserved_input_bytes >= 0),
+                    reserved_output_tokens INTEGER NOT NULL CHECK(reserved_output_tokens > 0),
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS cooperative_experiment_usage_settlements (
+                    invocation_id TEXT PRIMARY KEY REFERENCES cooperative_experiment_usage_reservations(invocation_id) ON DELETE RESTRICT,
+                    state TEXT NOT NULL CHECK(state IN ('settled','released')),
+                    input_tokens INTEGER NOT NULL CHECK(input_tokens >= 0),
+                    output_tokens INTEGER NOT NULL CHECK(output_tokens >= 0),
+                    created_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_experiment_usage_reservations_no_update
+                BEFORE UPDATE ON cooperative_experiment_usage_reservations
+                BEGIN SELECT RAISE(ABORT, 'experiment usage reservations are immutable'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_experiment_usage_reservations_no_delete
+                BEFORE DELETE ON cooperative_experiment_usage_reservations
+                BEGIN SELECT RAISE(ABORT, 'experiment usage reservations cannot be deleted'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_experiment_usage_settlements_no_update
+                BEFORE UPDATE ON cooperative_experiment_usage_settlements
+                BEGIN SELECT RAISE(ABORT, 'experiment usage settlements are immutable'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_experiment_usage_settlements_no_delete
+                BEFORE DELETE ON cooperative_experiment_usage_settlements
+                BEGIN SELECT RAISE(ABORT, 'experiment usage settlements cannot be deleted'); END
+            """)
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS cooperative_experiment_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     experiment_id TEXT NOT NULL REFERENCES cooperative_experiments(experiment_id) ON DELETE RESTRICT,
@@ -455,4 +494,124 @@ def list_experiment_events(store, experiment_id):
             (experiment_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+    return workspaces._read(store, operation)
+
+
+def reserve_experiment_usage(db, experiment_id, invocation_id, participant_id,
+                             reserved_input_bytes, reserved_output_tokens,
+                             workspace_id, project_id, configuration_id, revision_id, revision_hash):
+    """Reserve conservative input-byte and requested-output ceilings inside admission's transaction."""
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
+        raise ExperimentError("experiment identity is required")
+    if (isinstance(reserved_input_bytes, bool) or not isinstance(reserved_input_bytes, int)
+            or reserved_input_bytes < 0 or isinstance(reserved_output_tokens, bool)
+            or not isinstance(reserved_output_tokens, int) or reserved_output_tokens < 1):
+        raise ExperimentError("experiment usage reservation is invalid")
+    row = _experiment_row(db, experiment_id)
+    if (row["status"] != "running" or row["workspace_id"] != workspace_id
+            or row["project_id"] != project_id or row["configuration_id"] != configuration_id
+            or row["revision_id"] != revision_id or row["revision_hash"] != revision_hash):
+        raise ExperimentError("experiment is not running on this exact pinned workspace revision")
+    spec = row["spec"]
+    if participant_id not in spec["participant_selection"]:
+        raise ExperimentError("participant is not selected for this experiment condition")
+    existing = db.execute(
+        "SELECT 1 FROM cooperative_experiment_usage_reservations WHERE invocation_id=?",
+        (invocation_id,),
+    ).fetchone()
+    if existing:
+        raise ExperimentError("invocation already has an experiment usage reservation")
+    totals = db.execute(
+        """SELECT
+             COALESCE(SUM(CASE WHEN s.invocation_id IS NULL THEN r.reserved_input_bytes
+                               WHEN s.state='released' THEN 0 ELSE s.input_tokens END),0) AS input_used,
+             COALESCE(SUM(CASE WHEN s.invocation_id IS NULL THEN r.reserved_output_tokens
+                               WHEN s.state='released' THEN 0 ELSE s.output_tokens END),0) AS output_used
+           FROM cooperative_experiment_usage_reservations r
+           LEFT JOIN cooperative_experiment_usage_settlements s ON s.invocation_id=r.invocation_id
+           WHERE r.experiment_id=?""", (experiment_id,),
+    ).fetchone()
+    budgets = spec["budgets"]
+    if (totals["input_used"] + reserved_input_bytes > budgets["input_token_ceiling"]
+            or totals["output_used"] + reserved_output_tokens > budgets["output_token_ceiling"]):
+        return False
+    db.execute(
+        """INSERT INTO cooperative_experiment_usage_reservations(
+             invocation_id,experiment_id,participant_id,reserved_input_bytes,reserved_output_tokens,created_at
+           ) VALUES(?,?,?,?,?,?)""",
+        (invocation_id, experiment_id, participant_id, reserved_input_bytes,
+         reserved_output_tokens, utc_now()),
+    )
+    return True
+
+
+def settle_experiment_usage(db, invocation_id, input_tokens, output_tokens):
+    """Append exact provider-reported usage; unknown usage conservatively retains its reservation."""
+    reservation = db.execute(
+        "SELECT invocation_id FROM cooperative_experiment_usage_reservations WHERE invocation_id=?",
+        (invocation_id,),
+    ).fetchone()
+    if reservation is None:
+        return False
+    if (isinstance(input_tokens, bool) or not isinstance(input_tokens, int) or input_tokens < 0
+            or isinstance(output_tokens, bool) or not isinstance(output_tokens, int) or output_tokens < 0):
+        raise ExperimentError("actual experiment token usage is invalid")
+    db.execute(
+        """INSERT INTO cooperative_experiment_usage_settlements(
+             invocation_id,state,input_tokens,output_tokens,created_at
+           ) VALUES(?,'settled',?,?,?)""",
+        (invocation_id, input_tokens, output_tokens, utc_now()),
+    )
+    return True
+
+
+def release_experiment_usage(db, invocation_id):
+    """Release a reservation only when admission proves the provider worker never started."""
+    reservation = db.execute(
+        "SELECT invocation_id FROM cooperative_experiment_usage_reservations WHERE invocation_id=?",
+        (invocation_id,),
+    ).fetchone()
+    if reservation is None:
+        return False
+    db.execute(
+        """INSERT INTO cooperative_experiment_usage_settlements(
+             invocation_id,state,input_tokens,output_tokens,created_at
+           ) VALUES(?,'released',0,0,?)""",
+        (invocation_id, utc_now()),
+    )
+    return True
+
+
+def get_experiment_usage(store, experiment_id):
+    """Return immutable reservation/settlement accounting and aggregate ceiling consumption."""
+    initialize_cooperative_experiments(store)
+    def operation(db):
+        experiment = _experiment_row(db, experiment_id)
+        rows = db.execute(
+            """SELECT r.invocation_id,r.participant_id,r.reserved_input_bytes,
+                      r.reserved_output_tokens,r.created_at,s.state AS settlement_state,
+                      s.input_tokens,s.output_tokens,s.created_at AS settled_at
+               FROM cooperative_experiment_usage_reservations r
+               LEFT JOIN cooperative_experiment_usage_settlements s ON s.invocation_id=r.invocation_id
+               WHERE r.experiment_id=? ORDER BY r.created_at,r.invocation_id""",
+            (experiment_id,),
+        ).fetchall()
+        input_used = sum(
+            0 if row["settlement_state"] == "released" else
+            row["input_tokens"] if row["settlement_state"] == "settled" else row["reserved_input_bytes"]
+            for row in rows
+        )
+        output_used = sum(
+            0 if row["settlement_state"] == "released" else
+            row["output_tokens"] if row["settlement_state"] == "settled" else row["reserved_output_tokens"]
+            for row in rows
+        )
+        return {
+            "experiment_id": experiment_id,
+            "input_budget_used": input_used,
+            "input_budget_ceiling": experiment["spec"]["budgets"]["input_token_ceiling"],
+            "output_budget_used": output_used,
+            "output_budget_ceiling": experiment["spec"]["budgets"]["output_token_ceiling"],
+            "reservations": [dict(row) for row in rows],
+        }
     return workspaces._read(store, operation)

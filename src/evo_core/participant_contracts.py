@@ -146,6 +146,7 @@ class InvocationEnvelope:
     retry_limit: int
     remaining_budgets: tuple[tuple[str, int | float], ...]
     correlation_id: str
+    experiment_id: str | None = None
 
 
 @dataclass(frozen=True)

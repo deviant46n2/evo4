@@ -409,6 +409,8 @@ def _snapshot_matches(db, runtime, envelope):
         raise AdmissionError("selected participant descriptor cannot be canonicalized") from exc
     if participant != expected_participant:
         raise AdmissionError("invocation participant does not match the immutable runtime snapshot")
+    if snapshot.get("experiment_id") != envelope.experiment_id:
+        raise AdmissionError("invocation experiment identity does not match the immutable snapshot")
     if (
         participant.get("participant_id") != envelope.participant_id
         or participant.get("adapter_id") != envelope.adapter_id
@@ -485,6 +487,10 @@ def _validate_envelope(runtime, envelope, now):
         or envelope.component_version != runtime.participant.component_version
     ):
         raise AdmissionError("invocation scope or participant identity does not match the runtime")
+    if envelope.experiment_id is not None and (
+        not isinstance(envelope.experiment_id, str) or not envelope.experiment_id.strip() or len(envelope.experiment_id) > 128
+    ):
+        raise AdmissionError("invocation experiment identity is invalid")
     if envelope.parent_task_id is not None and (
         not isinstance(envelope.parent_task_id, str)
         or not envelope.parent_task_id.strip()
@@ -594,6 +600,9 @@ def admit_invocation(
     if runtime is None or not hasattr(runtime, "participant") or not callable(getattr(runtime, "assert_current", None)):
         raise AdmissionError("a bound runtime is required")
     initialize_invocation_lifecycle(store)
+    if getattr(envelope, "experiment_id", None) is not None:
+        from .cooperative_experiments import initialize_cooperative_experiments
+        initialize_cooperative_experiments(store)
     now = datetime.now(timezone.utc) if now is None else now
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise ValueError("now must be a timezone-aware datetime")
@@ -721,6 +730,18 @@ def admit_invocation(
             elif reserved + used + requested_tokens > provider_budget.maximum_reserved_output_tokens_per_utc_day:
                 state = "budget_exhausted"
                 decision.update({"decision": state, "reason": "daily_output_token_budget_exhausted"})
+        if state == "admitted" and envelope.experiment_id is not None:
+            from .cooperative_experiments import reserve_experiment_usage
+            reserved = reserve_experiment_usage(
+                db, envelope.experiment_id, envelope.invocation_id,
+                runtime.participant.participant_id,
+                len(envelope.input_json.encode("utf-8")), requested_tokens,
+                runtime.workspace_id, runtime.project_id,
+                runtime.configuration_id, runtime.revision_id, runtime.revision_hash,
+            )
+            if not reserved:
+                state = "budget_exhausted"
+                decision.update({"decision": state, "reason": "experiment_aggregate_budget_exhausted"})
         db.execute(
             """INSERT INTO participant_invocations (
                 invocation_id,workspace_id,project_id,participant_id,integration_id,adapter_id,
@@ -884,6 +905,13 @@ def finalize_invocation(store, invocation_id, status, *, usage=None, error_code=
                     "UPDATE dispatch_leases SET state='abandoned',heartbeat_at=? WHERE invocation_id=?",
                     (now, invocation_id),
                 )
+        if row["status"] in {"running", "abandoned"} and usage is not None:
+            if "input_tokens" in usage and "output_tokens" in usage:
+                from .cooperative_experiments import settle_experiment_usage
+                settle_experiment_usage(db, invocation_id, usage["input_tokens"], usage["output_tokens"])
+        elif not_started_cancel:
+            from .cooperative_experiments import release_experiment_usage
+            release_experiment_usage(db, invocation_id)
         if not_started_cancel and row["budget_day_utc"] is not None:
             db.execute(
                 """UPDATE provider_budget_usage

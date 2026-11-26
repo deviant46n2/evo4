@@ -81,7 +81,7 @@ def initialize_runtime_invocation_snapshots(store):
             raise
 
 
-def _runtime_snapshot_payload(runtime, invocation_kind):
+def _runtime_snapshot_payload(runtime, invocation_kind, experiment_id=None):
     config = runtime.assistant.config
     participant = runtime.participant
     if not is_dataclass(participant):
@@ -114,6 +114,7 @@ def _runtime_snapshot_payload(runtime, invocation_kind):
     payload = {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
         "invocation_kind": invocation_kind,
+        "experiment_id": experiment_id,
         "workspace_id": runtime.workspace_id,
         "project_id": runtime.project_id,
         "configuration_id": runtime.configuration_id,
@@ -136,7 +137,7 @@ def _runtime_snapshot_payload(runtime, invocation_kind):
     return payload, encoded, sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None, invocation_kind="workspace_invocation"):
+def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None, invocation_kind="workspace_invocation", experiment_id=None):
     """Persist one immutable snapshot after revalidating its workspace binding.
 
     invocation_id is supplied by the future invocation owner; this function
@@ -150,7 +151,10 @@ def create_runtime_invocation_snapshot(store, runtime, *, invocation_id=None, in
     if not isinstance(invocation_kind, str) or not invocation_kind.strip() or len(invocation_kind) > 64:
         raise RuntimeSnapshotError("invocation_kind must be a non-empty string of at most 64 characters")
     invocation_kind = invocation_kind.strip()
-    payload, encoded, digest = _runtime_snapshot_payload(runtime, invocation_kind)
+    if experiment_id is not None and (not isinstance(experiment_id, str) or not experiment_id.strip() or len(experiment_id) > 128):
+        raise RuntimeSnapshotError("experiment_id is invalid")
+    experiment_id = experiment_id.strip() if experiment_id is not None else None
+    payload, encoded, digest = _runtime_snapshot_payload(runtime, invocation_kind, experiment_id)
     created_at = utc_now()
 
     def operation(db):
@@ -251,7 +255,8 @@ def assert_runtime_matches_snapshot(store, runtime, invocation_id, *, expected_k
     if actual != expected:
         raise RuntimeSnapshotError("runtime does not match the invocation's pinned snapshot")
     _, _, current_digest = _runtime_snapshot_payload(
-        runtime, record["snapshot"].get("invocation_kind", "workspace_invocation")
+        runtime, record["snapshot"].get("invocation_kind", "workspace_invocation"),
+        record["snapshot"].get("experiment_id"),
     )
     if current_digest != record["snapshot_hash"]:
         raise RuntimeSnapshotError("runtime settings or participant identity differ from the invocation snapshot")

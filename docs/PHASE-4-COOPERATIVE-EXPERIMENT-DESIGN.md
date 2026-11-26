@@ -179,3 +179,28 @@ If a second compliant model is unavailable, gates 1–3 and inert end-to-end tes
 ## 11. Decision record
 
 This document remains a technical proposal created after Phase 3 acceptance. The selected-participant foundation, schema/runtime participant-set binding, and typed handoff persistence are bounded implementation slices, not completion of the cooperative workflow. Neither this document nor those slices authorizes live provider calls, changes dispatch settings, starts a benchmark, or constitutes Phase 4 acceptance. Any implementation should be a separately reviewable bounded change, with tests and exact commit evidence.
+
+
+### Experiment-bound dispatch and aggregate usage accounting
+
+The first aggregate-accounting slice binds an optional experiment ID into both the
+immutable invocation snapshot and invocation envelope. The existing dispatch
+controller remains the only path to participant execution. Admission rejects an
+experiment-bound invocation unless the experiment is explicitly `running`, the
+workspace/project/configuration/revision/hash exactly match the frozen manifest,
+and the participant is selected by that experiment condition.
+
+Aggregate input budget admission reserves the UTF-8 byte length of the canonical
+provider request as a conservative tokenizer-independent upper bound; output
+budget admission reserves the requested maximum output tokens. These reservations
+are written atomically with normal invocation admission and the existing global
+provider lease. A proven pre-start cancellation releases the reservation. A
+settled invocation replaces the reservation with provider-reported input/output
+usage; if usage is absent or provider settlement is uncertain, the reservation is
+retained conservatively. Reservation and settlement records are append-only.
+
+This is sequential accounting under the existing global lease, not a concurrent
+scheduler. No command runner, automatic participant handoff, automatic resume,
+parallel dispatch, or live provider execution is introduced. A caller must
+construct a `DispatchingProvider` with the experiment ID, and the operator must
+explicitly transition the experiment to `running` first.

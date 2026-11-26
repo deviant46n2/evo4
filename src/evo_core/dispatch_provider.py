@@ -161,7 +161,7 @@ class DispatchingProvider:
 
     dispatch_enabled = True
 
-    def __init__(self, store, runtime, controller, *, participant_id=None):
+    def __init__(self, store, runtime, controller, *, participant_id=None, experiment_id=None):
         self.store = store
         self.parent_runtime = runtime
         self.runtime = (
@@ -170,6 +170,9 @@ class DispatchingProvider:
             else runtime.select_participant(runtime.participant.participant_id)
         )
         self.controller = controller
+        if experiment_id is not None and (not isinstance(experiment_id, str) or not experiment_id.strip() or len(experiment_id) > 128):
+            raise ValueError("experiment_id is invalid")
+        self.experiment_id = experiment_id.strip() if experiment_id is not None else None
         self.adapter = self.runtime.participant_adapter
         self.participant = self.runtime.bound_participant
         self.base_url = self.participant.endpoint.rstrip("/")
@@ -226,6 +229,7 @@ class DispatchingProvider:
             create_runtime_invocation_snapshot(
                 self.store, self.runtime, invocation_id=invocation_id,
                 invocation_kind=invocation_kind,
+                experiment_id=self.experiment_id,
             )
         except Exception as exc:
             raise DispatchProviderError("Could not persist the immutable invocation snapshot") from exc
@@ -258,6 +262,7 @@ class DispatchingProvider:
                 ("request_seconds", request_seconds),
             ),
             correlation_id=str(uuid4()),
+            experiment_id=self.experiment_id,
         )
 
         heartbeat_stop = threading.Event()
