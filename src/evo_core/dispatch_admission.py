@@ -792,6 +792,23 @@ def mark_invocation_running(store, invocation_id):
         ).fetchone()
         if row is None or row["status"] != "admitted":
             return False
+        # An experiment may be cancelled/interrupted after admission but before
+        # the worker crosses this start boundary. Revalidate its state in the
+        # same transaction as admitted->running so no provider call can start
+        # from a reservation whose experiment is no longer running.
+        usage_table = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cooperative_experiment_usage_reservations'"
+        ).fetchone()
+        if usage_table is not None:
+            experiment = db.execute(
+                """SELECT e.status
+                   FROM cooperative_experiment_usage_reservations r
+                   JOIN cooperative_experiments e ON e.experiment_id=r.experiment_id
+                   WHERE r.invocation_id=?""",
+                (invocation_id,),
+            ).fetchone()
+            if experiment is not None and experiment["status"] != "running":
+                return False
         if row["adapter_id"] == "openai_compatible_chat":
             lease = db.execute(
                 "SELECT state FROM dispatch_leases WHERE invocation_id=?",
