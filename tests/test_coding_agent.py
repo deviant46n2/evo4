@@ -320,13 +320,13 @@ class CodingAgentTests(unittest.TestCase):
             root=Path(tmp)/"project"; root.mkdir()
             provider=ToolProvider([
                 {"content":"","tool_calls":[call("write_file",{"path":"main.py","content":"print(5)"})]},
-                {"content":"","tool_calls":[call("run_command",{"argv":["pytest","-q"]})]},
+                {"content":"","tool_calls":[call("run_command",{"argv":["python","-m","unittest","tests.nonexistent"]})]},
                 {"content":"The test failed.","tool_calls":[]}
             ])
             assistant=self.make_assistant(tmp,provider)
             cid=assistant.new_conversation()
-            agent=CodingAgent(assistant,root,allowed_commands=[["pytest"]])
-            with patch.object(agent.workspace,"run",return_value={"argv":["pytest","-q"],"returncode":1,"stdout":"","stderr":"failed","elapsed_seconds":0.1}):
+            agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
+            with patch.object(agent.workspace,"run",return_value={"argv":["python","-m","unittest","tests.nonexistent"],"returncode":1,"stdout":"","stderr":"failed","elapsed_seconds":0.1}):
                 result=agent.run(cid,"Create and test main.py",lambda *_:True)
             self.assertEqual(result["verification"],"failed")
             self.assertIn("Verification signal: FAILED",result["content"])

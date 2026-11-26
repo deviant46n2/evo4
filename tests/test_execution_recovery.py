@@ -23,6 +23,10 @@ class FakeProcess:
         self.killed = False
 
     def wait(self, timeout=None):
+        if timeout is None:
+            return self.returncode
+        if self.returncode is None:
+            raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
         return self.returncode
 
     def poll(self):

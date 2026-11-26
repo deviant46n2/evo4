@@ -65,8 +65,17 @@ def _now():
 def _migrate_execution_schema(connection):
     columns = {row[1]: row for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
     if not columns:
-        connection.executescript(SCHEMA)
-        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(TABLE_SQL)
+            for statement in INDEX_SQL.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
         return
     required = {
         "job_id": None, "agent_run_id": None, "workspace_id": None, "project_id": None,
@@ -423,12 +432,6 @@ def run_execution(connection, lock, execution_id):
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=False, close_fds=True, start_new_session=True, env=_safe_environment())
         _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
-        with lock:
-            current = get_execution(connection, execution_id)
-        if current is not None and current.get("cancel_requested"):
-            _terminate_owned_process(process)
-            _finalize_cancelled_execution(connection, lock, execution_id, current, started, begin)
-            return
         def drain(pipe, target):
             try:
                 while True:
@@ -446,20 +449,32 @@ def run_execution(connection, lock, execution_id):
             readers.append(thread)
         timed_out = False
         cancelled = {"value": False}
+        process_state_lock = threading.Lock()
+        process_completed = {"value": False}
         def _cancel_watcher():
-            while getattr(process, "returncode", None) is None:
-                time.sleep(0.1)
-                with lock:
-                    current = get_execution(connection, execution_id)
-                if current is not None and current.get("cancel_requested"):
-                    if getattr(process, "returncode", None) is None:
+            while True:
+                with process_state_lock:
+                    if process_completed["value"]:
+                        return
+                    print("WATCHER POLL START", flush=True)
+                    status = process.poll()
+                    print("WATCHER POLL END", status, flush=True)
+                    if status is not None:
+                        process_completed["value"] = True
+                        return
+                    with lock:
+                        current = get_execution(connection, execution_id)
+                    if current is not None and current.get("cancel_requested"):
+                        # process.poll() above established that the leader was
+                        # still running. Signal only the owned process group.
                         try:
                             os.killpg(process.pid, signal.SIGTERM)
-                            cancelled["value"] = True
                         except (ProcessLookupError, OSError):
-                            pass
+                            return
+                        cancelled["value"] = True
                         _terminate_owned_process(process)
-                    return
+                        return
+                time.sleep(0.05)
         watcher = threading.Thread(target=_cancel_watcher, daemon=True)
         watcher.start()
         try:
@@ -468,6 +483,8 @@ def run_execution(connection, lock, execution_id):
             timed_out = True
             returncode = None
         watcher.join(timeout=1)
+        with process_state_lock:
+            process_completed["value"] = True
         cancelled = cancelled["value"]
         # Commands are bounded jobs, not daemon launchers. Clean up any descendants
         # left in this private process group after the leader exits or times out.

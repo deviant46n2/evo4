@@ -182,7 +182,8 @@ class CodingAgent:
                     approval_evidence=approval_evidence,
                     source_revision=None,
                 )
-                result = run_execution(store.db, store.lock, execution["id"])
+            execution_id = execution["id"]
+            result = run_execution(store.db, store.lock, execution_id)
             return {
                 "execution_id": result.get("id"),
                 "argv": result.get("argv", argv),
