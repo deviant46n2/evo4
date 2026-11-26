@@ -387,10 +387,10 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
         ).fetchone()
         if row is None or row["status"] != "succeeded" or row["lease_state"] is not None:
             raise HandoffError("structured output requires a settled successful invocation with no active lease")
-        if sha256(row["snapshot_json"].encode("utf-8")).hexdigest() != row["current_snapshot_hash"]:
-            raise HandoffError("structured output source snapshot integrity check failed")
         if row["snapshot_json"] is None:
             raise HandoffError("structured output source snapshot is missing")
+        if sha256(row["snapshot_json"].encode("utf-8")).hexdigest() != row["current_snapshot_hash"]:
+            raise HandoffError("structured output source snapshot integrity check failed")
         try:
             snapshot_payload = json.loads(row["snapshot_json"], object_pairs_hook=_unique_pairs)
         except (TypeError, ValueError) as exc:
@@ -508,7 +508,7 @@ def create_handoff(
         if not isinstance(snapshot_participant, dict):
             raise HandoffError("handoff source snapshot participant descriptor is invalid")
         if (
-            snapshot_payload.get("invocation_kind") != "participant_completion"
+            snapshot_payload.get("invocation_kind") != f"participant_completion:{role}"
             or snapshot_participant.get("participant_id") != selected.participant.participant_id
             or snapshot_participant.get("integration_id") != selected.participant.integration_id
         ):
