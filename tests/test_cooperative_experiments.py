@@ -8,7 +8,8 @@ from evo_core.ai_configurations import create_configuration
 from evo_core.config import EvoConfig
 from evo_core.cooperative_experiments import (
     ExperimentError, create_experiment, get_experiment, initialize_cooperative_experiments,
-    list_experiment_events, transition_experiment,
+    list_experiment_events, transition_experiment, get_experiment_usage,
+    reserve_experiment_usage, settle_experiment_usage, release_experiment_usage,
 )
 from evo_core.cooperative_handoffs import initialize_cooperative_handoffs
 from evo_core.dispatch_admission import initialize_invocation_lifecycle
@@ -96,6 +97,70 @@ class CooperativeExperimentTests(unittest.TestCase):
             condition=condition, input_token_ceiling=12000, output_token_ceiling=4000,
             wall_clock_seconds=900, deadline_utc=deadline,
         )
+
+    def test_aggregate_usage_reserves_settles_and_releases_atomically(self):
+        record = self.create("C")
+        eid = record["experiment_id"]
+        transition_experiment(self.store, eid, "authorized", idempotency_key="a", event_type="authorized")
+        transition_experiment(self.store, eid, "running", idempotency_key="b", event_type="started")
+        participant_id = record["spec"]["participant_selection"][0]
+        args = (
+            eid, "invocation-usage-1", participant_id, 100, 200,
+            self.runtime.workspace_id, self.runtime.project_id,
+            self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+        )
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            self.assertTrue(reserve_experiment_usage(self.store.db, *args))
+            self.store.db.commit()
+        usage = get_experiment_usage(self.store, eid)
+        self.assertEqual(usage["input_budget_used"], 100)
+        self.assertEqual(usage["output_budget_used"], 200)
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            settle_experiment_usage(self.store.db, "invocation-usage-1", 80, 150)
+            self.store.db.commit()
+        usage = get_experiment_usage(self.store, eid)
+        self.assertEqual(usage["input_budget_used"], 80)
+        self.assertEqual(usage["output_budget_used"], 150)
+        args = (
+            eid, "invocation-usage-2", participant_id, 100, 200,
+            self.runtime.workspace_id, self.runtime.project_id,
+            self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+        )
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            self.assertTrue(reserve_experiment_usage(self.store.db, *args))
+            release_experiment_usage(self.store.db, "invocation-usage-2")
+            self.store.db.commit()
+        usage = get_experiment_usage(self.store, eid)
+        self.assertEqual(usage["input_budget_used"], 80)
+        self.assertEqual(usage["output_budget_used"], 150)
+
+    def test_aggregate_usage_rejects_unselected_participant_and_enforces_ceiling(self):
+        record = self.create("A")
+        eid = record["experiment_id"]
+        transition_experiment(self.store, eid, "authorized", idempotency_key="a", event_type="authorized")
+        transition_experiment(self.store, eid, "running", idempotency_key="b", event_type="started")
+        unselected = record["spec"]["participants"][1]["participant_id"]
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            with self.assertRaises(ExperimentError):
+                reserve_experiment_usage(
+                    self.store.db, eid, "wrong-participant", unselected, 1, 1,
+                    self.runtime.workspace_id, self.runtime.project_id,
+                    self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+                )
+            self.store.db.rollback()
+        selected = record["spec"]["participant_selection"][0]
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            self.assertFalse(reserve_experiment_usage(
+                self.store.db, eid, "over-budget", selected, 12001, 1,
+                self.runtime.workspace_id, self.runtime.project_id,
+                self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+            ))
+            self.store.db.rollback()
 
     def test_freezes_runtime_revision_participants_and_budgets(self):
         record = self.create()
