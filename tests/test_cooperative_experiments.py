@@ -154,13 +154,22 @@ class CooperativeExperimentTests(unittest.TestCase):
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             self.assertTrue(reserve_experiment_usage(self.store.db, *args))
-            settle_experiment_usage(self.store.db, "invocation-byte-accounting", 500, 150)
+            settle_experiment_usage(self.store.db, "invocation-byte-accounting", 500, 4500)
             self.store.db.commit()
         usage = get_experiment_usage(self.store, eid)
         self.assertEqual(usage["input_accounting_status"], "byte_budget_enforced")
         self.assertEqual(usage["input_byte_budget_used"], 100)
         self.assertEqual(usage["input_tokens_observed"], 500)
         self.assertEqual(usage["input_usage_unknown_count"], 0)
+        self.assertEqual(usage["output_budget_used"], 4500)
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            self.assertFalse(reserve_experiment_usage(
+                self.store.db, eid, "after-overrun", participant_id, 1, 1,
+                self.runtime.workspace_id, self.runtime.project_id,
+                self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+            ))
+            self.store.db.rollback()
 
     def test_aggregate_usage_rejects_unselected_participant_and_enforces_ceiling(self):
         record = self.create("A")
