@@ -156,12 +156,22 @@ def initialize_cooperative_experiments(store):
                     idempotency_key TEXT NOT NULL,
                     from_status TEXT,
                     to_status TEXT NOT NULL,
+                    to_version INTEGER NOT NULL CHECK(to_version >= 1),
                     event_type TEXT NOT NULL,
                     payload_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     UNIQUE(experiment_id, idempotency_key)
                 )
             """)
+            event_columns = {r["name"] for r in db.execute("PRAGMA table_info(cooperative_experiment_events)").fetchall()}
+            if "to_version" not in event_columns:
+                db.execute("ALTER TABLE cooperative_experiment_events ADD COLUMN to_version INTEGER")
+                db.execute("""
+                    UPDATE cooperative_experiment_events SET to_version=(
+                        SELECT CASE WHEN e.to_status='planned' THEN 1 ELSE 2 END
+                        FROM cooperative_experiment_events e WHERE e.event_id=cooperative_experiment_events.event_id
+                    )
+                """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_coop_experiments_workspace ON cooperative_experiments(workspace_id, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_coop_experiment_events ON cooperative_experiment_events(experiment_id, event_id)")
             db.execute("""
@@ -173,6 +183,25 @@ def initialize_cooperative_experiments(store):
                 CREATE TRIGGER IF NOT EXISTS cooperative_experiment_events_no_delete
                 BEFORE DELETE ON cooperative_experiment_events
                 BEGIN SELECT RAISE(ABORT, 'experiment events are append-only'); END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS cooperative_experiment_state_requires_event
+                BEFORE UPDATE OF status, version ON cooperative_experiments
+                WHEN (
+                    NEW.version != OLD.version + 1
+                    OR NOT EXISTS (
+                        SELECT 1 FROM cooperative_experiment_events e
+                        WHERE e.experiment_id=OLD.experiment_id
+                          AND e.from_status=OLD.status
+                          AND e.to_status=NEW.status
+                          AND e.to_version=NEW.version
+                          AND e.event_id=(
+                              SELECT MAX(latest.event_id) FROM cooperative_experiment_events latest
+                              WHERE latest.experiment_id=OLD.experiment_id
+                          )
+                    )
+                )
+                BEGIN SELECT RAISE(ABORT, 'experiment state changes require a matching latest append-only event'); END
             """)
             db.execute("""
                 CREATE TRIGGER IF NOT EXISTS cooperative_experiment_spec_immutable
@@ -269,8 +298,8 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
               runtime.revision_id, runtime.revision_hash, condition, spec_json, digest, now, now))
         db.execute("""
             INSERT INTO cooperative_experiment_events(
-                experiment_id,idempotency_key,from_status,to_status,event_type,payload_json,created_at
-            ) VALUES(?,? ,NULL,'planned','created',?,?)
+                experiment_id,idempotency_key,from_status,to_status,to_version,event_type,payload_json,created_at
+            ) VALUES(?,? ,NULL,'planned',1,'created',?,?)
         """, (experiment_id, "created", _canonical({"spec_hash": digest}), now))
         return _experiment_row(db, experiment_id)
     return workspaces._write(store, operation)
@@ -405,9 +434,9 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
         next_version = row["version"] + 1
         db.execute("""
             INSERT INTO cooperative_experiment_events(
-                experiment_id,idempotency_key,from_status,to_status,event_type,payload_json,created_at
-            ) VALUES(?,?,?,?,?,?,?)
-        """, (experiment_id, key, current, to_status, event_type, payload_json, now))
+                experiment_id,idempotency_key,from_status,to_status,to_version,event_type,payload_json,created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+        """, (experiment_id, key, current, to_status, next_version, event_type, payload_json, now))
         db.execute("UPDATE cooperative_experiments SET status=?,version=?,updated_at=? WHERE experiment_id=? AND version=?",
                    (to_status, next_version, now, experiment_id, row["version"]))
         if db.execute("SELECT changes()").fetchone()[0] != 1:
