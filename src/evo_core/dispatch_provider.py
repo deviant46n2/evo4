@@ -219,9 +219,13 @@ class DispatchingProvider:
             raise DispatchProviderError("Provider request is not valid bounded JSON") from exc
 
         try:
+            invocation_kind = (
+                f"participant_completion:{task_role}"
+                if task_role in PERSISTABLE_ROLES else "participant_completion"
+            )
             create_runtime_invocation_snapshot(
                 self.store, self.runtime, invocation_id=invocation_id,
-                invocation_kind="participant_completion",
+                invocation_kind=invocation_kind,
             )
         except Exception as exc:
             raise DispatchProviderError("Could not persist the immutable invocation snapshot") from exc

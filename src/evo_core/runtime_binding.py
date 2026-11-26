@@ -274,6 +274,10 @@ class ParticipantInvocationRuntime:
     assistant: object
     provenance: object
 
+    def require_dispatch_enabled(self):
+        """Preserve the parent runtime's dispatch gate on selected participant views."""
+        return self.parent_runtime.require_dispatch_enabled()
+
     @property
     def workspace_id(self):
         return self.parent_runtime.workspace_id

@@ -178,7 +178,7 @@ class HandoffPersistenceTests(unittest.TestCase):
         self.invocation_id = "handoff-invocation"
         snapshot = create_runtime_invocation_snapshot(
             self.store, self.selected, invocation_id=self.invocation_id,
-            invocation_kind="participant_completion",
+            invocation_kind="participant_completion:proposal",
         )
         now = datetime.now(timezone.utc)
         deadline = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
@@ -215,7 +215,7 @@ class HandoffPersistenceTests(unittest.TestCase):
     def _add_successful_invocation(self, invocation_id, role, payload):
         snapshot = create_runtime_invocation_snapshot(
             self.store, self.selected, invocation_id=invocation_id,
-            invocation_kind="participant_completion",
+            invocation_kind=f"participant_completion:{role}",
         )
         now = datetime.now(timezone.utc)
         invocation_deadline = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")

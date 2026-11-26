@@ -389,6 +389,14 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
             raise HandoffError("structured output requires a settled successful invocation with no active lease")
         if sha256(row["snapshot_json"].encode("utf-8")).hexdigest() != row["current_snapshot_hash"]:
             raise HandoffError("structured output source snapshot integrity check failed")
+        if row["snapshot_json"] is None:
+            raise HandoffError("structured output source snapshot is missing")
+        try:
+            snapshot_payload = json.loads(row["snapshot_json"], object_pairs_hook=_unique_pairs)
+        except (TypeError, ValueError) as exc:
+            raise HandoffError("structured output source snapshot is malformed") from exc
+        if snapshot_payload.get("invocation_kind") != f"participant_completion:{task_role}":
+            raise HandoffError("structured output task role differs from the immutable invocation snapshot")
         if (
             row["snapshot_hash"] != row["current_snapshot_hash"]
             or row["workspace_id"] != row["snapshot_workspace_id"]
