@@ -338,6 +338,37 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
         ):
             raise ExperimentError("experiment version conflict")
         current = row["status"]
+        manifest = json.loads(row["spec_json"])
+        participant_ids = {p["participant_id"] for p in manifest["participants"]}
+        if "invocation_ids" in payload:
+            invocation_ids = _references(payload["invocation_ids"], "invocation_ids", 200)
+            for invocation_id in invocation_ids:
+                invocation = db.execute(
+                    """SELECT workspace_id,project_id,configuration_id,revision_id,participant_id
+                       FROM participant_invocations WHERE invocation_id=?""", (invocation_id,)
+                ).fetchone()
+                if (invocation is None or invocation["workspace_id"] != row["workspace_id"]
+                        or invocation["project_id"] != row["project_id"]
+                        or invocation["configuration_id"] != row["configuration_id"]
+                        or invocation["revision_id"] != row["revision_id"]
+                        or invocation["participant_id"] not in participant_ids):
+                    raise ExperimentError("invocation reference is outside the frozen experiment manifest")
+        if "handoff_ids" in payload:
+            handoff_ids = _references(payload["handoff_ids"], "handoff_ids", 200)
+            for handoff_id in handoff_ids:
+                handoff = db.execute(
+                    """SELECT workspace_id,project_id,configuration_id,revision_id,
+                              source_participant_id,target_participant_id
+                       FROM cooperative_handoffs WHERE handoff_id=?""", (handoff_id,)
+                ).fetchone()
+                if (handoff is None or handoff["workspace_id"] != row["workspace_id"]
+                        or handoff["project_id"] != row["project_id"]
+                        or handoff["configuration_id"] != row["configuration_id"]
+                        or handoff["revision_id"] != row["revision_id"]
+                        or handoff["source_participant_id"] not in participant_ids
+                        or (handoff["target_participant_id"] is not None
+                            and handoff["target_participant_id"] not in participant_ids)):
+                    raise ExperimentError("handoff reference is outside the frozen experiment manifest")
         if to_status not in TRANSITIONS.get(current, frozenset()):
             raise ExperimentError(f"transition {current} -> {to_status} is not allowed")
         if to_status == "adjudicating":
