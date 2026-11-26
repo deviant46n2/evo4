@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -106,11 +107,18 @@ class CooperativeExperimentTests(unittest.TestCase):
         self.assertEqual(record["spec"]["budgets"]["input_token_ceiling"], 12000)
 
     def test_cooperation_condition_requires_two_model_participants(self):
-        runtime = self.runtime
-        runtime.additional_participants = ()
-        runtime.additional_participant_bindings = ()
+        runtime = replace(
+            self.runtime, additional_participants=(),
+            additional_participant_bindings=(), additional_participant_provenance=(),
+        )
+        deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
         with self.assertRaises(ExperimentError):
-            self.create("C")
+            create_experiment(
+                self.store, runtime, task_statement="Task", acceptance_criteria=["C1"],
+                verification_commands=[["python", "-m", "unittest"]], condition="C",
+                input_token_ceiling=100, output_token_ceiling=100,
+                wall_clock_seconds=60, deadline_utc=deadline,
+            )
 
     def test_requires_frozen_acceptance_criteria_and_bounded_verification_commands(self):
         deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
@@ -179,13 +187,13 @@ class CooperativeExperimentTests(unittest.TestCase):
         eid = record["experiment_id"]
         transition_experiment(self.store, eid, "authorized", idempotency_key="a", event_type="authorized")
         transition_experiment(self.store, eid, "running", idempotency_key="b", event_type="started")
+        transition_experiment(self.store, eid, "verifying", idempotency_key="c", event_type="verification_started")
         with self.assertRaises(ExperimentError):
             transition_experiment(
-                self.store, eid, "verifying", idempotency_key="c", event_type="verification_started",
+                self.store, eid, "adjudicating", idempotency_key="d", event_type="adjudication_started",
             )
-        transition_experiment(self.store, eid, "verifying", idempotency_key="c", event_type="verification_started",
+        transition_experiment(self.store, eid, "adjudicating", idempotency_key="d", event_type="adjudication_started",
                               payload={"verification_evidence_references": ["artifact:tests.json"]})
-        transition_experiment(self.store, eid, "adjudicating", idempotency_key="d", event_type="adjudication_started")
         with self.assertRaises(ExperimentError):
             transition_experiment(
                 self.store, eid, "succeeded", idempotency_key="e", event_type="adjudicated",
