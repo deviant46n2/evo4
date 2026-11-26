@@ -262,7 +262,7 @@ def initialize_cooperative_experiments(store):
 
 
 def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
-                      verification_commands, condition, input_token_ceiling,
+                      verification_commands, condition, input_byte_ceiling,
                       output_token_ceiling, wall_clock_seconds, deadline_utc,
                       experiment_id=None):
     """Freeze a benchmark task against the exact workspace-bound runtime revision."""
@@ -282,7 +282,7 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
         commands.append([_text(arg, "verification command argument", 512) for arg in command])
     deadline = _utc_deadline(deadline_utc)
     budgets = {
-        "input_token_ceiling": _positive_int(input_token_ceiling, "input_token_ceiling", 100_000_000),
+        "input_byte_ceiling": _positive_int(input_byte_ceiling, "input_byte_ceiling", 100_000_000),
         "output_token_ceiling": _positive_int(output_token_ceiling, "output_token_ceiling", 100_000_000),
         "wall_clock_seconds": _positive_int(wall_clock_seconds, "wall_clock_seconds", 604800),
         "deadline_utc": deadline,
@@ -523,8 +523,7 @@ def reserve_experiment_usage(db, experiment_id, invocation_id, participant_id,
         raise ExperimentError("invocation already has an experiment usage reservation")
     totals = db.execute(
         """SELECT
-             COALESCE(SUM(CASE WHEN s.invocation_id IS NULL THEN r.reserved_input_bytes
-                               WHEN s.state='released' THEN 0 ELSE s.input_tokens END),0) AS input_used,
+             COALESCE(SUM(CASE WHEN s.state='released' THEN 0 ELSE r.reserved_input_bytes END),0) AS input_bytes_used,
              COALESCE(SUM(CASE WHEN s.invocation_id IS NULL THEN r.reserved_output_tokens
                                WHEN s.state='released' THEN 0 ELSE s.output_tokens END),0) AS output_used
            FROM cooperative_experiment_usage_reservations r
@@ -532,7 +531,10 @@ def reserve_experiment_usage(db, experiment_id, invocation_id, participant_id,
            WHERE r.experiment_id=?""", (experiment_id,),
     ).fetchone()
     budgets = spec["budgets"]
-    if (totals["input_used"] + reserved_input_bytes > budgets["input_token_ceiling"]
+    input_byte_ceiling = budgets.get("input_byte_ceiling")
+    if input_byte_ceiling is None:
+        raise ExperimentError("legacy experiment input-token ceiling has ambiguous byte/token accounting; create a new experiment with an input-byte ceiling")
+    if (totals["input_bytes_used"] + reserved_input_bytes > input_byte_ceiling
             or totals["output_used"] + reserved_output_tokens > budgets["output_token_ceiling"]):
         return False
     db.execute(
@@ -622,11 +624,17 @@ def get_experiment_usage(store, experiment_id):
                WHERE r.experiment_id=? ORDER BY r.created_at,r.invocation_id""",
             (experiment_id,),
         ).fetchall()
-        input_used = sum(
-            0 if row["settlement_state"] == "released" else
-            row["input_tokens"] if row["settlement_state"] == "settled" else row["reserved_input_bytes"]
+        input_bytes_used = sum(
+            0 if row["settlement_state"] == "released" else row["reserved_input_bytes"]
             for row in rows
         )
+        input_tokens_observed = sum(
+            row["input_tokens"] for row in rows if row["settlement_state"] == "settled"
+        )
+        input_usage_unknown_count = sum(
+            1 for row in rows if row["settlement_state"] is None
+        )
+        input_byte_ceiling = experiment["spec"]["budgets"].get("input_byte_ceiling")
         output_used = sum(
             0 if row["settlement_state"] == "released" else
             row["output_tokens"] if row["settlement_state"] == "settled" else row["reserved_output_tokens"]
@@ -634,8 +642,14 @@ def get_experiment_usage(store, experiment_id):
         )
         return {
             "experiment_id": experiment_id,
-            "input_budget_used": input_used,
-            "input_budget_ceiling": experiment["spec"]["budgets"]["input_token_ceiling"],
+            "input_accounting_status": (
+                "byte_budget_enforced" if input_byte_ceiling is not None
+                else "legacy_mixed_units_unenforceable"
+            ),
+            "input_byte_budget_used": input_bytes_used,
+            "input_byte_budget_ceiling": input_byte_ceiling,
+            "input_tokens_observed": input_tokens_observed,
+            "input_usage_unknown_count": input_usage_unknown_count,
             "output_budget_used": output_used,
             "output_budget_ceiling": experiment["spec"]["budgets"]["output_token_ceiling"],
             "reservations": [dict(row) for row in rows],
