@@ -4,7 +4,7 @@ This module freezes a task/run manifest and records operator-controlled lifecycl
 transitions. It never dispatches participants, executes commands, or resumes work.
 """
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import re
@@ -218,7 +218,7 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
         "wall_clock_seconds": _positive_int(wall_clock_seconds, "wall_clock_seconds", 604800),
         "deadline_utc": deadline,
     }
-    if datetime.fromisoformat(deadline.replace("Z", "+00:00")) > datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=budgets["wall_clock_seconds"]):
+    if datetime.fromisoformat(deadline.replace("Z", "+00:00")) > datetime.now(timezone.utc) + timedelta(seconds=budgets["wall_clock_seconds"]):
         raise ExperimentError("deadline_utc exceeds the frozen wall-clock ceiling")
     participants = _participant_manifest(runtime)
     model_count = sum(1 for p in participants if p.get("participant_type") == "model")
