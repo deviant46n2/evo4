@@ -316,6 +316,54 @@ class InvocationLifecycleTransitionTests(unittest.TestCase):
         finally:
             store.db.close()
 
+    def test_experiment_cancelled_after_admission_cannot_cross_worker_start(self):
+        store, _ = self._store_with_invocation(status="admitted")
+        try:
+            store.db.execute(
+                "CREATE TABLE cooperative_experiments(experiment_id TEXT PRIMARY KEY,status TEXT NOT NULL)"
+            )
+            store.db.execute(
+                """CREATE TABLE cooperative_experiment_usage_reservations(
+                    invocation_id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL
+                )"""
+            )
+            store.db.execute(
+                "INSERT INTO cooperative_experiments(experiment_id,status) VALUES('exp-1','cancelled')"
+            )
+            store.db.execute(
+                "INSERT INTO cooperative_experiment_usage_reservations(invocation_id,experiment_id) VALUES('inv-1','exp-1')"
+            )
+            store.db.commit()
+            self.assertFalse(mark_invocation_running(store, "inv-1"))
+            row = store.db.execute(
+                "SELECT status FROM participant_invocations WHERE invocation_id='inv-1'"
+            ).fetchone()
+            self.assertEqual(row["status"], "admitted")
+        finally:
+            store.db.close()
+
+    def test_running_experiment_allows_reserved_invocation_to_start(self):
+        store, _ = self._store_with_invocation(status="admitted")
+        try:
+            store.db.execute(
+                "CREATE TABLE cooperative_experiments(experiment_id TEXT PRIMARY KEY,status TEXT NOT NULL)"
+            )
+            store.db.execute(
+                """CREATE TABLE cooperative_experiment_usage_reservations(
+                    invocation_id TEXT PRIMARY KEY,experiment_id TEXT NOT NULL
+                )"""
+            )
+            store.db.execute(
+                "INSERT INTO cooperative_experiments(experiment_id,status) VALUES('exp-1','running')"
+            )
+            store.db.execute(
+                "INSERT INTO cooperative_experiment_usage_reservations(invocation_id,experiment_id) VALUES('inv-1','exp-1')"
+            )
+            store.db.commit()
+            self.assertTrue(mark_invocation_running(store, "inv-1"))
+        finally:
+            store.db.close()
+
     def test_concurrent_worker_start_transition_has_single_winner(self):
         store, _ = self._store_with_invocation(status="admitted")
         barrier = threading.Barrier(3)
