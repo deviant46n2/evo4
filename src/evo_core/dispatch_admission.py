@@ -611,6 +611,8 @@ def admit_invocation(
         raise ValueError("now must be a timezone-aware datetime")
     now = now.astimezone(timezone.utc)
     deadline, requested_tokens = _validate_envelope(runtime, envelope, now)
+    # Keep the optional identity in this function's scope for the admission transaction.
+    experiment_id = getattr(envelope, "experiment_id", None)
     try:
         resource_demand = derive_resource_demand(runtime, local_profile=local_profile)
     except AdmissionError:
