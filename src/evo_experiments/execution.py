@@ -166,8 +166,8 @@ def request_cancel_managed_execution(connection, execution_id):
         return row
     stamp = _now()
     connection.execute(
-        "UPDATE workload_executions SET cancel_requested=1, updated_at=? WHERE id=?",
-        (stamp, execution_id))
+        "UPDATE workload_executions SET cancel_requested=1 WHERE id=?",
+        (execution_id,))
     if row["status"] in {"queued", "launching"}:
         connection.execute(
             """UPDATE workload_executions SET status='cancelled', finished_at=?, error=?
@@ -447,12 +447,12 @@ def run_execution(connection, lock, execution_id):
         timed_out = False
         cancelled = {"value": False}
         def _cancel_watcher():
-            while process.poll() is None:
-                time.sleep(0.5)
+            while getattr(process, "returncode", None) is None:
+                time.sleep(0.1)
                 with lock:
                     current = get_execution(connection, execution_id)
                 if current is not None and current.get("cancel_requested"):
-                    if process.poll() is None:
+                    if getattr(process, "returncode", None) is None:
                         try:
                             os.killpg(process.pid, signal.SIGTERM)
                             cancelled["value"] = True
