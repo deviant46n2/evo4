@@ -148,8 +148,50 @@ class CodingAgent:
             return self.workspace.search_text(args["query"],args.get("path","."),include_status=True)
         if name=="write_file":
             return {"written":self.workspace.write_file(args["path"],args["content"],bool(args.get("overwrite",False)),test_approval=test_approval)}
-        if name=="run_command":
-            return self.workspace.run(args["argv"],args.get("timeout_seconds",120))
+        if name == "run_command":
+            import hashlib
+            import json
+            from datetime import datetime, timezone
+            from evo_experiments.execution import register_managed_execution, run_execution
+
+            store = self.assistant.store
+            from evo_experiments.execution import initialize_execution
+            with store.lock:
+                initialize_execution(store.db)
+            argv = list(args["argv"])
+            timeout_seconds = args.get("timeout_seconds", 120)
+            approval_evidence = {
+                "approval": "approved",
+                "approved_at": datetime.now(timezone.utc).isoformat(),
+                "argv_sha256": hashlib.sha256(
+                    json.dumps(argv, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+                "policy": [list(prefix) for prefix in self.workspace.allowed_commands],
+            }
+            with store.lock:
+                execution = register_managed_execution(
+                    store.db,
+                    workspace=str(self.workspace.root),
+                    argv=argv,
+                    allowed_commands=self.workspace.allowed_commands,
+                    timeout_seconds=timeout_seconds,
+                    agent_run_id=getattr(self, "_run_id", None),
+                    workspace_id=getattr(self, "_workspace_id", None),
+                    project_id=getattr(self, "_project_id", None),
+                    approval_evidence=approval_evidence,
+                    source_revision=None,
+                )
+                result = run_execution(store.db, store.lock, execution["id"])
+            return {
+                "execution_id": result.get("id"),
+                "argv": result.get("argv", argv),
+                "returncode": result.get("returncode"),
+                "stdout": result.get("stdout", ""),
+                "stderr": result.get("stderr", ""),
+                "elapsed_seconds": result.get("elapsed_seconds"),
+                "error": result.get("error", ""),
+                "status": result.get("status"),
+            }
         raise WorkspaceError(f"Unknown tool: {name}")
 
     @staticmethod
@@ -345,6 +387,9 @@ class CodingAgent:
             run_id = store.start_agent_run("coding", run_metadata)
         else:
             store.update_agent_run_metadata(run_id, run_metadata)
+        self._run_id = run_id
+        self._workspace_id = workspace_id
+        self._project_id = project_id
 
         provider_attempts = 0
         truncated_responses = 0

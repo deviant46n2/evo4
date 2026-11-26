@@ -1422,7 +1422,22 @@ def create_app(config_path="config.toml", provider_name=None):
                                 verification_status = "failed"
                                 continue
                             try:
-                                result = agent.workspace.run(command, 120)
+                                from evo_experiments.execution import initialize_execution, register_managed_execution, run_execution
+                                with lab_db.lock:
+                                    initialize_execution(lab_db.connection)
+                                    execution = register_managed_execution(
+                                        lab_db.connection,
+                                        workspace=str(agent.workspace.root),
+                                        argv=list(command),
+                                        allowed_commands=agent.workspace.allowed_commands,
+                                        timeout_seconds=120,
+                                        agent_run_id=run_id,
+                                        workspace_id=conversation_workspace_id,
+                                        project_id=conversation_project_id,
+                                        approval_evidence={"approval": "approved", "source": "plan_verification"},
+                                        source_revision=None,
+                                    )
+                                    result = run_execution(lab_db.connection, lab_db.lock, execution["id"])
                                 status = "passed" if result.get("returncode") == 0 else "failed"
                                 with lab_db.lock:
                                     orchestration.record_verification(
@@ -1482,6 +1497,13 @@ def create_app(config_path="config.toml", provider_name=None):
                 previous_status = task["status"]
                 if not background_agent.request_cancel(lab_db.connection, run_id):
                     return {"cancelled": False, "status": task["status"]}
+                from evo_experiments.execution import managed_executions_for_parent, request_cancel_managed_execution
+                for execution in managed_executions_for_parent(lab_db.connection, run_id):
+                    if execution.get("status") in {"queued", "launching", "running", "cancel_requested"}:
+                        try:
+                            request_cancel_managed_execution(lab_db.connection, execution["id"])
+                        except ValueError:
+                            pass
                 queued = previous_status == "queued"
                 if queued:
                     plan_row = lab_db.connection.execute("SELECT id FROM agent_plans WHERE run_id=?", (run_id,)).fetchone()

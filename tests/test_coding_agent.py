@@ -287,7 +287,7 @@ class CodingAgentTests(unittest.TestCase):
             assistant=self.make_assistant(tmp,provider)
             cid=assistant.new_conversation()
             agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
-            with patch.object(agent.workspace,"run",return_value={"argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1}):
+            with patch("evo_experiments.execution.run_execution",return_value={"id":"exec-test","argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1,"status":"completed"}):
                 result=agent.run(cid,"Create and verify main.py",lambda *_:True)
             self.assertEqual(result["verification"],"passed")
             self.assertIn("Verification signal: PASSED",result["content"])
