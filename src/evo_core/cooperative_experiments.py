@@ -168,8 +168,9 @@ def initialize_cooperative_experiments(store):
                 db.execute("ALTER TABLE cooperative_experiment_events ADD COLUMN to_version INTEGER")
                 db.execute("""
                     UPDATE cooperative_experiment_events SET to_version=(
-                        SELECT CASE WHEN e.to_status='planned' THEN 1 ELSE 2 END
-                        FROM cooperative_experiment_events e WHERE e.event_id=cooperative_experiment_events.event_id
+                        SELECT COUNT(*) FROM cooperative_experiment_events e
+                        WHERE e.experiment_id=cooperative_experiment_events.experiment_id
+                          AND e.event_id<=cooperative_experiment_events.event_id
                     )
                 """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_coop_experiments_workspace ON cooperative_experiments(workspace_id, created_at)")
