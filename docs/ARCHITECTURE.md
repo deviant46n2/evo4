@@ -69,9 +69,9 @@ Resource management determines what can execute and where.
 
 These entities must be independently identifiable and maintain appropriate histories.
 
-## Cooperation as an architectural principle
+## Cooperation as a long-term architectural capability
 
-Cooperation is a first-class architectural concern, not merely a feature. Evo must support, without prematurely implementing everything:
+Cooperation remains an important long-term architectural capability, but it is not the immediate product or implementation priority. Local execution, hardware/runtime management, and measured local intelligence come first. Evo should support, without prematurely implementing everything:
 
 - Heterogeneous participants: models, agents, tools, external services, and human participants.
 - Explicit identities, capabilities, compatibility, availability, and lifecycle for participants.
@@ -103,7 +103,7 @@ The immediate roadmap priority is the local execution bridge, followed by hardwa
 
 Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
-Platform Registry v1 is implemented through M5: AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution are present and validated. This is a registry and an API execution-boundary foundation; it does not yet provide project-scoped memory/conversation context, complete CLI/API parity, ancestor/descendant checkout exclusion, or configuration-to-provider runtime binding. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are partially implemented. They are not yet a unified cooperative control plane, and the workload scheduler is not a general task execution scheduler.
+Platform Registry v1 provides AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution. Phase 2 project/workspace/context isolation and Phase 3 Registry-bound runtime integration are formally accepted; see `ROADMAP.md` and their acceptance records for exact scope. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, managed workload execution, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are useful but partial foundations. They are not a unified cooperative control plane or a complete local development executor, and the workload scheduler is not a general task execution scheduler.
 
 ## Long-term self-development
 

@@ -1,6 +1,6 @@
 # Phase 4 — Cooperative Experiment Design (proposal)
 
-**Status:** Proposed overall Phase 4 design; bounded implementation foundations are in progress and not yet accepted
+**Status:** Historical cooperative-experiment proposal. Its accounting and experiment-record foundations have been implemented and validated, but the live cooperative benchmark is deferred to Phase 10 by the current `ROADMAP.md`. This document preserves the proposed methodology; it does not authorize dispatch or define the current next phase.
 **Owner:** GPT-6, technical lead  
 **User role:** Vision Officer / scope authority  
 **Prerequisite:** Phase 3 formally accepted on 2026-11-25  
@@ -8,7 +8,7 @@
 
 ## 1. Purpose and falsifiable question
 
-Phase 4 must determine whether Evo's coordination policy produces better task outcomes than a strong single-participant strategy under a comparable resource budget.
+When resumed under Phase 10 of the current roadmap, this experiment will determine whether Evo's coordination policy produces better task outcomes than a strong single-participant strategy under a comparable resource budget.
 
 The established premise is that additional inference-time compute can improve some model outputs. Phase 4 does **not** attempt to prove that premise. It tests Evo's distinct contribution:
 
