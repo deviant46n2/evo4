@@ -508,21 +508,33 @@ class ExecutionRecoveryTests(unittest.TestCase):
         job = self.reserve("cancel-running")
         record = self.register(job)
 
+        import threading
         class RunningProcess(FakeProcess):
+            started = threading.Event()
+            cancelled = threading.Event()
+
             def wait(self, timeout=None):
-                if timeout is None:
-                    import time
-                    time.sleep(10)
+                self.started.set()
+                if self.cancelled.wait(timeout if timeout is not None else None):
+                    self.returncode = -15
+                    return self.returncode
                 raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
 
+            def poll(self):
+                return None
+
+        RunningProcess.started.clear()
+        RunningProcess.cancelled.clear()
+
+        def fake_killpg(pid, sig):
+            RunningProcess.cancelled.set()
+
         with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.killpg", side_effect=fake_killpg) as killpg:
             import threading
             worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
             worker.start()
-            # Give the process time to enter running state, then cancel.
-            import time
-            time.sleep(0.2)
+            RunningProcess.started.wait(timeout=5)
             from evo_experiments.execution import request_cancel_managed_execution
             request_cancel_managed_execution(self.db, record["id"])
             worker.join(timeout=5)
