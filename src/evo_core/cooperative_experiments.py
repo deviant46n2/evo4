@@ -40,12 +40,34 @@ def _canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
+_SECRET_TEXT = re.compile(
+    r"(?i)(?:\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b|"
+    r"\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b|"
+    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)"
+)
+
+
 def _text(value, field, maximum=4096):
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ExperimentError(f"{field} must be non-empty bounded text")
     if any(ord(c) < 32 and c not in "\n\t\r" for c in value):
         raise ExperimentError(f"{field} contains unsupported control characters")
+    if _SECRET_TEXT.search(value):
+        raise ExperimentError(f"{field} appears to contain credential material")
     return value.strip()
+
+
+def _reject_secret_material(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str) or re.search(r"(?i)(api[_-]?key|authorization|secret|password|credential)", key):
+                raise ExperimentError("event payload contains a prohibited credential field")
+            _reject_secret_material(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _reject_secret_material(item)
+    elif isinstance(value, str) and _SECRET_TEXT.search(value):
+        raise ExperimentError("event payload appears to contain credential material")
 
 
 def _positive_int(value, field, maximum):
@@ -177,7 +199,7 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
                       experiment_id=None):
     """Freeze a benchmark task against the exact workspace-bound runtime revision."""
     initialize_cooperative_experiments(store)
-    if condition not in CONDITIONS:
+    if not isinstance(condition, str) or condition not in CONDITIONS:
         raise ExperimentError("condition must be one of A, B, C, or D")
     task_statement = _text(task_statement, "task_statement", 20000)
     criteria = _references(acceptance_criteria, "acceptance_criteria", 100)
@@ -280,7 +302,7 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
                           event_type, payload=None, expected_version=None):
     """Atomically append one valid transition; never resumes or invokes work."""
     initialize_cooperative_experiments(store)
-    if to_status not in STATUSES:
+    if not isinstance(to_status, str) or to_status not in STATUSES:
         raise ExperimentError("target experiment status is unsupported")
     key = _text(idempotency_key, "idempotency_key", 128)
     event_type = _text(event_type, "event_type", 64)
@@ -289,6 +311,7 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
     payload = {} if payload is None else payload
     if not isinstance(payload, dict):
         raise ExperimentError("event payload must be an object")
+    _reject_secret_material(payload)
     payload_json = _canonical(payload)
     if len(payload_json.encode("utf-8")) > MAX_EVENT_BYTES:
         raise ExperimentError("event payload exceeds the storage limit")
@@ -323,16 +346,18 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
             results = adjudication.get("criteria_results")
             if not isinstance(results, list) or not results:
                 raise ExperimentError("success requires adjudication results for acceptance criteria")
-            expected = set(row["spec"] if False else json.loads(row["spec_json"])["acceptance_criteria"])
-            observed = set()
+            expected = set(json.loads(row["spec_json"])["acceptance_criteria"])
+            observed = []
             for item in results:
                 if not isinstance(item, dict) or set(item) != {"criterion_id", "status", "evidence_references"}:
                     raise ExperimentError("adjudication criterion result is malformed")
-                if item["status"] not in {"pass", "fail", "unknown"}:
+                if not isinstance(item["status"], str) or item["status"] not in {"pass", "fail", "unknown"}:
                     raise ExperimentError("adjudication criterion status is invalid")
-                observed.add(_text(item["criterion_id"], "criterion_id", 128))
-                _references(item["evidence_references"], "adjudication evidence references")
-            if observed != expected or any(item["status"] != "pass" for item in results):
+                criterion_id = _text(item["criterion_id"], "criterion_id", 128)
+                observed.append(criterion_id)
+                if not _references(item["evidence_references"], "adjudication evidence references"):
+                    raise ExperimentError("each adjudicated criterion requires evidence")
+            if len(observed) != len(set(observed)) or set(observed) != expected or any(item["status"] != "pass" for item in results):
                 raise ExperimentError("success requires every frozen criterion to pass with explicit evidence")
         next_version = row["version"] + 1
         db.execute("UPDATE cooperative_experiments SET status=?,version=?,updated_at=? WHERE experiment_id=? AND version=?",
