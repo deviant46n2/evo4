@@ -201,7 +201,6 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(usage), (2, 0, 4))
 
     def test_proposal_task_role_persists_exact_structured_provider_output(self):
-        from evo_core.cooperative_handoffs import
         import json
         runtime, fake = self._enabled_config()
         payload = {
