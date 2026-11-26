@@ -88,7 +88,7 @@ class CooperativeExperimentTests(unittest.TestCase):
         self.temp.cleanup()
 
     def create(self, condition="C"):
-        deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        deadline = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
         return create_experiment(
             self.store, self.runtime, task_statement="Add a bounded validator.",
             acceptance_criteria=["tests-pass", "no-regressions"],
@@ -111,7 +111,7 @@ class CooperativeExperimentTests(unittest.TestCase):
             self.runtime, additional_participants=(),
             additional_participant_bindings=(), additional_participant_provenance=(),
         )
-        deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        deadline = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
         with self.assertRaises(ExperimentError):
             create_experiment(
                 self.store, runtime, task_statement="Task", acceptance_criteria=["C1"],
@@ -121,7 +121,7 @@ class CooperativeExperimentTests(unittest.TestCase):
             )
 
     def test_requires_frozen_acceptance_criteria_and_bounded_verification_commands(self):
-        deadline = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        deadline = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
         with self.assertRaises(ExperimentError):
             create_experiment(
                 self.store, self.runtime, task_statement="Task", acceptance_criteria=[],
@@ -230,6 +230,7 @@ class CooperativeExperimentTests(unittest.TestCase):
 
     def test_manifest_hash_tampering_is_detected(self):
         record = self.create()
+        self.store.db.execute("DROP TRIGGER cooperative_experiment_spec_immutable")
         self.store.db.execute("UPDATE cooperative_experiments SET spec_json='{}' WHERE experiment_id=?",
                               (record["experiment_id"],))
         self.store.db.commit()
