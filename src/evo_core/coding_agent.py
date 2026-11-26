@@ -162,6 +162,7 @@ class CodingAgent:
             timeout_seconds = args.get("timeout_seconds", 120)
             approval_evidence = {
                 "approval": "approved",
+                "approval_source": "user_approval_callback",
                 "approved_at": datetime.now(timezone.utc).isoformat(),
                 "argv_sha256": hashlib.sha256(
                     json.dumps(argv, sort_keys=True).encode("utf-8")

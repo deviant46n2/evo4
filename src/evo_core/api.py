@@ -1434,7 +1434,7 @@ def create_app(config_path="config.toml", provider_name=None):
                                         agent_run_id=run_id,
                                         workspace_id=conversation_workspace_id,
                                         project_id=conversation_project_id,
-                                        approval_evidence={"approval": "approved", "source": "plan_verification", "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(list(command), sort_keys=True).encode("utf-8")).hexdigest(), "policy": [list(p) for p in agent.workspace.allowed_commands]},
+                                        approval_evidence={"approval": "approved", "approval_source": "plan_verification_approval", "source": "plan_verification", "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(list(command), sort_keys=True).encode("utf-8")).hexdigest(), "policy": [list(p) for p in agent.workspace.allowed_commands]},
                                         source_revision=None,
                                     )
                                 execution_id = execution["id"]

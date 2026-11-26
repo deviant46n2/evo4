@@ -82,36 +82,29 @@ def _migrate_execution_schema(connection):
                 break
     if not rebuild:
         return
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        connection.execute("ALTER TABLE workload_executions RENAME TO workload_executions_legacy")
-        connection.execute(TABLE_SQL)
-        legacy_columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions_legacy)").fetchall()}
-        def col(name):
-            return name if name in legacy_columns else "NULL"
-        connection.execute(
-            f"""INSERT INTO workload_executions
-            (id, job_id, agent_run_id, workspace_id, project_id, approval_id,
-             approval_evidence_json, source_revision, cancel_requested, requested_at,
-             argv_json, policy_json, workspace, status, timeout_seconds, pid,
-             process_started_at, started_at, finished_at, returncode, elapsed_seconds,
-             stdout, stderr, error, created_at)
-            SELECT {col('id')}, {col('job_id')}, NULL, NULL, NULL, NULL, '{{}}', NULL, 0, NULL,
-                   {col('argv_json')}, {col('policy_json')}, {col('workspace')}, {col('status')},
-                   {col('timeout_seconds')}, {col('pid')}, {col('process_started_at')},
-                   {col('started_at')}, {col('finished_at')}, {col('returncode')},
-                   {col('elapsed_seconds')}, {col('stdout')}, {col('stderr')}, {col('error')},
-                   {col('created_at')}
-            FROM workload_executions_legacy"""
-        )
-        connection.execute("DROP TABLE workload_executions_legacy")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
-        connection.commit()
-    except Exception:
-        if connection.in_transaction:
-            connection.rollback()
-        raise
+    connection.execute("ALTER TABLE workload_executions RENAME TO workload_executions_legacy")
+    connection.execute(TABLE_SQL)
+    legacy_columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions_legacy)").fetchall()}
+    def col(name):
+        return name if name in legacy_columns else "NULL"
+    connection.execute(
+        f"""INSERT INTO workload_executions
+        (id, job_id, agent_run_id, workspace_id, project_id, approval_id,
+         approval_evidence_json, source_revision, cancel_requested, requested_at,
+         argv_json, policy_json, workspace, status, timeout_seconds, pid,
+         process_started_at, started_at, finished_at, returncode, elapsed_seconds,
+         stdout, stderr, error, created_at)
+        SELECT {col('id')}, {col('job_id')}, NULL, NULL, NULL, NULL, '{{}}', NULL, 0, NULL,
+               {col('argv_json')}, {col('policy_json')}, {col('workspace')}, {col('status')},
+               {col('timeout_seconds')}, {col('pid')}, {col('process_started_at')},
+               {col('started_at')}, {col('finished_at')}, {col('returncode')},
+               {col('elapsed_seconds')}, {col('stdout')}, {col('stderr')}, {col('error')},
+               {col('created_at')}
+        FROM workload_executions_legacy"""
+    )
+    connection.execute("DROP TABLE workload_executions_legacy")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
 
 def initialize_execution(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
@@ -119,14 +112,19 @@ def initialize_execution(connection):
         connection.executescript(SCHEMA)
         connection.commit()
         return
-    if "policy_json" not in columns:
-        connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if "policy_json" not in columns:
+            connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
+        _migrate_execution_schema(connection)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_status ON workload_executions(status, created_at)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
         connection.commit()
-    _migrate_execution_schema(connection)
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_status ON workload_executions(status, created_at)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
-    connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
 
 def command_allowed(argv, allowed_commands):
     if not isinstance(argv, (list, tuple)) or not argv or len(argv) > 128:
@@ -145,6 +143,10 @@ def _decode(row):
         item["allowed_commands"] = json.loads(item.pop("policy_json"))
     except (ValueError, TypeError, KeyError):
         item["allowed_commands"] = []
+    try:
+        item["approval_evidence"] = json.loads(item.pop("approval_evidence_json", "{}") or "{}")
+    except (ValueError, TypeError):
+        item["approval_evidence"] = {}
     return item
 
 def request_cancel_managed_execution(connection, execution_id):
@@ -194,14 +196,27 @@ def register_managed_execution(connection, *, workspace, argv, allowed_commands,
     timeout = min(max(int(timeout_seconds), 1), MAX_TIMEOUT_SECONDS)
     import hashlib, json as _json
     canonical_argv_hash = hashlib.sha256(_json.dumps(list(argv), sort_keys=True).encode("utf-8")).hexdigest()
-    evidence = dict(approval_evidence or {})
-    if agent_run_id is not None and not evidence:
-        raise ValueError("Approval evidence is required for agent-originated managed execution")
-    if "argv_sha256" in evidence and evidence["argv_sha256"] != canonical_argv_hash:
+    canonical_policy = [list(prefix) for prefix in allowed_commands if prefix]
+    if agent_run_id is None:
+        approval_evidence = dict(approval_evidence or {})
+    else:
+        evidence = dict(approval_evidence or {})
+        if evidence.get("approval") != "approved":
+            raise ValueError("Approval evidence must record an approved action")
+        if not isinstance(evidence.get("approval_source"), str) or not evidence["approval_source"].strip():
+            raise ValueError("Approval evidence must include a meaningful approval source")
+        if not isinstance(evidence.get("approved_at"), str) or not evidence["approved_at"].strip():
+            raise ValueError("Approval evidence must include an approval timestamp")
+        if evidence.get("argv_sha256") != canonical_argv_hash:
+            raise ValueError("Approval evidence must bind the exact command argv")
+        if evidence.get("policy") != canonical_policy:
+            raise ValueError("Approval evidence must bind the exact effective policy snapshot")
+        approval_evidence = evidence
+    approval_evidence = dict(approval_evidence or {})
+    if "argv_sha256" in approval_evidence and approval_evidence["argv_sha256"] != canonical_argv_hash:
         raise ValueError("Approval evidence does not match the requested command")
-    evidence.setdefault("argv_sha256", canonical_argv_hash)
-    evidence.setdefault("policy", [list(prefix) for prefix in allowed_commands if prefix])
-    approval_evidence = evidence
+    if "policy" in approval_evidence and approval_evidence["policy"] != canonical_policy:
+        raise ValueError("Approval evidence does not match the effective policy snapshot")
     if job_id is not None:
         job = get_job(connection, job_id)
         if job is None:
@@ -493,11 +508,12 @@ def run_execution(connection, lock, execution_id):
         if cleanup_error:
             error = (error + "; process group cleanup failed: " + cleanup_error).strip("; ").strip()
         with lock:
-            connection.execute(
+            cursor = connection.execute(
                 """UPDATE workload_executions SET status=?,finished_at=?,returncode=?,
-                   elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL WHERE id=?""",
+                   elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL
+                   WHERE id=? AND status NOT IN ('completed','failed','cancelled','interrupted','launch_uncertain')""",
                 (outcome, _now(), returncode, elapsed, stdout, stderr, error[:2000], execution_id))
-            if record.get("job_id"):
+            if cursor.rowcount == 1 and record.get("job_id"):
                 try:
                     if outcome == "cancelled":
                         finish_job(connection, record["job_id"], "failed",

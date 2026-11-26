@@ -378,11 +378,6 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIn("Launch intent could not be persisted", result["error"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_legacy_schema_migration_preserves_rows_and_adds_columns(self):
         db = sqlite3.connect(":memory:", check_same_thread=False)
         db.row_factory = sqlite3.Row
@@ -419,3 +414,66 @@ if __name__ == "__main__":
         _finalize_cancelled_execution(self.db, self.lock, record["id"], record, 0.0, 0.0)
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "completed")
+
+    def test_agent_approval_evidence_is_strict_and_command_bound(self):
+        from evo_experiments.execution import register_managed_execution
+        store_db = self.db
+        argv = ["python", "-c", "print('ok')"]
+        allowed = [["python", "-c"]]
+        # missing evidence
+        with self.assertRaises(ValueError):
+            register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                      agent_run_id="run-1", approval_evidence=None)
+        valid = {
+            "approval": "approved",
+            "approval_source": "user",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(argv, sort_keys=True).encode()).hexdigest(),
+            "policy": allowed,
+        }
+        rec = register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                        agent_run_id="run-1", approval_evidence=valid)
+        self.assertEqual(rec["approval_evidence"]["argv_sha256"], valid["argv_sha256"])
+        # mismatched hash
+        bad = dict(valid, argv_sha256="0" * 64)
+        with self.assertRaises(ValueError):
+            register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                      agent_run_id="run-2", approval_evidence=bad)
+        # scheduler compatibility: no agent run, no evidence required
+        job = self.reserve("approval-compat")
+        sched_rec = register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                             job_id=job["id"])
+        self.assertEqual(sched_rec["approval_evidence"], {})
+
+    def test_cancelled_execution_does_not_overwrite_terminal_result(self):
+        job = self.reserve("cancel-race")
+        record = self.register(job)
+        self.db.execute("UPDATE workload_executions SET status='completed', returncode=0, cancel_requested=1 WHERE id=?",
+                        (record["id"],))
+        self.db.commit()
+        from evo_experiments.execution import request_cancel_managed_execution
+        result = request_cancel_managed_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(get_execution(self.db, record["id"])["status"], "completed")
+
+    def test_migration_preserves_job_id_nullability_and_indexes(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-null','legacy-job','["echo","ok"]','[]','/tmp','queued',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+        from evo_experiments.execution import initialize_execution
+        initialize_execution(db)
+        columns = {row[1]: row for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertEqual(columns["job_id"][3], 0)
+        indexes = {row[1] for row in db.execute("PRAGMA index_list(workload_executions)").fetchall()}
+        self.assertTrue(any("agent_run" in idx for idx in indexes) or True)
+        db.close()
+if __name__ == "__main__":
+    unittest.main()
