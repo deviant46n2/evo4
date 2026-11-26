@@ -114,7 +114,6 @@ def _runtime_snapshot_payload(runtime, invocation_kind, experiment_id=None):
     payload = {
         "snapshot_schema_version": SNAPSHOT_SCHEMA_VERSION,
         "invocation_kind": invocation_kind,
-        "experiment_id": experiment_id,
         "workspace_id": runtime.workspace_id,
         "project_id": runtime.project_id,
         "configuration_id": runtime.configuration_id,
@@ -128,6 +127,8 @@ def _runtime_snapshot_payload(runtime, invocation_kind, experiment_id=None):
         "provenance": safe_provenance,
         "dispatch_enabled": bool(runtime.dispatch_enabled),
     }
+    if experiment_id is not None:
+        payload["experiment_id"] = experiment_id
     try:
         encoded = _canonical_json(payload)
     except (TypeError, ValueError) as exc:
