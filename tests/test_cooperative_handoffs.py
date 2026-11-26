@@ -324,6 +324,12 @@ class HandoffPersistenceTests(unittest.TestCase):
                 budget=HandoffBudget(10, 10, self.deadline),
             )
 
+    def test_output_recorder_cannot_relabel_the_invocation_task_role(self):
+        with self.assertRaises(HandoffError):
+            record_participant_output(
+                self.store, self.invocation_id, self.output_json, task_role="critique"
+            )
+
     def test_rejects_handoff_role_different_from_the_invocation_task_role(self):
         critique = {
             "summary": "A critique.",
