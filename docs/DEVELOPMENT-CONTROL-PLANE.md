@@ -4,9 +4,9 @@
 
 ## Purpose and current reality
 
-Evo exists to make cooperating AIs and tools more capable together than any one could be independently. The control plane should turn a set of models, agents, tools, services, and people into a governed collaborative system that can combine work, challenge assumptions, resolve disagreement, and demonstrate when collaboration improves outcomes.
+The long-term control-plane goal is to let models, agents, tools, services, and people collaborate under explicit ownership, permissions, resource budgets, evidence, and user oversight. It should combine capabilities only when a measured task benefit justifies the coordination cost.
 
-The current GPT-6/Kilo workflow is human-mediated: GPT-6 provides reasoning/architecture/review, Kilo performs local repository work and validation, the user sets vision and retains final authority, and GitHub is the handoff/source-of-truth mechanism. This workflow is design inspiration only. Evo does not currently dispatch to or observe those external sessions. Phase 4 must validate Evo's own runtime contracts with participants Evo can actually invoke.
+The immediate Evo4 priority is local execution and hardware/runtime management, not multi-agent coordination. The current GPT-6/Kilo workflow is human-mediated: GPT-6 provides reasoning, architecture, review, and technical leadership; Kilo provides local repository access, implementation, independent challenge, and validation; the user sets vision and retains final authority; GitHub is the handoff/source-of-truth mechanism. Evo should progressively take over Kilo's local execution role without disabling or removing Kilo. Evo does not currently dispatch to or observe those external sessions. The current workflow is a practical benchmark for the future local execution bridge, not proof of Evo's internal cooperative orchestration.
 
 A minimal recovery path must remain usable when the control-plane worker is unavailable. Current support includes local CLI diagnostics and `evo backup <destination>` for a consistent SQLite backup, plus Git for source/configuration recovery. A dedicated application restore command is not currently documented as available; the exact SQLite-safe restore procedure, startup checks, and a recovery test must be specified before the control plane depends on this path. Recovery must not require the orchestration worker, scheduler, or a live participant provider.
 
@@ -41,7 +41,7 @@ Versioned AI Configurations are definitions, not executable participants by them
 6. Report unavailable/unsupported components explicitly; never silently substitute a different model or policy.
 7. Record the exact configuration revision, adapter version, provider/model identity, and effective policy used for each execution.
 
-This binding is a Phase 3 deliverable. A Registry row or UI selection is not proof that a configuration can run.
+The runtime binding foundation is accepted in Phase 3. A Registry row or UI selection is not proof that a configuration can run.
 
 Compliance metadata should be structured and versioned per integration: provider/service identity, terms/policy URL and checked version/date, permitted interface/API, automation permission/status, data retention/training constraints, geographic/data-handling constraints where relevant, rate/token quotas, license obligations, and review owner/status. If terms change or compliance becomes unknown, the integration is suspended or restricted pending review. No bypasses, undocumented interfaces, permission laundering, or attempts to evade provider restrictions.
 
@@ -106,7 +106,7 @@ A passing test suite does not prove all correctness; a model review does not pro
 
 Every action is authorized at the execution boundary against current task, assignment, participant, project/workspace, and policy state. Permissions are least-privilege and attenuate down the delegation tree. Resource budgets also attenuate: child assignments cannot exceed remaining parent budget.
 
-Before dispatch, perform admission against CPU/RAM/VRAM reserves, provider quotas, rate/token budgets, concurrency limits, and deadlines. If capacity is unknown, do not assume it is available. Minimal admission is required before the Phase 4 cooperative slice; durable concurrency scheduling is expanded in Phase 5.
+Before dispatch, perform admission against CPU/RAM/VRAM reserves, provider quotas, rate/token budgets, concurrency limits, and deadlines. If capacity is unknown, do not assume it is available. Resource admission is required before any bounded execution that consumes shared resources. The roadmap sequences local execution and hardware/runtime management before advanced cooperative orchestration.
 
 Cancellation, timeout, revocation, and task termination propagate to child assignments and active executions. Workers must check cancellation at safe boundaries. A provider failure, timeout, partial output, or unavailable participant cannot be reported as success. Retry and reassignment are bounded and idempotent.
 
@@ -126,7 +126,7 @@ Evaluation records should feed a task-class reliability profile for each partici
 - Malformed handoffs, unauthorized actions, stale configuration revisions, and unknown compliance state fail closed.
 - Important state and evidence survive restart; incomplete work remains visibly incomplete.
 - The control plane must not be its own only recovery mechanism.
-- Autonomy and self-modification are not authorized by this proposal. They require separate future policy and evidence.
+- Autonomy and self-modification are not authorized by this proposal. They require separate future policy and evidence. Advanced cooperative orchestration is deliberately deferred until local execution, hardware management, and evaluation demonstrate practical value.
 
 ## Relationship to architecture and roadmap
 

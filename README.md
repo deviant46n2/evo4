@@ -1,10 +1,10 @@
 # Evo 4
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a portable, model-agnostic platform for cooperative intelligence, providing infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management for heterogeneous models, agents, and tools. The personal assistant and coding-agent experiences are the initial practical product through which that purpose is realized.
+Evo4 is a local-first, model-agnostic AI workbench and development system. Its immediate purpose is to make the user's existing hardware more useful through dependable local execution, resource-aware model/runtime management, and a practical assistant and coding workflow. It should progressively take over local repository inspection, editing, command execution, testing, builds, and evidence-gathering work currently performed by Kilo, while keeping Kilo available as a useful engineering partner and fallback.
 
-The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. The personal assistant and coding-agent experiences are configurations built on this platform, not its fundamental identity.
+Local operation must remain useful without paid cloud services. Optional cloud providers and free tiers may extend capability, but no paid provider is a core dependency. GPT-6 is the current external reasoning/technical-lead partner; Kilo is the current local engineering partner. Evo does not yet directly control those external sessions.
 
-Hardware optimization is one capability and potential experiment area, not the defining purpose of Evo4.
+The long-term ambition is a user-controlled substrate for increasingly capable AI systems, potentially including superintelligence, through software engineering, memory, context, tools, orchestration, evaluation, and controlled research. This is a distant ambition, not a claim about current capabilities.
 
 The repository contains two independently usable applications:
 
@@ -26,11 +26,11 @@ The long-term ambition is to support increasingly capable software-engineering s
 - Real models are integration targets and experimental subjects, not prerequisites for development.
 - Every major milestone should deliver reusable capability, experimentally validated improvement, or measurable expansion of what Evo4 can support.
 - Prefer existing research and software rather than reinventing infrastructure without a demonstrated reason.
-- Keep scope focused on improving AI systems through software architecture and engineering.
+- Prioritize useful local execution and hardware efficiency now; pursue advanced cooperation and system-level research only when earlier capabilities are reliable and measured.
 
-## Self-development ambition
+## Long-term self-development ambition
 
-The long-term design should support Evo4:
+After the local execution, resource-management, memory, and evaluation foundations are reliable, the long-term design should support Evo4:
 
 - Understanding its own architecture and development history.
 - Identifying weaknesses and opportunities.

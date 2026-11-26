@@ -6,17 +6,17 @@ This document records the target product experience and UX requirements for Evo4
 
 ## 1. Product vision and guiding principles
 
-Evo's identity is a model/provider/agent/tool-agnostic cooperative-intelligence platform: it exists to make cooperating AIs and tools more capable together than any could be independently. The personal assistant and coding experience is the initial practical product through which that broader purpose is delivered. This redesign defines the user-facing experience; it does not narrow or redefine the platform's identity.
+Evo4's immediate product is a local-first AI workbench and development system: a practical assistant and coding environment that makes the user's existing hardware more useful through local execution and resource-aware model/runtime management. Local operation must not depend on paid cloud services. The longer-term platform remains model/provider/agent/tool-agnostic and may support increasingly capable cooperative systems, but advanced cooperation is not the immediate UX or implementation priority. This document defines the user-facing experience; `ROADMAP.md` alone determines implementation sequence.
 
 Guiding principles:
 
 - Chat is the primary interaction surface for most user activity.
 - Other application areas are visual representations or windows into backend capabilities, not separate applications or mandatory workflows.
-- The backend platform remains authoritative for projects, configurations, workspaces, memory, experiments, and execution.
+- The backend platform remains authoritative for projects, configurations, workspaces, memory, experiments, local execution, and runtime/resource state.
 - Natural-language intent routing should initially use deliberately engineered workflows. More automatic intent recognition can be introduced as reliability improves.
 - Project scope, instructions, memory, filesystem access, and active task scope must never silently cross-contaminate.
 - Reliability, isolation, security, and data integrity are gates, not aspirations.
-- Functional reliability and usability take priority over visual effects.
+- Functional reliability, safe local execution, hardware visibility, and usability take priority over visual effects.
 - Proposed future behavior must be clearly distinguished from implemented behavior.
 
 ## 2. Target interaction model
@@ -39,7 +39,7 @@ Primary areas:
 - Projects: independent project list and project lifecycle.
 - Memory: persistent, searchable, inspectable, editable context.
 - AI Configuration / Cyberdeck: visual configuration of components and relationships.
-- Experiments and supporting platform areas: exposed as needed, with visual representations of backend capabilities.
+- Hardware/runtime, task execution, evidence, experiments, and supporting platform areas: exposed as needed, with visual representations of real backend capabilities.
 
 Application areas should remain windows into backend capabilities rather than separate mandatory workflows.
 

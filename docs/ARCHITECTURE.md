@@ -2,19 +2,19 @@
 
 This document describes Evo4's intended architecture. It distinguishes current implementation from designed and long-term capabilities.
 
-## Evo's identity
+## Evo's identity and operating priority
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently.
+Evo4 is a local-first, model-agnostic AI workbench and development system. Its immediate product objective is to make the user's existing hardware more useful through dependable local execution, resource-aware model/runtime management, and a practical assistant and coding workflow.
 
-Evo is a portable, model-agnostic platform for cooperative intelligence. Its purpose is to provide the infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management that allow heterogeneous models, agents, and tools to produce better combined results than any participant could produce alone.
+Evo should progressively take over local repository inspection, editing, command execution, testing, build, and evidence-gathering work currently performed by Kilo. GPT-6 is the current external reasoning and technical-lead partner; Kilo remains a useful local engineering partner, independent challenger, and fallback. These roles describe the present workflow, not permanent architectural dependencies. Evo does not currently directly control either external session.
 
-The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. Target areas include memory architectures, context management, agent architectures, orchestration, tool integration, evaluation, hardware/resource efficiency, autonomous research and software development, and controlled self-improvement.
+Local operation must remain useful without paid cloud services. Models, runtimes, agent frameworks, and external providers are replaceable components. Optional cloud integrations may add capability but must not become hidden requirements.
 
-Evo is not a foundation-model trainer, custom neural-network engineering project, or general-purpose machine-learning laboratory. Existing models and frameworks are components that Evo coordinates and experiments with; they are not the foundation of Evo's architecture.
+The long-term ambition is a user-controlled substrate for increasingly capable AI systems, potentially including superintelligence, through software engineering, memory, context, tools, orchestration, evaluation, and controlled research. This is a distant ambition, not a current capability claim.
 
-The personal assistant and coding-agent experiences are the initial practical product through which the broader cooperative-intelligence purpose is realized. They are configurations assembled using Evo, not Evo's fundamental identity.
+Evo is not a foundation-model trainer or custom neural-network engineering project. It should use existing models and software as components, and use deterministic tools for deterministic work. Cooperative multi-agent execution is a later capability to be justified by measured benefit, not the immediate product objective.
 
-Evo must not imply that it already directly orchestrates external AI sessions such as GPT-6 or Kilo. Those are currently coordinated through a human-mediated workflow and Git. Future integrations must use supported interfaces and comply with provider terms, policies, licensing, and API rules.
+Provider terms, policies, licensing, supported interfaces, API rules, and data-handling requirements must be respected.
 
 ## Fundamental entities
 
@@ -99,6 +99,8 @@ Every experiment should reference exact relevant source commits, configuration r
 
 ## Current implementation status
 
+The immediate roadmap priority is the local execution bridge, followed by hardware/model-runtime management and the GPT-6-to-Evo local development loop. See `ROADMAP.md` for sequencing and acceptance gates. Existing telemetry, advisory admission/scheduling, and managed workload execution are useful foundations but do not yet constitute complete hardware/runtime management or a general local development executor.
+
 Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
 Platform Registry v1 is implemented through M5: AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution are present and validated. This is a registry and an API execution-boundary foundation; it does not yet provide project-scoped memory/conversation context, complete CLI/API parity, ancestor/descendant checkout exclusion, or configuration-to-provider runtime binding. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are partially implemented. They are not yet a unified cooperative control plane, and the workload scheduler is not a general task execution scheduler.
@@ -133,7 +135,7 @@ Provider terms, licensing, API permissions, automation restrictions, and data-ha
 
 Agent lifecycle: discovery, evaluation, registration, authorization, availability, assignment, active work, suspension, retirement, and revocation.
 
-The development control plane is a first-class Evo subsystem, with an independent minimal bootstrap and recovery mechanism outside it.
+A governed development control plane is a long-term platform capability. The immediate product does not depend on heterogeneous multi-agent orchestration; local execution and resource management come first. Any future control plane requires an independent minimal bootstrap and recovery mechanism.
 
 ## Development philosophy and implementation strategy
 
