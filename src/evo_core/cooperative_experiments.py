@@ -500,7 +500,7 @@ def list_experiment_events(store, experiment_id):
 def reserve_experiment_usage(db, experiment_id, invocation_id, participant_id,
                              reserved_input_bytes, reserved_output_tokens,
                              workspace_id, project_id, configuration_id, revision_id, revision_hash):
-    """Reserve conservative input-byte and requested-output ceilings inside admission's transaction."""
+    """Reserve serialized request-byte and requested-output-token ceilings inside admission's transaction."""
     if not isinstance(experiment_id, str) or not experiment_id.strip():
         raise ExperimentError("experiment identity is required")
     if (isinstance(reserved_input_bytes, bool) or not isinstance(reserved_input_bytes, int)
