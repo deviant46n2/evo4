@@ -109,8 +109,17 @@ def _migrate_execution_schema(connection):
 def initialize_execution(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
     if not columns:
-        connection.executescript(SCHEMA)
-        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.execute(TABLE_SQL)
+            for statement in INDEX_SQL.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
         return
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -500,7 +509,7 @@ def run_execution(connection, lock, execution_id):
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
-        if cancelled:
+        if cancelled and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
             outcome = "cancelled"
         else:
             outcome = "failed" if timed_out or returncode != 0 else "completed"

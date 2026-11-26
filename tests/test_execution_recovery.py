@@ -475,5 +475,100 @@ class ExecutionRecoveryTests(unittest.TestCase):
         indexes = {row[1] for row in db.execute("PRAGMA index_list(workload_executions)").fetchall()}
         self.assertTrue(any("agent_run" in idx for idx in indexes) or True)
         db.close()
+        def test_natural_completion_before_cancellation_is_not_relabelled(self):
+            job = self.reserve("natural-completion-race")
+            record = self.register(job)
+
+            class CompletingProcess(FakeProcess):
+                def wait(self, timeout=None):
+                    # Simulate the process exiting successfully before cancellation is observed.
+                    self.db.execute("UPDATE workload_executions SET cancel_requested=1 WHERE id=?", (record["id"],))
+                    self.db.commit()
+                    return 0
+
+            CompletingProcess.db = self.db
+            with patch("evo_experiments.execution.subprocess.Popen", CompletingProcess), \
+                 patch("evo_experiments.execution.os.killpg") as killpg:
+                run_execution(self.db, self.lock, record["id"])
+            result = get_execution(self.db, record["id"])
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["returncode"], 0)
+            killpg.assert_not_called()
+
+        def test_cancellation_while_running_terminates_owned_process(self):
+            job = self.reserve("cancel-running")
+            record = self.register(job)
+
+            class RunningProcess(FakeProcess):
+                def wait(self, timeout=None):
+                    if timeout is None:
+                        import time
+                        time.sleep(10)
+                    raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+
+            with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
+                 patch("evo_experiments.execution.os.killpg") as killpg:
+                import threading
+                worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+                worker.start()
+                # Give the process time to enter running state, then cancel.
+                import time
+                time.sleep(0.2)
+                from evo_experiments.execution import request_cancel_managed_execution
+                request_cancel_managed_execution(self.db, record["id"])
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+            result = get_execution(self.db, record["id"])
+            self.assertEqual(result["status"], "cancelled")
+            killpg.assert_called()
+
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_natural_completion_before_cancellation_is_not_relabelled(self):
+        job = self.reserve("natural-completion-race")
+        record = self.register(job)
+
+        class CompletingProcess(FakeProcess):
+            def wait(self, timeout=None):
+                # Simulate the process exiting successfully before cancellation is observed.
+                self.db.execute("UPDATE workload_executions SET cancel_requested=1 WHERE id=?", (record["id"],))
+                self.db.commit()
+                return 0
+
+        CompletingProcess.db = self.db
+        with patch("evo_experiments.execution.subprocess.Popen", CompletingProcess), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["returncode"], 0)
+        killpg.assert_not_called()
+
+    def test_cancellation_while_running_terminates_owned_process(self):
+        job = self.reserve("cancel-running")
+        record = self.register(job)
+
+        class RunningProcess(FakeProcess):
+            def wait(self, timeout=None):
+                if timeout is None:
+                    import time
+                    time.sleep(10)
+                raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+
+        with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            import threading
+            worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+            worker.start()
+            # Give the process time to enter running state, then cancel.
+            import time
+            time.sleep(0.2)
+            from evo_experiments.execution import request_cancel_managed_execution
+            request_cancel_managed_execution(self.db, record["id"])
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        killpg.assert_called()
