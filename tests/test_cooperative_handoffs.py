@@ -212,6 +212,39 @@ class HandoffPersistenceTests(unittest.TestCase):
             self.store, self.invocation_id, self.output_json, task_role="proposal"
         )
 
+    def _add_successful_invocation(self, invocation_id, role, payload):
+        snapshot = create_runtime_invocation_snapshot(
+            self.store, self.selected, invocation_id=invocation_id,
+            invocation_kind="participant_completion",
+        )
+        now = datetime.now(timezone.utc)
+        invocation_deadline = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+        with self.store.lock:
+            self.store.db.execute(
+                """INSERT INTO participant_invocations(
+                    invocation_id,workspace_id,project_id,participant_id,integration_id,adapter_id,
+                    configuration_id,revision_id,revision_hash,snapshot_hash,status,decision_json,
+                    deadline_utc,requested_output_tokens,budget_day_utc,created_at,updated_at,finished_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    invocation_id, self.workspace["workspace_id"], self.runtime.project_id,
+                    self.selected.participant.participant_id, self.selected.participant.integration_id,
+                    self.selected.participant.adapter_id, self.runtime.configuration_id,
+                    self.runtime.revision_id, self.runtime.revision_hash, snapshot["snapshot_hash"],
+                    "succeeded", json.dumps({"decision": "admitted"}), invocation_deadline, 1024,
+                    "2026-11-25", invocation_deadline, invocation_deadline, invocation_deadline,
+                ),
+            )
+            self.store.db.commit()
+        output_json = json.dumps({
+            "content": json.dumps(payload, separators=(",", ":")),
+            "tool_calls": [], "finish_reason": "stop", "truncated": False,
+        }, separators=(",", ":"))
+        record_participant_output(
+            self.store, invocation_id, output_json, task_role=role
+        )
+        return invocation_deadline
+
     def tearDown(self):
         self.store.db.close()
         self.temp.cleanup()
@@ -234,10 +267,15 @@ class HandoffPersistenceTests(unittest.TestCase):
         self.assertEqual(len(list_handoffs(self.store, self.runtime.workspace_id, "task-1")), 1)
 
     def test_synthesis_may_be_a_terminal_handoff_without_model_target(self):
+        synthesis_payload = {"summary": "Candidate synthesized.", "dispositions": []}
+        invocation_id = "synthesis-invocation"
+        invocation_deadline = self._add_successful_invocation(
+            invocation_id, "synthesis", synthesis_payload
+        )
         result = create_handoff(
-            self.store, self.selected, invocation_id=self.invocation_id, task_id="task-2",
+            self.store, self.selected, invocation_id=invocation_id, task_id="task-2",
             role="synthesis", target_participant_id=None,
-            payload={"summary": "Candidate synthesized.", "dispositions": []},
+            payload=synthesis_payload,
             budget=HandoffBudget(10, 10, self.deadline),
         )
         self.assertIsNone(result["target_participant_id"])
