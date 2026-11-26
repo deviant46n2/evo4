@@ -803,7 +803,7 @@ def mark_invocation_running(store, invocation_id):
             experiment = db.execute(
                 """SELECT e.status
                    FROM cooperative_experiment_usage_reservations r
-                   JOIN cooperative_experiments e ON e.experiment_id=r.experiment_id
+                   LEFT JOIN cooperative_experiments e ON e.experiment_id=r.experiment_id
                    WHERE r.invocation_id=?""",
                 (invocation_id,),
             ).fetchone()
