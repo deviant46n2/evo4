@@ -3,8 +3,6 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 from evo_core.ai_configurations import create_configuration
 from evo_core.config import EvoConfig
@@ -15,7 +13,6 @@ from evo_core.cooperative_handoffs import (
     validate_handoff_payload,
 )
 from evo_core.dispatch_admission import initialize_invocation_lifecycle
-from evo_core.participant_contracts import stable_integration_id, stable_participant_id
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
 from evo_core.runtime_binding import build_workspace_runtime
@@ -203,15 +200,15 @@ class HandoffPersistenceTests(unittest.TestCase):
             )
             self.store.db.commit()
         self.deadline = (now + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        self.payload = {
+            "summary": "Implement the bounded feature.",
+            "plan": [{"step_id": "S1", "description": "Add the contract module."}],
+        }
         self.output_json = json.dumps({
             "content": json.dumps(self.payload, separators=(",", ":")),
             "tool_calls": [], "finish_reason": "stop", "truncated": False,
         }, separators=(",", ":"))
         record_participant_output(self.store, self.invocation_id, self.output_json)
-        self.payload = {
-            "summary": "Implement the bounded feature.",
-            "plan": [{"step_id": "S1", "description": "Add the contract module."}],
-        }
 
     def tearDown(self):
         self.store.db.close()

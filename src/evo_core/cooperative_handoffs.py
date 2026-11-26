@@ -339,7 +339,7 @@ def initialize_cooperative_handoffs(store):
 
 
 def record_participant_output(store, invocation_id, output_json):
-    """Persist a bounded structured-role completion while its dispatch lease is active."""
+    """Persist a bounded structured-role completion after successful settlement."""
     initialize_cooperative_handoffs(store)
     if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
         raise HandoffError("invocation_id is invalid")
