@@ -353,10 +353,16 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
         output = json.loads(output_json, object_pairs_hook=_unique_pairs)
     except (UnicodeEncodeError, TypeError, ValueError) as exc:
         raise HandoffError("participant output is malformed") from exc
-    if len(encoded_bytes) > MAX_HANDOFF_BYTES or not isinstance(output, dict):
-        raise HandoffError("participant output is oversized or not an object")
-    if not isinstance(output.get("content"), str) or output.get("tool_calls") != []:
-        raise HandoffError("structured handoff output must be text-only and contain no tool calls")
+    if len(encoded_bytes) > MAX_HANDOFF_BYTES:
+        raise HandoffError("participant output exceeds the byte limit")
+    _exact_keys(output, {"content", "tool_calls", "finish_reason", "truncated"})
+    if (
+        not isinstance(output["content"], str)
+        or output["tool_calls"] != []
+        or output["truncated"] is not False
+        or (output["finish_reason"] is not None and not isinstance(output["finish_reason"], str))
+    ):
+        raise HandoffError("structured handoff output must be complete text-only output without tool calls")
     _text(output["content"], "participant structured output", maximum=MAX_HANDOFF_BYTES)
     output_hash = sha256(output_json.encode("utf-8")).hexdigest()
     created_at = utc_now()
@@ -419,8 +425,12 @@ def create_handoff(
     references = validate_context_references(context_references)
     parent = getattr(runtime, "parent_runtime", runtime)
     selected = runtime if hasattr(runtime, "participant") else None
-    if selected is None or not hasattr(selected, "participant_adapter"):
-        raise HandoffError("handoff source must be a selected participant runtime")
+    if (
+        selected is None
+        or not hasattr(selected, "participant_adapter")
+        or selected.participant.participant_type != "model"
+    ):
+        raise HandoffError("handoff source must be a selected model participant runtime")
     if not isinstance(invocation_id, str) or not invocation_id.strip() or len(invocation_id) > 128:
         raise HandoffError("invocation_id is invalid")
     if target_participant_id is not None:
@@ -428,9 +438,12 @@ def create_handoff(
             raise HandoffError("target participant ID is invalid")
         if role in {"proposal", "critique"} and target_participant_id == selected.participant.participant_id:
             raise HandoffError(f"{role} must target a distinct participant")
-        participants = {item.participant_id for item in parent.participants}
+        participants = {
+            item.participant_id for item in parent.participants
+            if item.participant_type == "model"
+        }
         if target_participant_id not in participants:
-            raise HandoffError("handoff target is not bound to the pinned runtime revision")
+            raise HandoffError("handoff target is not a model participant bound to the pinned runtime revision")
     elif role in {"proposal", "critique"}:
         raise HandoffError(f"{role} requires a target participant from the pinned runtime revision")
     parent.assert_current(store)

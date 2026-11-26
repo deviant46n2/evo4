@@ -294,6 +294,27 @@ class HandoffPersistenceTests(unittest.TestCase):
                 payload=self.payload, budget=HandoffBudget(7168, 1025, self.deadline),
             )
 
+    def test_structured_output_rejects_extra_fields_and_tool_calls(self):
+        from evo_core.cooperative_handoffs import record_participant_output
+        with self.assertRaises(HandoffError):
+            record_participant_output(
+                self.store, self.invocation_id,
+                json.dumps({
+                    "content": "{}", "tool_calls": [], "finish_reason": "stop",
+                    "truncated": False, "api_key": "not-allowed",
+                }),
+                task_role="proposal",
+            )
+        with self.assertRaises(HandoffError):
+            record_participant_output(
+                self.store, self.invocation_id,
+                json.dumps({
+                    "content": "{}", "tool_calls": [{"id": "x"}], "finish_reason": "stop",
+                    "truncated": False,
+                }),
+                task_role="proposal",
+            )
+
     def test_rejects_handoff_payload_not_equal_to_persisted_participant_output(self):
         with self.assertRaises(HandoffError):
             create_handoff(
