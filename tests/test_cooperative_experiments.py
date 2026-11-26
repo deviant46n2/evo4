@@ -226,6 +226,10 @@ class CooperativeExperimentTests(unittest.TestCase):
             self.store.db.execute("DELETE FROM cooperative_experiment_events WHERE experiment_id=?",
                                   (record["experiment_id"],))
         self.store.db.rollback()
+        with self.assertRaises(Exception):
+            self.store.db.execute("UPDATE cooperative_experiments SET status='authorized',version=2 WHERE experiment_id=?",
+                                  (record["experiment_id"],))
+        self.store.db.rollback()
         self.assertEqual(get_experiment(self.store, record["experiment_id"])["spec_hash"], record["spec_hash"])
 
     def test_manifest_hash_tampering_is_detected(self):
