@@ -369,6 +369,7 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
                       s.configuration_id AS snapshot_configuration_id,
                       s.revision_id AS snapshot_revision_id,
                       s.revision_hash AS snapshot_revision_hash,
+                      s.snapshot_json AS snapshot_json,
                       l.state AS lease_state
                FROM participant_invocations i
                JOIN runtime_invocation_snapshots s ON s.invocation_id=i.invocation_id
@@ -378,6 +379,8 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
         ).fetchone()
         if row is None or row["status"] != "succeeded" or row["lease_state"] is not None:
             raise HandoffError("structured output requires a settled successful invocation with no active lease")
+        if sha256(row["snapshot_json"].encode("utf-8")).hexdigest() != row["current_snapshot_hash"]:
+            raise HandoffError("structured output source snapshot integrity check failed")
         if (
             row["snapshot_hash"] != row["current_snapshot_hash"]
             or row["workspace_id"] != row["snapshot_workspace_id"]

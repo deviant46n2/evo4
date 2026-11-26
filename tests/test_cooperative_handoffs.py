@@ -265,6 +265,35 @@ class HandoffPersistenceTests(unittest.TestCase):
                 budget=HandoffBudget(10, 10, self.deadline),
             )
 
+    def test_rejects_handoff_role_different_from_the_invocation_task_role(self):
+        critique = {
+            "summary": "A critique.",
+            "findings": [{
+                "finding_id": "F1", "severity": "low", "target": "src/a.py",
+                "issue": "Potential issue.", "recommendation": "Inspect it.",
+            }],
+        }
+        with self.assertRaises(HandoffError):
+            create_handoff(
+                self.store, self.selected, invocation_id=self.invocation_id, task_id="task-1",
+                role="critique", target_participant_id=self.runtime.participants[1].participant_id,
+                payload=critique, budget=HandoffBudget(10, 10, self.deadline),
+            )
+
+    def test_output_artifacts_and_handoffs_are_append_only(self):
+        with self.assertRaises(Exception):
+            self.store.db.execute(
+                "UPDATE participant_invocation_outputs SET output_hash='changed' WHERE invocation_id=?",
+                (self.invocation_id,),
+            )
+        self.store.db.rollback()
+        with self.assertRaises(Exception):
+            self.store.db.execute(
+                "DELETE FROM participant_invocation_outputs WHERE invocation_id=?",
+                (self.invocation_id,),
+            )
+        self.store.db.rollback()
+
     def test_rejects_wrong_target_and_non_succeeded_invocation(self):
         with self.assertRaises(HandoffError):
             create_handoff(
