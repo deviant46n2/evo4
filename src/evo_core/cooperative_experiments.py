@@ -20,7 +20,6 @@ STATUSES = frozenset({
     "planned", "authorized", "running", "verifying", "adjudicating",
     "succeeded", "failed", "cancelled", "interrupted", "unknown",
 })
-TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted", "unknown"})
 TRANSITIONS = {
     "planned": frozenset({"authorized", "cancelled"}),
     "authorized": frozenset({"running", "cancelled"}),
@@ -219,6 +218,8 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
         "wall_clock_seconds": _positive_int(wall_clock_seconds, "wall_clock_seconds", 604800),
         "deadline_utc": deadline,
     }
+    if datetime.fromisoformat(deadline.replace("Z", "+00:00")) > datetime.now(timezone.utc) + __import__("datetime").timedelta(seconds=budgets["wall_clock_seconds"]):
+        raise ExperimentError("deadline_utc exceeds the frozen wall-clock ceiling")
     participants = _participant_manifest(runtime)
     model_count = sum(1 for p in participants if p.get("participant_type") == "model")
     if condition in {"C", "D"} and model_count < 2:
@@ -235,6 +236,10 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
         "acceptance_criteria": criteria,
         "verification_commands": commands,
         "participants": participants,
+        "participant_selection": (
+            [participants[0]["participant_id"]] if condition in {"A", "B"}
+            else [p["participant_id"] for p in participants if p.get("participant_type") == "model"][:2]
+        ),
         "budgets": budgets,
         "execution_policy": "sequential_global_provider_lease",
         "automatic_resume": False,
@@ -341,7 +346,9 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
                 raise ExperimentError("verification evidence is required before adjudication")
         if to_status == "succeeded":
             adjudication = payload.get("adjudication")
-            if not isinstance(adjudication, dict) or adjudication.get("reviewer_type") not in {"human", "deterministic"}:
+            if (not isinstance(adjudication, dict)
+                    or not isinstance(adjudication.get("reviewer_type"), str)
+                    or adjudication.get("reviewer_type") not in {"human", "deterministic"}):
                 raise ExperimentError("success requires explicit adjudication")
             results = adjudication.get("criteria_results")
             if not isinstance(results, list) or not results:
@@ -360,15 +367,15 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
             if len(observed) != len(set(observed)) or set(observed) != expected or any(item["status"] != "pass" for item in results):
                 raise ExperimentError("success requires every frozen criterion to pass with explicit evidence")
         next_version = row["version"] + 1
-        db.execute("UPDATE cooperative_experiments SET status=?,version=?,updated_at=? WHERE experiment_id=? AND version=?",
-                   (to_status, next_version, now, experiment_id, row["version"]))
-        if db.execute("SELECT changes()").fetchone()[0] != 1:
-            raise ExperimentError("experiment version conflict")
         db.execute("""
             INSERT INTO cooperative_experiment_events(
                 experiment_id,idempotency_key,from_status,to_status,event_type,payload_json,created_at
             ) VALUES(?,?,?,?,?,?,?)
         """, (experiment_id, key, current, to_status, event_type, payload_json, now))
+        db.execute("UPDATE cooperative_experiments SET status=?,version=?,updated_at=? WHERE experiment_id=? AND version=?",
+                   (to_status, next_version, now, experiment_id, row["version"]))
+        if db.execute("SELECT changes()").fetchone()[0] != 1:
+            raise ExperimentError("experiment version conflict")
         return _experiment_row(db, experiment_id)
     return workspaces._write(store, operation)
 
