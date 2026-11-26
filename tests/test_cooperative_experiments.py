@@ -94,7 +94,7 @@ class CooperativeExperimentTests(unittest.TestCase):
             self.store, self.runtime, task_statement="Add a bounded validator.",
             acceptance_criteria=["tests-pass", "no-regressions"],
             verification_commands=[["python", "-m", "unittest", "tests.test_example"]],
-            condition=condition, input_token_ceiling=12000, output_token_ceiling=4000,
+            condition=condition, input_byte_ceiling=12000, output_token_ceiling=4000,
             wall_clock_seconds=900, deadline_utc=deadline,
         )
 
@@ -114,14 +114,15 @@ class CooperativeExperimentTests(unittest.TestCase):
             self.assertTrue(reserve_experiment_usage(self.store.db, *args))
             self.store.db.commit()
         usage = get_experiment_usage(self.store, eid)
-        self.assertEqual(usage["input_budget_used"], 100)
+        self.assertEqual(usage["input_byte_budget_used"], 100)
         self.assertEqual(usage["output_budget_used"], 200)
         with self.store.lock:
             self.store.db.execute("BEGIN IMMEDIATE")
             settle_experiment_usage(self.store.db, "invocation-usage-1", 80, 150)
             self.store.db.commit()
         usage = get_experiment_usage(self.store, eid)
-        self.assertEqual(usage["input_budget_used"], 80)
+        self.assertEqual(usage["input_byte_budget_used"], 100)
+        self.assertEqual(usage["input_tokens_observed"], 80)
         self.assertEqual(usage["output_budget_used"], 150)
         args = (
             eid, "invocation-usage-2", participant_id, 100, 200,
@@ -134,8 +135,32 @@ class CooperativeExperimentTests(unittest.TestCase):
             release_experiment_usage(self.store.db, "invocation-usage-2")
             self.store.db.commit()
         usage = get_experiment_usage(self.store, eid)
-        self.assertEqual(usage["input_budget_used"], 80)
+        self.assertEqual(usage["input_byte_budget_used"], 100)
+        self.assertEqual(usage["input_tokens_observed"], 80)
         self.assertEqual(usage["output_budget_used"], 150)
+
+
+    def test_input_byte_budget_is_not_replaced_by_actual_provider_token_usage(self):
+        record = self.create("A")
+        eid = record["experiment_id"]
+        transition_experiment(self.store, eid, "authorized", idempotency_key="a", event_type="authorized")
+        transition_experiment(self.store, eid, "running", idempotency_key="b", event_type="started")
+        participant_id = record["spec"]["participant_selection"][0]
+        args = (
+            eid, "invocation-byte-accounting", participant_id, 100, 200,
+            self.runtime.workspace_id, self.runtime.project_id,
+            self.runtime.configuration_id, self.runtime.revision_id, self.runtime.revision_hash,
+        )
+        with self.store.lock:
+            self.store.db.execute("BEGIN IMMEDIATE")
+            self.assertTrue(reserve_experiment_usage(self.store.db, *args))
+            settle_experiment_usage(self.store.db, "invocation-byte-accounting", 500, 150)
+            self.store.db.commit()
+        usage = get_experiment_usage(self.store, eid)
+        self.assertEqual(usage["input_accounting_status"], "byte_budget_enforced")
+        self.assertEqual(usage["input_byte_budget_used"], 100)
+        self.assertEqual(usage["input_tokens_observed"], 500)
+        self.assertEqual(usage["input_usage_unknown_count"], 0)
 
     def test_aggregate_usage_rejects_unselected_participant_and_enforces_ceiling(self):
         record = self.create("A")
@@ -169,7 +194,7 @@ class CooperativeExperimentTests(unittest.TestCase):
         self.assertEqual(len(record["spec"]["participants"]), 2)
         self.assertEqual(record["spec"]["execution_policy"], "sequential_global_provider_lease")
         self.assertFalse(record["spec"]["automatic_resume"])
-        self.assertEqual(record["spec"]["budgets"]["input_token_ceiling"], 12000)
+        self.assertEqual(record["spec"]["budgets"]["input_byte_ceiling"], 12000)
 
     def test_cooperation_condition_requires_two_model_participants(self):
         runtime = replace(
@@ -181,7 +206,7 @@ class CooperativeExperimentTests(unittest.TestCase):
             create_experiment(
                 self.store, runtime, task_statement="Task", acceptance_criteria=["C1"],
                 verification_commands=[["python", "-m", "unittest"]], condition="C",
-                input_token_ceiling=100, output_token_ceiling=100,
+                input_byte_ceiling=100, output_token_ceiling=100,
                 wall_clock_seconds=60, deadline_utc=deadline,
             )
 
@@ -191,13 +216,13 @@ class CooperativeExperimentTests(unittest.TestCase):
             create_experiment(
                 self.store, self.runtime, task_statement="Task", acceptance_criteria=[],
                 verification_commands=[["python", "-m", "unittest"]], condition="A",
-                input_token_ceiling=100, output_token_ceiling=100,
+                input_byte_ceiling=100, output_token_ceiling=100,
                 wall_clock_seconds=60, deadline_utc=deadline,
             )
         with self.assertRaises(ExperimentError):
             create_experiment(
                 self.store, self.runtime, task_statement="Task", acceptance_criteria=["C1"],
-                verification_commands=[[]], condition="A", input_token_ceiling=100,
+                verification_commands=[[]], condition="A", input_byte_ceiling=100,
                 output_token_ceiling=100, wall_clock_seconds=60, deadline_utc=deadline,
             )
 
