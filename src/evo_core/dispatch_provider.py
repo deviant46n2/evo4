@@ -183,6 +183,8 @@ class DispatchingProvider:
     ):
         if cancellation_event is not None and not callable(getattr(cancellation_event, "is_set", None)):
             raise TypeError("cancellation_event must expose is_set()")
+        if not isinstance(task_role, str) or len(task_role) > 64:
+            raise DispatchProviderError("Invocation task role is invalid")
         if cancellation_event is not None and cancellation_event.is_set():
             raise DispatchProviderError("Invocation cancelled before admission")
 

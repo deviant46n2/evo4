@@ -78,6 +78,7 @@ class FakeProvider:
     def __init__(self):
         self.calls = 0
         self.failure = None
+        self.content = "admitted answer"
 
     def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None,
              tools=None, *, timeout_seconds=None):
@@ -88,7 +89,7 @@ class FakeProvider:
             on_token("admitted ")
             on_token("answer")
         return {
-            "content": "admitted answer", "tool_calls": [],
+            "content": self.content, "tool_calls": [],
             "finish_reason": "stop", "truncated": False,
             "prompt_tokens": 12, "completion_tokens": 2,
         }
@@ -198,6 +199,32 @@ class DispatchProviderIntegrationTests(unittest.TestCase):
                 for event in lifecycle["events"]
             ))
         self.assertEqual(tuple(usage), (2, 0, 4))
+
+    def test_proposal_task_role_persists_exact_structured_provider_output(self):
+        from evo_core.cooperative_handoffs import get_handoff, create_handoff, HandoffBudget
+        import json
+        runtime, fake = self._enabled_config()
+        payload = {
+            "summary": "Proposed change.",
+            "plan": [{"step_id": "S1", "description": "Add a safe validator."}],
+        }
+        fake.content = json.dumps(payload, separators=(",", ":"))
+        with patch("evo_experiments.monitor.sample_nvidia_smi", return_value=telemetry()):
+            runtime.assistant.provider.chat(
+                [{"role": "user", "content": "return a proposal JSON object"}],
+                max_tokens=64, temperature=0.2, task_role="proposal",
+            )
+        with self.store.lock:
+            row = self.store.db.execute(
+                "SELECT invocation_id FROM participant_invocations ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            output = self.store.db.execute(
+                "SELECT output_hash,output_json FROM participant_invocation_outputs WHERE invocation_id=?",
+                (row["invocation_id"],),
+            ).fetchone()
+        self.assertIsNotNone(output)
+        self.assertEqual(json.loads(output["output_json"])["content"], fake.content)
+        self.assertEqual(len(output["output_hash"]), 64)
 
     def test_missing_budget_blocks_before_provider_request(self):
         runtime, fake = self._enabled_config(with_budget=False)

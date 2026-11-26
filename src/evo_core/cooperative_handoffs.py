@@ -407,7 +407,7 @@ def create_handoff(
     role = _enum(role, PERSISTABLE_ROLES, "persistable handoff role")
     task_id = _text(task_id, "task_id", maximum=128)
     if not isinstance(budget, HandoffBudget):
-        raise HandoffError("handoff requires a validated aggregate budget and deadline")
+        raise HandoffError("handoff requires validated per-handoff token ceilings and a deadline")
     normalized_payload = validate_handoff_payload(role, payload)
     references = validate_context_references(context_references)
     parent = getattr(runtime, "parent_runtime", runtime)
