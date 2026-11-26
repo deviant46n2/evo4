@@ -363,6 +363,8 @@ def record_participant_output(store, invocation_id, output_json, *, task_role):
         or (output["finish_reason"] is not None and not isinstance(output["finish_reason"], str))
     ):
         raise HandoffError("structured handoff output must be complete text-only output without tool calls")
+    if output["finish_reason"] is not None:
+        _text(output["finish_reason"], "participant finish reason", maximum=128, allow_empty=True)
     _text(output["content"], "participant structured output", maximum=MAX_HANDOFF_BYTES)
     output_hash = sha256(output_json.encode("utf-8")).hexdigest()
     created_at = utc_now()
