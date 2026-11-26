@@ -381,3 +381,41 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_legacy_schema_migration_preserves_rows_and_adds_columns(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-exec','legacy-job','["echo","ok"]','[]','/tmp','completed',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+        from evo_experiments.execution import initialize_execution
+        initialize_execution(db)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertIn("agent_run_id", columns)
+        self.assertIn("cancel_requested", columns)
+        self.assertIn("approval_evidence_json", columns)
+        row = db.execute("SELECT * FROM workload_executions WHERE id='legacy-exec'").fetchone()
+        self.assertEqual(row["job_id"], "legacy-job")
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["cancel_requested"], 0)
+        # idempotent
+        initialize_execution(db)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM workload_executions").fetchone()[0], 1)
+        db.close()
+
+    def test_terminal_execution_is_not_overwritten_by_cancel_finalization(self):
+        job = self.reserve("terminal-guard")
+        record = self.register(job)
+        self.db.execute("UPDATE workload_executions SET status='completed', returncode=0 WHERE id=?", (record["id"],))
+        self.db.commit()
+        from evo_experiments.execution import _finalize_cancelled_execution
+        _finalize_cancelled_execution(self.db, self.lock, record["id"], record, 0.0, 0.0)
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")

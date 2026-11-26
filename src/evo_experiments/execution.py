@@ -20,7 +20,7 @@ from evo_experiments.scheduler import cancel_job, finish_job, get_job, start_job
 OUTPUT_LIMIT = 20000
 MAX_TIMEOUT_SECONDS = 900
 
-SCHEMA = """
+TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS workload_executions (
  id TEXT PRIMARY KEY,
  job_id TEXT UNIQUE,
@@ -47,7 +47,9 @@ CREATE TABLE IF NOT EXISTS workload_executions (
  stderr TEXT NOT NULL DEFAULT '',
  error TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
-);
+)
+"""
+INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_workload_executions_status
  ON workload_executions(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_workload_executions_job
@@ -55,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_workload_executions_job
 CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run
  ON workload_executions(agent_run_id);
 """
+SCHEMA = TABLE_SQL.rstrip() + "\n;\n" + INDEX_SQL
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -82,7 +85,7 @@ def _migrate_execution_schema(connection):
     connection.execute("BEGIN IMMEDIATE")
     try:
         connection.execute("ALTER TABLE workload_executions RENAME TO workload_executions_legacy")
-        connection.executescript(SCHEMA)
+        connection.execute(TABLE_SQL)
         legacy_columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions_legacy)").fetchall()}
         def col(name):
             return name if name in legacy_columns else "NULL"
@@ -111,11 +114,18 @@ def _migrate_execution_schema(connection):
         raise
 
 def initialize_execution(connection):
-    connection.executescript(SCHEMA)
     columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
+    if not columns:
+        connection.executescript(SCHEMA)
+        connection.commit()
+        return
     if "policy_json" not in columns:
         connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
+        connection.commit()
     _migrate_execution_schema(connection)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_status ON workload_executions(status, created_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
     connection.commit()
 
 def command_allowed(argv, allowed_commands):
@@ -182,6 +192,16 @@ def register_managed_execution(connection, *, workspace, argv, allowed_commands,
     if not command_allowed(argv, allowed_commands):
         raise ValueError("Command is not permitted by workspace.allowed_commands")
     timeout = min(max(int(timeout_seconds), 1), MAX_TIMEOUT_SECONDS)
+    import hashlib, json as _json
+    canonical_argv_hash = hashlib.sha256(_json.dumps(list(argv), sort_keys=True).encode("utf-8")).hexdigest()
+    evidence = dict(approval_evidence or {})
+    if agent_run_id is not None and not evidence:
+        raise ValueError("Approval evidence is required for agent-originated managed execution")
+    if "argv_sha256" in evidence and evidence["argv_sha256"] != canonical_argv_hash:
+        raise ValueError("Approval evidence does not match the requested command")
+    evidence.setdefault("argv_sha256", canonical_argv_hash)
+    evidence.setdefault("policy", [list(prefix) for prefix in allowed_commands if prefix])
+    approval_evidence = evidence
     if job_id is not None:
         job = get_job(connection, job_id)
         if job is None:
@@ -284,24 +304,27 @@ def _finish_linked_job(connection, execution, outcome, note):
 def _finalize_cancelled_before_launch(connection, lock, execution_id, record):
     stamp = _now()
     with lock:
-        connection.execute(
+        cursor = connection.execute(
             """UPDATE workload_executions
                SET status='cancelled', cancel_requested=1, finished_at=?, error=?
-               WHERE id=? AND status IN ('queued','launching')""",
+               WHERE id=? AND status IN ('queued','launching')
+                 AND status NOT IN ('completed','failed','cancelled','interrupted','launch_uncertain')""",
             (stamp, "Cancelled before launch.", execution_id))
-        _finish_linked_job(connection, record, "cancelled", "Cancelled before launch.")
+        if cursor.rowcount == 1:
+            _finish_linked_job(connection, record, "cancelled", "Cancelled before launch.")
         connection.commit()
 
 def _finalize_cancelled_execution(connection, lock, execution_id, record, started, begin):
     stamp = _now()
     elapsed = round(time.monotonic() - begin, 3)
     with lock:
-        connection.execute(
+        cursor = connection.execute(
             """UPDATE workload_executions
                SET status='cancelled', cancel_requested=1, finished_at=?, elapsed_seconds=?, error=?, pid=NULL
-               WHERE id=?""",
+               WHERE id=? AND status NOT IN ('completed','failed','cancelled','interrupted','launch_uncertain')""",
             (stamp, elapsed, "Cancelled by user.", execution_id))
-        _finish_linked_job(connection, record, "cancelled", "Cancelled by user.")
+        if cursor.rowcount == 1:
+            _finish_linked_job(connection, record, "cancelled", "Cancelled by user.")
         connection.commit()
 
 def run_execution(connection, lock, execution_id):
@@ -405,8 +428,13 @@ def run_execution(connection, lock, execution_id):
                 with lock:
                     current = get_execution(connection, execution_id)
                 if current is not None and current.get("cancel_requested"):
-                    cancelled["value"] = True
-                    _terminate_owned_process(process)
+                    if process.poll() is None:
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                            cancelled["value"] = True
+                        except (ProcessLookupError, OSError):
+                            pass
+                        _terminate_owned_process(process)
                     return
         watcher = threading.Thread(target=_cancel_watcher, daemon=True)
         watcher.start()
