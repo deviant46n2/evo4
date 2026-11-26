@@ -409,7 +409,8 @@ def _snapshot_matches(db, runtime, envelope):
         raise AdmissionError("selected participant descriptor cannot be canonicalized") from exc
     if participant != expected_participant:
         raise AdmissionError("invocation participant does not match the immutable runtime snapshot")
-    if snapshot.get("experiment_id") != envelope.experiment_id:
+    experiment_id = getattr(envelope, "experiment_id", None)
+    if snapshot.get("experiment_id") != experiment_id:
         raise AdmissionError("invocation experiment identity does not match the immutable snapshot")
     if (
         participant.get("participant_id") != envelope.participant_id
@@ -460,6 +461,8 @@ def _validate_envelope(runtime, envelope, now):
     from .participant_contracts import InvocationEnvelope
     if not isinstance(envelope, InvocationEnvelope):
         raise AdmissionError("a validated invocation envelope is required")
+    # Older validated envelopes may predate optional experiment association.
+    experiment_id = getattr(envelope, "experiment_id", None)
     string_limits = {
         "invocation_id": 128,
         "participant_id": 128,
@@ -487,8 +490,8 @@ def _validate_envelope(runtime, envelope, now):
         or envelope.component_version != runtime.participant.component_version
     ):
         raise AdmissionError("invocation scope or participant identity does not match the runtime")
-    if envelope.experiment_id is not None and (
-        not isinstance(envelope.experiment_id, str) or not envelope.experiment_id.strip() or len(envelope.experiment_id) > 128
+    if experiment_id is not None and (
+        not isinstance(experiment_id, str) or not experiment_id.strip() or len(experiment_id) > 128
     ):
         raise AdmissionError("invocation experiment identity is invalid")
     if envelope.parent_task_id is not None and (
@@ -730,10 +733,10 @@ def admit_invocation(
             elif reserved + used + requested_tokens > provider_budget.maximum_reserved_output_tokens_per_utc_day:
                 state = "budget_exhausted"
                 decision.update({"decision": state, "reason": "daily_output_token_budget_exhausted"})
-        if state == "admitted" and envelope.experiment_id is not None:
+        if state == "admitted" and experiment_id is not None:
             from .cooperative_experiments import reserve_experiment_usage
             reserved = reserve_experiment_usage(
-                db, envelope.experiment_id, envelope.invocation_id,
+                db, experiment_id, envelope.invocation_id,
                 runtime.participant.participant_id,
                 len(envelope.input_json.encode("utf-8")), requested_tokens,
                 runtime.workspace_id, runtime.project_id,
