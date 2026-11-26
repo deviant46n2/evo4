@@ -24,8 +24,8 @@ TRANSITIONS = {
     "planned": frozenset({"authorized", "cancelled"}),
     "authorized": frozenset({"running", "cancelled"}),
     "running": frozenset({"verifying", "failed", "cancelled", "interrupted", "unknown"}),
-    "verifying": frozenset({"adjudicating", "failed", "interrupted", "unknown"}),
-    "adjudicating": frozenset({"succeeded", "failed", "interrupted", "unknown"}),
+    "verifying": frozenset({"adjudicating", "failed", "cancelled", "interrupted", "unknown"}),
+    "adjudicating": frozenset({"succeeded", "failed", "cancelled", "interrupted", "unknown"}),
 }
 MAX_SPEC_BYTES = 131072
 MAX_EVENT_BYTES = 32768
@@ -227,10 +227,12 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
     workspace = workspaces.get_workspace(store, runtime.workspace_id)
     if (workspace["project_id"] != runtime.project_id
             or workspace["configuration_id"] != runtime.configuration_id
-            or workspace["configuration_revision_id"] != runtime.revision_id):
+            or workspace["configuration_revision_id"] != runtime.revision_id
+            or workspace["version"] != runtime.workspace_version):
         raise ExperimentError("runtime no longer matches the workspace's pinned configuration revision")
     spec = {
         "schema_version": 1,
+        "workspace_version": runtime.workspace_version,
         "task_statement": task_statement,
         "task_statement_sha256": sha256(task_statement.encode("utf-8")).hexdigest(),
         "acceptance_criteria": criteria,
@@ -255,7 +257,8 @@ def create_experiment(store, runtime, *, task_statement, acceptance_criteria,
         current = workspaces._workspace_row(db, runtime.workspace_id)
         if (current["status"] != "active" or current["project_id"] != runtime.project_id
                 or current["configuration_id"] != runtime.configuration_id
-                or current["configuration_revision_id"] != runtime.revision_id):
+                or current["configuration_revision_id"] != runtime.revision_id
+                or current["version"] != runtime.workspace_version):
             raise ExperimentError("workspace changed or is not active")
         db.execute("""
             INSERT INTO cooperative_experiments(
@@ -344,20 +347,21 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
             invocation_ids = _references(payload["invocation_ids"], "invocation_ids", 200)
             for invocation_id in invocation_ids:
                 invocation = db.execute(
-                    """SELECT workspace_id,project_id,configuration_id,revision_id,participant_id
+                    """SELECT workspace_id,project_id,configuration_id,revision_id,revision_hash,participant_id
                        FROM participant_invocations WHERE invocation_id=?""", (invocation_id,)
                 ).fetchone()
                 if (invocation is None or invocation["workspace_id"] != row["workspace_id"]
                         or invocation["project_id"] != row["project_id"]
                         or invocation["configuration_id"] != row["configuration_id"]
                         or invocation["revision_id"] != row["revision_id"]
+                        or invocation["revision_hash"] != row["revision_hash"]
                         or invocation["participant_id"] not in participant_ids):
                     raise ExperimentError("invocation reference is outside the frozen experiment manifest")
         if "handoff_ids" in payload:
             handoff_ids = _references(payload["handoff_ids"], "handoff_ids", 200)
             for handoff_id in handoff_ids:
                 handoff = db.execute(
-                    """SELECT workspace_id,project_id,configuration_id,revision_id,
+                    """SELECT workspace_id,project_id,configuration_id,revision_id,revision_hash,
                               source_participant_id,target_participant_id
                        FROM cooperative_handoffs WHERE handoff_id=?""", (handoff_id,)
                 ).fetchone()
@@ -365,6 +369,7 @@ def transition_experiment(store, experiment_id, to_status, *, idempotency_key,
                         or handoff["project_id"] != row["project_id"]
                         or handoff["configuration_id"] != row["configuration_id"]
                         or handoff["revision_id"] != row["revision_id"]
+                        or handoff["revision_hash"] != row["revision_hash"]
                         or handoff["source_participant_id"] not in participant_ids
                         or (handoff["target_participant_id"] is not None
                             and handoff["target_participant_id"] not in participant_ids)):
