@@ -399,12 +399,49 @@ def _group_has_members(process):
         return False
 
 
+def _remaining_descendants(group_pid, keeper_pid):
+    """Count group members excluding the keeper."""
+    count = 0
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            if pid == keeper_pid:
+                continue
+            try:
+                with open(f"/proc/{pid}/stat", "r") as handle:
+                    stat = handle.read()
+            except (OSError, ValueError):
+                continue
+            if ")" not in stat:
+                continue
+            parts = stat.rsplit(")", 1)[-1].split()
+            if len(parts) < 3:
+                continue
+            try:
+                pgrp = int(parts[2])
+            except ValueError:
+                continue
+            if pgrp == group_pid:
+                count += 1
+    except OSError:
+        try:
+            os.killpg(group_pid, 0)
+            return 1
+        except (ProcessLookupError, OSError):
+            return 0
+    return count
+
+
 def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
     """Boundedly clean up an owned process group. Returns an error string."""
     cleanup_error = ""
     if process is None:
         return cleanup_error
     group_pid = getattr(process, "_evo_group_pid", process.pid)
+    keeper = getattr(process, "_evo_keeper", None)
+    keeper_pid = keeper.pid if keeper is not None else group_pid
     if not _owned_group_is_live(process):
         return "process group ownership not established"
     if send_sigterm:
@@ -416,10 +453,10 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
             cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
-        if not _group_has_members(process):
+        if _remaining_descendants(group_pid, keeper_pid) == 0:
             break
         time.sleep(0.05)
-    if _group_has_members(process) and _owned_group_is_live(process):
+    if _remaining_descendants(group_pid, keeper_pid) > 0 and _owned_group_is_live(process):
         try:
             os.killpg(group_pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -429,10 +466,10 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
                 cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
-            if not _group_has_members(process):
+            if _remaining_descendants(group_pid, keeper_pid) == 0:
                 break
             time.sleep(0.05)
-    if _group_has_members(process):
+    if _remaining_descendants(group_pid, keeper_pid) > 0:
         if not cleanup_error:
             cleanup_error = "process group cleanup incomplete"
     return cleanup_error
@@ -484,30 +521,6 @@ def _cleanup_keeper(process=None, keeper=None):
             if not cleanup_error:
                 cleanup_error = "keeper cleanup incomplete"
     return cleanup_error
-    terminate = getattr(keeper, "terminate", None)
-    if callable(terminate):
-        try:
-            terminate()
-        except (ProcessLookupError, OSError):
-            pass
-    else:
-        kill = getattr(keeper, "kill", None)
-        if callable(kill):
-            try:
-                kill()
-            except (ProcessLookupError, OSError):
-                pass
-    try:
-        keeper.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        try:
-            keeper.kill()
-        except (ProcessLookupError, OSError):
-            pass
-        try:
-            keeper.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            pass
 
 
 def run_execution(connection, lock, execution_id):
