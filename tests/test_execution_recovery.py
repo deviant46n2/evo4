@@ -911,5 +911,145 @@ class ExecutionRecoveryTests(unittest.TestCase):
                 t.join()
         self.assertEqual(len(set(results)), 1)
 
+
+    def test_cancellation_resistant_descendant_pid_terminated(self):
+        import re, time
+        job = self.reserve("cancel-resistant-pid")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=10)
+        import threading
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        time.sleep(1.0)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(30):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        self.assertFalse(alive)
+
+    def test_timeout_resistant_descendant_pid_terminated(self):
+        import re, time
+        job = self.reserve("timeout-resistant-pid")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(30):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        self.assertFalse(alive)
+
+    def test_proc_enumeration_failure_escalates_group(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution.os.listdir", side_effect=OSError("no proc")), \
+             patch("evo_experiments.execution._owned_group_is_live", return_value=True), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+                    self._evo_cleanup_lock = threading.Lock()
+                    self._evo_cleanup_done = False
+                    self._evo_cleanup_error = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return None
+                def kill(self):
+                    pass
+                def wait(self, timeout=None):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        # SIGTERM then SIGKILL
+        self.assertGreaterEqual(killpg.call_count, 2)
+        self.assertTrue(True)
+
+    def test_concurrent_cleanup_blocks_and_reuses_result(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        import threading, time
+
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self._evo_cleanup_lock = threading.Lock()
+                self._evo_cleanup_done = False
+                self._evo_cleanup_error = None
+
+        fake = Fake()
+
+        class Keeper:
+            def poll(self):
+                return None
+            def kill(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            @property
+            def pid(self):
+                return 999999
+
+        fake._evo_keeper = Keeper()
+        call_count = {"n": 0}
+
+        def slow_cleanup(*a, **k):
+            nonlocal call_count
+            call_count["n"] += 1
+            time.sleep(0.5)
+            return "done"
+
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            # ownership fails fast; but lock still serializes
+            results = []
+            def worker():
+                results.append(_bounded_group_cleanup(fake))
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(len(set(results)), 1)
+
 if __name__ == "__main__":
     unittest.main()

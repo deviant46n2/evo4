@@ -768,7 +768,8 @@ def run_execution(connection, lock, execution_id):
                         cancelled_outcome["value"] = True
                     # Bounded cleanup of resistant descendants.
                     cleanup_error_local = _bounded_group_cleanup(process, send_sigterm=False, grace_seconds=1.0)
-                    _cleanup_keeper(process=process)
+                    # Preserve the watcher result on the process for the main path.
+                    process._evo_cleanup_error = cleanup_error_local
                     process_exited.set()
                     state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]
 
