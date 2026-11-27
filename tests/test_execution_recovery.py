@@ -32,6 +32,26 @@ class FakeProcess:
         self.killed = True
 
 
+
+def _pid_terminated(pid):
+    """Return True if pid is missing or a zombie (state Z)."""
+    try:
+        with open(f"/proc/{pid}/stat", "r") as handle:
+            stat = handle.read()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        # Race or permission; treat as not provably terminated.
+        return False
+    if ")" not in stat:
+        return False
+    parts = stat.rsplit(")", 1)[-1].split()
+    if not parts:
+        return False
+    state = parts[0]
+    return state == "Z"
+
+
 class ExecutionRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:", check_same_thread=False)
@@ -861,17 +881,10 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(match)
         pid = int(match.group(1))
         for _ in range(20):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            if _pid_terminated(pid):
                 break
             time.sleep(0.1)
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except ProcessLookupError:
-            alive = False
-        self.assertFalse(alive)
+        self.assertTrue(_pid_terminated(pid))
 
     def test_concurrent_cleanup_single_result(self):
         from evo_experiments.execution import _bounded_group_cleanup
@@ -934,17 +947,10 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(match)
         pid = int(match.group(1))
         for _ in range(30):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            if _pid_terminated(pid):
                 break
             time.sleep(0.1)
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except ProcessLookupError:
-            alive = False
-        self.assertFalse(alive)
+        self.assertTrue(_pid_terminated(pid))
 
     def test_timeout_resistant_descendant_pid_terminated(self):
         import re, time
@@ -962,17 +968,10 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(match)
         pid = int(match.group(1))
         for _ in range(30):
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            if _pid_terminated(pid):
                 break
             time.sleep(0.1)
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except ProcessLookupError:
-            alive = False
-        self.assertFalse(alive)
+        self.assertTrue(_pid_terminated(pid))
 
     def test_proc_enumeration_failure_escalates_group(self):
         from evo_experiments.execution import _bounded_group_cleanup
@@ -1002,7 +1001,9 @@ class ExecutionRecoveryTests(unittest.TestCase):
             err = _bounded_group_cleanup(fake)
         # SIGTERM then SIGKILL
         self.assertGreaterEqual(killpg.call_count, 2)
-        self.assertTrue(True)
+        # SIGTERM then SIGKILL, both anchored to 999999
+        self.assertEqual(killpg.call_args_list[0].args[0], 999999)
+        self.assertEqual(killpg.call_args_list[1].args[0], 999999)
 
     def test_concurrent_cleanup_blocks_and_reuses_result(self):
         from evo_experiments.execution import _bounded_group_cleanup
