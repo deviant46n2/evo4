@@ -379,9 +379,19 @@ def _owned_group_is_live(process):
     try:
         return os.getpgid(process.pid) == process.pid
     except (ProcessLookupError, OSError):
-        # Fall back for mocked/non-OS processes or environments where the
-        # process group cannot be queried; rely on process-exit tracking.
+        # Fail closed: inability to establish ownership is not ownership.
+        return False
+
+
+def _group_has_members(process):
+    """Best-effort check that the process group still has live members."""
+    if process is None:
+        return False
+    try:
+        os.killpg(process.pid, 0)
         return True
+    except (ProcessLookupError, OSError):
+        return False
 
 
 def _signal_owned_process_group(process):
@@ -523,16 +533,14 @@ def run_execution(connection, lock, execution_id):
                         process_exited.set()
                         return
                     state["value"] = "cancelling"
-                    should_signal = True
-                if not should_signal:
-                    return
-                signalled = _signal_owned_process_group(process)
-                if signalled:
-                    cancel_signalled.set()
-                    cancelled_outcome["value"] = True
-                # Bounded termination of the owned leader.
-                _terminate_owned_process(process, send_signal=False)
-                with supervisor_lock:
+                    # Decision and signalling are committed atomically while the
+                    # lock is held, so natural completion cannot win in between.
+                    signalled = _signal_owned_process_group(process)
+                    if signalled:
+                        cancel_signalled.set()
+                        cancelled_outcome["value"] = True
+                    # Bounded termination of the owned leader.
+                    _terminate_owned_process(process, send_signal=False)
                     process_exited.set()
                     state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]
 
@@ -640,18 +648,17 @@ def run_execution(connection, lock, execution_id):
     except Exception as exc:
         cleanup_error = ""
         if process is not None and process.poll() is None:
-            if _owned_group_is_live(process):
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                except OSError as cleanup_exc:
-                    cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as cleanup_exc:
+                cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
             try:
                 process.wait(timeout=3)
             except Exception:
                 pass
-            if process.poll() is None and _owned_group_is_live(process):
+            if process.poll() is None:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:

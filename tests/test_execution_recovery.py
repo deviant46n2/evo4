@@ -530,6 +530,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
             RunningProcess.cancelled.set()
 
         with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
              patch("evo_experiments.execution.os.killpg", side_effect=fake_killpg) as killpg:
             import threading
             worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
