@@ -8,6 +8,7 @@ processes such as an existing inference server.
 from datetime import datetime, timezone
 import json
 import os
+import sys
 import re
 import signal
 import subprocess
@@ -293,9 +294,9 @@ def _terminate_owned_process(process, send_signal=True):
         return
     if process.poll() is not None:
         return
-    if send_signal:
+    if send_signal and _owned_group_is_live(process):
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGTERM)
         except ProcessLookupError:
             pass
         except OSError:
@@ -303,12 +304,13 @@ def _terminate_owned_process(process, send_signal=True):
     try:
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            pass
+        if _owned_group_is_live(process):
+            try:
+                os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                pass
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
@@ -373,13 +375,16 @@ def _process_has_exited(process):
 
 
 def _owned_group_is_live(process):
-    """Best-effort OS-level check that our process is still the group leader."""
-    if process is None or _process_has_exited(process):
+    """Check that the keeper-owned process group is still live."""
+    if process is None:
+        return False
+    group_pid = getattr(process, "_evo_group_pid", process.pid)
+    keeper = getattr(process, "_evo_keeper", None)
+    if keeper is not None and keeper.poll() is not None:
         return False
     try:
-        return os.getpgid(process.pid) == process.pid
+        return os.getpgid(group_pid) == group_pid
     except (ProcessLookupError, OSError):
-        # Fail closed: inability to establish ownership is not ownership.
         return False
 
 
@@ -388,7 +393,7 @@ def _group_has_members(process):
     if process is None:
         return False
     try:
-        os.killpg(process.pid, 0)
+        os.killpg(getattr(process, "_evo_group_pid", process.pid), 0)
         return True
     except (ProcessLookupError, OSError):
         return False
@@ -399,10 +404,40 @@ def _signal_owned_process_group(process):
     if not _owned_group_is_live(process):
         return False
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGTERM)
         return True
     except (ProcessLookupError, OSError):
         return False
+
+
+def _cleanup_keeper(process):
+    keeper = getattr(process, "_evo_keeper", None) if process is not None else None
+    if keeper is None:
+        return
+    terminate = getattr(keeper, "terminate", None)
+    if callable(terminate):
+        try:
+            terminate()
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        kill = getattr(keeper, "kill", None)
+        if callable(kill):
+            try:
+                kill()
+            except (ProcessLookupError, OSError):
+                pass
+    try:
+        keeper.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            keeper.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            keeper.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def run_execution(connection, lock, execution_id):
@@ -472,11 +507,21 @@ def run_execution(connection, lock, execution_id):
         # Legacy records without a snapshot decode to an empty policy and fail closed.
         if not command_allowed(record["argv"], record.get("allowed_commands", [])):
             raise ValueError("Command is not permitted by the execution policy snapshot")
+        # A long-lived keeper owns the process group so ownership can still be
+        # established after the command leader exits.
+        keeper = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(1000000)"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            preexec_fn=lambda: os.setpgid(0, 0), env=_safe_environment(), close_fds=True)
+        group_pid = keeper.pid
         process = subprocess.Popen(
             record["argv"], cwd=record["workspace"], shell=False,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=False, close_fds=True, start_new_session=True, env=_safe_environment())
+            text=False, close_fds=True, preexec_fn=lambda: os.setpgid(0, group_pid),
+            env=_safe_environment())
+        process._evo_group_pid = group_pid
         _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
+        process._evo_keeper = keeper
         with lock:
             current = get_execution(connection, execution_id)
         if current is not None and current.get("cancel_requested"):
@@ -541,6 +586,7 @@ def run_execution(connection, lock, execution_id):
                         cancelled_outcome["value"] = True
                     # Bounded termination of the owned leader.
                     _terminate_owned_process(process, send_signal=False)
+                    _cleanup_keeper(process)
                     process_exited.set()
                     state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]
 
@@ -572,6 +618,7 @@ def run_execution(connection, lock, execution_id):
         # Terminate only if timeout won and cancellation did not.
         if timed_out_outcome["value"] and not cancelled_outcome["value"]:
             _terminate_owned_process(process, send_signal=True)
+            _cleanup_keeper(process)
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -583,12 +630,13 @@ def run_execution(connection, lock, execution_id):
         # Descendant cleanup: only when ownership can still be established.
         # This is intentionally separate from the cancellation decision.
         cleanup_error = ""
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError as exc:
-            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        if _owned_group_is_live(process):
+            try:
+                os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         if timed_out_outcome["value"]:
             try:
                 process.wait(timeout=3)
@@ -597,13 +645,14 @@ def run_execution(connection, lock, execution_id):
         for thread in readers:
             thread.join(timeout=3)
         if any(thread.is_alive() for thread in readers):
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except OSError as exc:
-                if not cleanup_error:
-                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            if _owned_group_is_live(process):
+                try:
+                    os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except OSError as exc:
+                    if not cleanup_error:
+                        cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
             for thread in readers:
                 thread.join(timeout=2)
         if process.poll() is None:
@@ -616,6 +665,7 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 pass
+        _cleanup_keeper(process)
         returncode = process.returncode
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
@@ -648,19 +698,20 @@ def run_execution(connection, lock, execution_id):
     except Exception as exc:
         cleanup_error = ""
         if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except OSError as cleanup_exc:
-                cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
+            if _owned_group_is_live(process):
+                try:
+                    os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError as cleanup_exc:
+                    cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
             try:
                 process.wait(timeout=3)
             except Exception:
                 pass
-            if process.poll() is None:
+            if process.poll() is None and _owned_group_is_live(process):
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 except OSError as cleanup_exc:

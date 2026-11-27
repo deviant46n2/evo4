@@ -81,6 +81,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         with patch("evo_experiments.execution.subprocess.Popen", FakeProcess), \
              patch("evo_experiments.execution._persist", side_effect=failing_persist), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
              patch("evo_experiments.execution.os.killpg") as killpg:
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
@@ -96,7 +97,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.db.execute("UPDATE workload_executions SET status='launching', pid=NULL WHERE id=?",
                         (record["id"],))
         self.db.commit()
-        with patch("evo_experiments.execution.os.killpg") as killpg:
+        with patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
             recovered = recover_interrupted_executions(self.db)
         self.assertEqual(recovered, [record["id"]])
         result = get_execution(self.db, record["id"])
@@ -155,7 +157,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
                     raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
                 return 0
 
-        with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
+        with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -205,7 +208,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
             def poll(self):
                 return None
 
-        with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
+        with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -227,7 +231,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
             def poll(self):
                 return None
 
-        with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
+        with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -254,6 +259,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
             return original_get_job(connection, job_id)
 
         with patch("evo_experiments.execution.get_job", side_effect=failing_get_job), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
              patch("evo_experiments.execution.os.killpg") as killpg:
             recovered = recover_interrupted_executions(self.db)
         killpg.assert_not_called()
@@ -498,6 +504,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         CompletingProcess.db = self.db
         with patch("evo_experiments.execution.subprocess.Popen", CompletingProcess), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
              patch("evo_experiments.execution.os.killpg") as killpg:
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
