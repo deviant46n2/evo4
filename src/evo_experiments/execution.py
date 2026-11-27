@@ -453,7 +453,37 @@ def _cleanup_keeper(process=None, keeper=None):
     if keeper is None and process is not None:
         keeper = getattr(process, "_evo_keeper", None)
     if keeper is None:
-        return
+        return ""
+    cleanup_error = ""
+    terminate = getattr(keeper, "terminate", None)
+    if callable(terminate):
+        try:
+            terminate()
+        except (ProcessLookupError, OSError) as exc:
+            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+    else:
+        kill = getattr(keeper, "kill", None)
+        if callable(kill):
+            try:
+                kill()
+            except (ProcessLookupError, OSError) as exc:
+                cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+    try:
+        keeper.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        kill = getattr(keeper, "kill", None)
+        if callable(kill):
+            try:
+                kill()
+            except (ProcessLookupError, OSError) as exc:
+                if not cleanup_error:
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        try:
+            keeper.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            if not cleanup_error:
+                cleanup_error = "keeper cleanup incomplete"
+    return cleanup_error
     terminate = getattr(keeper, "terminate", None)
     if callable(terminate):
         try:
@@ -561,8 +591,8 @@ def run_execution(connection, lock, execution_id):
             text=False, close_fds=True, process_group=group_pid,
             env=_safe_environment())
         process._evo_group_pid = group_pid
-        _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
         process._evo_keeper = keeper
+        _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
         with lock:
             current = get_execution(connection, execution_id)
         if current is not None and current.get("cancel_requested"):
@@ -627,7 +657,7 @@ def run_execution(connection, lock, execution_id):
                         cancelled_outcome["value"] = True
                     # Bounded termination of the owned leader.
                     _terminate_owned_process(process, send_signal=False)
-                    _cleanup_keeper(process)
+                    _cleanup_keeper(process=process)
                     process_exited.set()
                     state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]
 
@@ -659,7 +689,9 @@ def run_execution(connection, lock, execution_id):
         # Terminate only if timeout won and cancellation did not.
         if timed_out_outcome["value"] and not cancelled_outcome["value"]:
             cleanup_error = _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0)
-            _cleanup_keeper(process)
+            keeper_error = _cleanup_keeper(process=process)
+            if keeper_error:
+                cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -685,7 +717,9 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 pass
-        _cleanup_keeper(process)
+        keeper_error = _cleanup_keeper(process=process)
+        if keeper_error:
+            cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
         returncode = process.returncode
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
@@ -723,7 +757,9 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except Exception:
                 pass
-            _cleanup_keeper(process)
+            keeper_error = _cleanup_keeper(process=process)
+            if keeper_error:
+                cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
         elapsed = round(time.monotonic() - begin, 3)
         error_text = f"{type(exc).__name__}: {exc}"[:2000]
         if cleanup_error:
