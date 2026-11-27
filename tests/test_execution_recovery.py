@@ -1007,7 +1007,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
     def test_concurrent_cleanup_blocks_and_reuses_result(self):
         from evo_experiments.execution import _bounded_group_cleanup
-        import threading, time
+        import evo_experiments.execution as E
+        import threading, time, signal
 
         class Fake:
             def __init__(self):
@@ -1020,38 +1021,69 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         fake = Fake()
 
+        keeper_state = {"kill": 0, "wait": 0}
+
         class Keeper:
             def poll(self):
                 return None
             def kill(self):
-                pass
+                keeper_state["kill"] += 1
             def wait(self, timeout=None):
+                keeper_state["wait"] += 1
                 return 0
             @property
             def pid(self):
                 return 999999
 
         fake._evo_keeper = Keeper()
+
+        entered = threading.Event()
+        release = threading.Event()
         call_count = {"n": 0}
 
-        def slow_cleanup(*a, **k):
-            nonlocal call_count
-            call_count["n"] += 1
-            time.sleep(0.5)
-            return "done"
+        def blocking_remaining(group_pid, keeper_pid):
+            if call_count["n"] == 0:
+                call_count["n"] += 1
+                entered.set()
+                release.wait(timeout=5)
+            return 0
 
-        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
-            # ownership fails fast; but lock still serializes
+        killpg_calls = []
+
+        def fake_killpg(pgid, sig):
+            killpg_calls.append((pgid, sig))
+
+        original_remaining = E._remaining_descendants
+        original_owned = E._owned_group_is_live
+        E._remaining_descendants = blocking_remaining
+        E._owned_group_is_live = lambda p: True
+        original_killpg = E.os.killpg
+        E.os.killpg = fake_killpg
+        try:
             results = []
+
             def worker():
                 results.append(_bounded_group_cleanup(fake))
+
             threads = [threading.Thread(target=worker) for _ in range(4)]
             for t in threads:
                 t.start()
+            entered.wait(timeout=5)
+            time.sleep(0.2)
+            self.assertEqual(len(results), 0)
+            release.set()
             for t in threads:
-                t.join()
-        self.assertEqual(len(set(results)), 1)
-
+                t.join(timeout=5)
+            self.assertEqual(len(results), 4)
+            self.assertEqual(len(set(results)), 1)
+            self.assertEqual(len(killpg_calls), 1)
+            self.assertEqual(killpg_calls[0], (999999, signal.SIGTERM))
+            self.assertEqual(keeper_state["kill"], 1)
+            self.assertEqual(keeper_state["wait"], 1)
+        finally:
+            E._remaining_descendants = original_remaining
+            E._owned_group_is_live = original_owned
+            E.os.killpg = original_killpg
 
     def test_pid_terminated_helper(self):
         import os, builtins
