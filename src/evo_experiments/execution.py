@@ -372,6 +372,29 @@ def _process_has_exited(process):
         return False
 
 
+def _owned_group_is_live(process):
+    """Best-effort OS-level check that our process is still the group leader."""
+    if process is None or _process_has_exited(process):
+        return False
+    try:
+        return os.getpgid(process.pid) == process.pid
+    except (ProcessLookupError, OSError):
+        # Fall back for mocked/non-OS processes or environments where the
+        # process group cannot be queried; rely on process-exit tracking.
+        return True
+
+
+def _signal_owned_process_group(process):
+    """Signal the owned process group once. Returns True if a signal was sent."""
+    if not _owned_group_is_live(process):
+        return False
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
 def run_execution(connection, lock, execution_id):
     with lock:
         record = get_execution(connection, execution_id)
@@ -447,7 +470,7 @@ def run_execution(connection, lock, execution_id):
         with lock:
             current = get_execution(connection, execution_id)
         if current is not None and current.get("cancel_requested"):
-            _terminate_owned_process(process)
+            _terminate_owned_process(process, send_signal=True)
             _finalize_cancelled_execution(connection, lock, execution_id, current, started, begin)
             return
         def drain(pipe, target):
@@ -466,50 +489,80 @@ def run_execution(connection, lock, execution_id):
             thread.start()
             readers.append(thread)
 
-        # Synchronized process supervisor state.
+        # Synchronized process supervisor.  A single lock arbitrates natural
+        # completion, cancellation, and timeout.  Signalling happens while the
+        # lock is held so a completion observation cannot be established in the
+        # gap between the decision and the signal.
         supervisor_lock = threading.Lock()
+        state = {"value": "running"}  # running, cancelling, cancelled, timed_out
         process_exited = threading.Event()
         cancel_signalled = threading.Event()
-        cancelled = {"value": False}
-        timed_out = {"value": False}
+        cancelled_outcome = {"value": False}
+        timed_out_outcome = {"value": False}
 
         def _cancel_watcher():
-            while not process_exited.is_set():
+            while True:
+                # Periodic wake-up; also returns promptly when process exits.
+                process_exited.wait(0.05)
+                if process_exited.is_set():
+                    return
                 try:
                     with lock:
                         current = get_execution(connection, execution_id)
                 except Exception:
                     current = None
-                if current is not None and current.get("cancel_requested"):
-                    with supervisor_lock:
-                        if process_exited.is_set():
-                            return
-                        if _process_has_exited(process):
-                            process_exited.set()
-                            return
-                        if cancel_signalled.is_set():
-                            return
-                        cancel_signalled.set()
-                    # Signal the owned process group exactly once.
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except (ProcessLookupError, OSError):
-                        pass
-                    _terminate_owned_process(process, send_signal=False)
-                    cancelled["value"] = True
+                if current is None or not current.get("cancel_requested"):
+                    continue
+                with supervisor_lock:
+                    if process_exited.is_set():
+                        return
+                    if state["value"] in ("cancelled", "cancelling", "timed_out"):
+                        return
+                    if not _owned_group_is_live(process):
+                        # Process already gone; do not signal a stale group.
+                        process_exited.set()
+                        return
+                    state["value"] = "cancelling"
+                    should_signal = True
+                if not should_signal:
                     return
-                process_exited.wait(0.05)
+                signalled = _signal_owned_process_group(process)
+                if signalled:
+                    cancel_signalled.set()
+                    cancelled_outcome["value"] = True
+                # Bounded termination of the owned leader.
+                _terminate_owned_process(process, send_signal=False)
+                with supervisor_lock:
+                    process_exited.set()
+                    state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]
 
         watcher = threading.Thread(target=_cancel_watcher, daemon=True)
         watcher.start()
+
+        timeout_occurred = False
         try:
             returncode = process.wait(timeout=record["timeout_seconds"])
         except subprocess.TimeoutExpired:
-            timed_out["value"] = True
+            timeout_occurred = True
             returncode = None
-            with supervisor_lock:
-                if not cancel_signalled.is_set():
-                    process_exited.set()  # stop watcher from signalling
+
+        with supervisor_lock:
+            process_exited.set()
+            if timeout_occurred:
+                if state["value"] not in ("cancelling", "cancelled") and not cancel_signalled.is_set():
+                    state["value"] = "timed_out"
+                    timed_out_outcome["value"] = True
+                else:
+                    # Cancellation wins the race.
+                    cancelled_outcome["value"] = True
+                    state["value"] = "cancelled"
+            else:
+                if state["value"] == "cancelling":
+                    cancelled_outcome["value"] = True
+                    state["value"] = "cancelled"
+
+        # Terminate only if timeout won and cancellation did not.
+        if timed_out_outcome["value"] and not cancelled_outcome["value"]:
             _terminate_owned_process(process, send_signal=True)
             try:
                 process.wait(timeout=3)
@@ -517,14 +570,10 @@ def run_execution(connection, lock, execution_id):
                 pass
             returncode = process.returncode
 
-        # Mark exited and let watcher observe it.
-        with supervisor_lock:
-            process_exited.set()
-            if cancel_signalled.is_set():
-                cancelled["value"] = True
         watcher.join(timeout=1)
 
-        # Descendant cleanup (bounded, separate from cancellation decision).
+        # Descendant cleanup: only when ownership can still be established.
+        # This is intentionally separate from the cancellation decision.
         cleanup_error = ""
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -532,7 +581,7 @@ def run_execution(connection, lock, execution_id):
             pass
         except OSError as exc:
             cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-        if timed_out["value"]:
+        if timed_out_outcome["value"]:
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -563,11 +612,11 @@ def run_execution(connection, lock, execution_id):
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
-        if cancelled["value"] and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
+        if cancelled_outcome["value"] and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
             outcome = "cancelled"
         else:
-            outcome = "failed" if timed_out["value"] or returncode != 0 else "completed"
-        error = f"Command timed out after {record['timeout_seconds']} seconds" if timed_out["value"] else ""
+            outcome = "failed" if timed_out_outcome["value"] or returncode != 0 else "completed"
+        error = f"Command timed out after {record['timeout_seconds']} seconds" if timed_out_outcome["value"] else ""
         if cleanup_error:
             error = (error + "; process group cleanup failed: " + cleanup_error).strip("; ").strip()
         with lock:
@@ -591,17 +640,18 @@ def run_execution(connection, lock, execution_id):
     except Exception as exc:
         cleanup_error = ""
         if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            except OSError as cleanup_exc:
-                cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
+            if _owned_group_is_live(process):
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except OSError as cleanup_exc:
+                    cleanup_error = f"{type(cleanup_exc).__name__}: {str(cleanup_exc)[:200]}"
             try:
                 process.wait(timeout=3)
             except Exception:
                 pass
-            if process.poll() is None:
+            if process.poll() is None and _owned_group_is_live(process):
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -635,6 +685,8 @@ def run_execution(connection, lock, execution_id):
                     connection.commit()
                 except Exception:
                     connection.rollback()
+
+
 
 def recover_interrupted_executions(connection):
     """Mark interrupted Evo-owned runs; never signal possibly orphaned processes.
