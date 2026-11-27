@@ -1001,9 +1001,112 @@ class ExecutionRecoveryTests(unittest.TestCase):
             err = _bounded_group_cleanup(fake)
         # SIGTERM then SIGKILL
         self.assertGreaterEqual(killpg.call_count, 2)
-        # SIGTERM then SIGKILL, both anchored to 999999
-        self.assertEqual(killpg.call_args_list[0].args[0], 999999)
-        self.assertEqual(killpg.call_args_list[1].args[0], 999999)
+        self.assertEqual(killpg.call_args_list[0].args, (999999, __import__("signal").SIGTERM))
+        self.assertEqual(killpg.call_args_list[1].args, (999999, __import__("signal").SIGKILL))
+
+    def test_concurrent_cleanup_blocks_and_reuses_result(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        import threading, time
+
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self._evo_cleanup_lock = threading.Lock()
+                self._evo_cleanup_done = False
+                self._evo_cleanup_error = None
+
+        fake = Fake()
+
+        keeper_calls = {"kill": 0, "wait": 0}
+
+        class Keeper:
+            def poll(self):
+                return None
+            def kill(self):
+                keeper_calls["kill"] += 1
+            def wait(self, timeout=None):
+                keeper_calls["wait"] += 1
+                return 0
+            @property
+            def pid(self):
+                return 999999
+
+        fake._evo_keeper = Keeper()
+
+        entered = threading.Event()
+        release = threading.Event()
+        call_count = {"n": 0}
+
+        def blocking_remaining(group_pid, keeper_pid):
+            if call_count["n"] == 0:
+                call_count["n"] += 1
+                entered.set()
+                release.wait(timeout=5)
+            return 0
+
+        killpg_calls = []
+
+        def fake_killpg(pgid, sig):
+            killpg_calls.append((pgid, sig))
+
+        results = []
+
+        def worker():
+            with patch("evo_experiments.execution._owned_group_is_live", return_value=True), \
+                 patch("evo_experiments.execution._remaining_descendants", side_effect=blocking_remaining), \
+                 patch("evo_experiments.execution.os.killpg", side_effect=fake_killpg):
+                results.append(_bounded_group_cleanup(fake))
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        entered.wait(timeout=5)
+        time.sleep(0.2)
+        # Additional callers should still be waiting.
+        self.assertEqual(len(results), 0)
+        release.set()
+        for t in threads:
+            t.join(timeout=5)
+        self.assertEqual(len(results), 4)
+        self.assertEqual(len(set(results)), 1)
+        # Exactly one SIGTERM (no SIGKILL needed since remaining==0).
+        self.assertEqual(len(killpg_calls), 1)
+        self.assertEqual(killpg_calls[0], (999999, __import__("signal").SIGTERM))
+        self.assertEqual(keeper_calls["kill"], 1)
+        self.assertEqual(keeper_calls["wait"], 1)
+
+    def test_proc_enumeration_failure_escalates_group(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution.os.listdir", side_effect=OSError("no proc")), \
+             patch("evo_experiments.execution._owned_group_is_live", return_value=True), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+                    self._evo_cleanup_lock = threading.Lock()
+                    self._evo_cleanup_done = False
+                    self._evo_cleanup_error = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return None
+                def kill(self):
+                    pass
+                def wait(self, timeout=None):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        # SIGTERM then SIGKILL
+        self.assertGreaterEqual(killpg.call_count, 2)
+        self.assertEqual(killpg.call_args_list[0].args, (999999, __import__("signal").SIGTERM))
+        self.assertEqual(killpg.call_args_list[1].args, (999999, __import__("signal").SIGKILL))
 
     def test_concurrent_cleanup_blocks_and_reuses_result(self):
         from evo_experiments.execution import _bounded_group_cleanup
@@ -1051,6 +1154,15 @@ class ExecutionRecoveryTests(unittest.TestCase):
             for t in threads:
                 t.join()
         self.assertEqual(len(set(results)), 1)
+
+
+    def test_pid_terminated_helper(self):
+        import os
+        # Missing pid -> terminated
+        self.assertTrue(_pid_terminated(999999999))
+        # Live non-zombie -> not terminated
+        alive_pid = os.getpid()
+        self.assertFalse(_pid_terminated(alive_pid))
 
 if __name__ == "__main__":
     unittest.main()
