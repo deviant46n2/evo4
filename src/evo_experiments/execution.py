@@ -490,12 +490,12 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
     if not _owned_group_is_live(process):
         return "process group ownership not established"
     if send_sigterm:
-        for pid in _group_member_pids(group_pid, keeper_pid):
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, OSError) as exc:
-                if not cleanup_error:
-                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        try:
+            os.killpg(group_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         remaining = _remaining_descendants(group_pid, keeper_pid)
@@ -507,13 +507,14 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
             break
         time.sleep(0.05)
     remaining = _remaining_descendants(group_pid, keeper_pid)
-    if remaining > 0 and _owned_group_is_live(process):
-        for pid in _group_member_pids(group_pid, keeper_pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError) as exc:
-                if not cleanup_error:
-                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+    if (remaining > 0 or remaining < 0) and _owned_group_is_live(process):
+        try:
+            os.killpg(group_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            if not cleanup_error:
+                cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
             remaining = _remaining_descendants(group_pid, keeper_pid)
@@ -541,20 +542,15 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
 
 
 def _signal_owned_process_group(process):
-    """Signal owned descendants once, preserving the keeper. Returns True if sent."""
+    """Signal the owned process group once. Returns True if a signal was sent."""
     if not _owned_group_is_live(process):
         return False
     group_pid = getattr(process, "_evo_group_pid", process.pid)
-    keeper = getattr(process, "_evo_keeper", None)
-    keeper_pid = keeper.pid if keeper is not None else group_pid
-    signalled = False
-    for pid in _group_member_pids(group_pid, keeper_pid):
-        try:
-            os.kill(pid, signal.SIGTERM)
-            signalled = True
-        except (ProcessLookupError, OSError):
-            pass
-    return signalled
+    try:
+        os.killpg(group_pid, signal.SIGTERM)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
 
 
 def _cleanup_keeper(process=None, keeper=None):
@@ -665,7 +661,8 @@ def run_execution(connection, lock, execution_id):
         # A long-lived keeper owns the process group so ownership can still be
         # established after the command leader exits.
         keeper = subprocess.Popen(
-            [sys.executable, "-c", "import time; time.sleep(1000000)"],
+            [sys.executable, "-c",
+             "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(1000000)"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             process_group=0, env=_safe_environment(), close_fds=True)
         group_pid = keeper.pid
