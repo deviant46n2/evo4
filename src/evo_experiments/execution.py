@@ -482,40 +482,30 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
     cleanup_error = ""
     if process is None:
         return cleanup_error
-    if getattr(process, "_evo_cleanup_done", False):
-        return getattr(process, "_evo_cleanup_error", "")
-    group_pid = getattr(process, "_evo_group_pid", process.pid)
-    keeper = getattr(process, "_evo_keeper", None)
-    keeper_pid = keeper.pid if keeper is not None else group_pid
-    if not _owned_group_is_live(process):
-        return "process group ownership not established"
-    if send_sigterm:
-        try:
-            os.killpg(group_pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError as exc:
-            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-    deadline = time.monotonic() + grace_seconds
-    while time.monotonic() < deadline:
-        remaining = _remaining_descendants(group_pid, keeper_pid)
-        if remaining == 0:
-            break
-        if remaining < 0:
-            if not cleanup_error:
-                cleanup_error = "process group membership could not be established"
-            break
-        time.sleep(0.05)
-    remaining = _remaining_descendants(group_pid, keeper_pid)
-    if (remaining > 0 or remaining < 0) and _owned_group_is_live(process):
-        try:
-            os.killpg(group_pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError as exc:
-            if not cleanup_error:
+    # Serialize the entire cleanup operation.
+    lock = getattr(process, "_evo_cleanup_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        process._evo_cleanup_lock = lock
+    with lock:
+        if getattr(process, "_evo_cleanup_done", False):
+            return getattr(process, "_evo_cleanup_error", "")
+        group_pid = getattr(process, "_evo_group_pid", process.pid)
+        keeper = getattr(process, "_evo_keeper", None)
+        keeper_pid = keeper.pid if keeper is not None else group_pid
+        if not _owned_group_is_live(process):
+            cleanup_error = "process group ownership not established"
+            process._evo_cleanup_done = True
+            process._evo_cleanup_error = cleanup_error
+            return cleanup_error
+        if send_sigterm:
+            try:
+                os.killpg(group_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
                 cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + grace_seconds
         while time.monotonic() < deadline:
             remaining = _remaining_descendants(group_pid, keeper_pid)
             if remaining == 0:
@@ -525,20 +515,55 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
                     cleanup_error = "process group membership could not be established"
                 break
             time.sleep(0.05)
-    remaining = _remaining_descendants(group_pid, keeper_pid)
-    if remaining > 0 or remaining < 0:
-        if not cleanup_error:
-            cleanup_error = "process group cleanup incomplete"
-    lock = getattr(process, "_evo_cleanup_lock", None)
-    if lock is None:
-        lock = threading.Lock()
-        process._evo_cleanup_lock = lock
-    with lock:
-        if getattr(process, "_evo_cleanup_done", False):
-            return getattr(process, "_evo_cleanup_error", "")
+        remaining = _remaining_descendants(group_pid, keeper_pid)
+        if (remaining > 0 or remaining < 0) and _owned_group_is_live(process):
+            try:
+                os.killpg(group_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                if not cleanup_error:
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                remaining = _remaining_descendants(group_pid, keeper_pid)
+                if remaining == 0:
+                    break
+                if remaining < 0:
+                    if not cleanup_error:
+                        cleanup_error = "process group membership could not be established"
+                    break
+                time.sleep(0.05)
+        remaining = _remaining_descendants(group_pid, keeper_pid)
+        if remaining > 0 or remaining < 0:
+            if not cleanup_error:
+                cleanup_error = "process group cleanup incomplete"
+        # Reap keeper after descendant cleanup.
+        if keeper is not None:
+            kill = getattr(keeper, "kill", None)
+            if callable(kill):
+                try:
+                    kill()
+                except (ProcessLookupError, OSError) as exc:
+                    if not cleanup_error:
+                        cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            try:
+                keeper.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                kill = getattr(keeper, "kill", None)
+                if callable(kill):
+                    try:
+                        kill()
+                    except (ProcessLookupError, OSError):
+                        pass
+                try:
+                    keeper.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    if not cleanup_error:
+                        cleanup_error = "keeper cleanup incomplete"
         process._evo_cleanup_done = True
         process._evo_cleanup_error = cleanup_error
-    return cleanup_error
+        return cleanup_error
 
 
 def _signal_owned_process_group(process):
@@ -770,9 +795,6 @@ def run_execution(connection, lock, execution_id):
         # Terminate only if timeout won and cancellation did not.
         if timed_out_outcome["value"] and not cancelled_outcome["value"]:
             cleanup_error = _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0)
-            keeper_error = _cleanup_keeper(process=process)
-            if keeper_error:
-                cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -798,9 +820,6 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 pass
-        keeper_error = _cleanup_keeper(process=process)
-        if keeper_error:
-            cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
         returncode = process.returncode
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
@@ -838,9 +857,6 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except Exception:
                 pass
-            keeper_error = _cleanup_keeper(process=process)
-            if keeper_error:
-                cleanup_error = (cleanup_error + "; " + keeper_error).strip("; ").strip()
         elapsed = round(time.monotonic() - begin, 3)
         error_text = f"{type(exc).__name__}: {exc}"[:2000]
         if cleanup_error:
@@ -868,9 +884,7 @@ def run_execution(connection, lock, execution_id):
 
     finally:
         if process is not None:
-            _cleanup_keeper(process=process)
-        elif keeper is not None:
-            _cleanup_keeper(keeper=keeper)
+            _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0)
 
 
 

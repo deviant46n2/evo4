@@ -790,6 +790,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
             class Keeper:
                 def poll(self):
                     return None
+                def wait(self, timeout=None):
+                    return 0
                 @property
                 def pid(self):
                     return 999999
@@ -834,6 +836,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
             class Keeper:
                 def poll(self):
                     return None
+                def wait(self, timeout=None):
+                    return 0
                 @property
                 def pid(self):
                     return 999999
