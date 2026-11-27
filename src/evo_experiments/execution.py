@@ -399,6 +399,37 @@ def _group_has_members(process):
         return False
 
 
+def _group_member_pids(group_pid, keeper_pid):
+    """Return PIDs in the group excluding the keeper."""
+    pids = []
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            if pid == keeper_pid:
+                continue
+            try:
+                with open(f"/proc/{pid}/stat", "r") as handle:
+                    stat = handle.read()
+            except (OSError, ValueError):
+                continue
+            if ")" not in stat:
+                continue
+            parts = stat.rsplit(")", 1)[-1].split()
+            if len(parts) < 3:
+                continue
+            try:
+                pgrp = int(parts[2])
+            except ValueError:
+                continue
+            if pgrp == group_pid:
+                pids.append(pid)
+    except OSError:
+        return []
+    return pids
+
+
 def _remaining_descendants(group_pid, keeper_pid):
     """Count group members excluding the keeper.
 
@@ -409,11 +440,8 @@ def _remaining_descendants(group_pid, keeper_pid):
     try:
         entries = os.listdir("/proc")
     except OSError:
-        try:
-            os.killpg(group_pid, 0)
-            return 1
-        except (ProcessLookupError, OSError):
-            return 0
+        # Cannot enumerate; do not infer membership from group existence.
+        return -1
     for entry in entries:
         if not entry.isdigit():
             continue
@@ -454,18 +482,20 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
     cleanup_error = ""
     if process is None:
         return cleanup_error
+    if getattr(process, "_evo_cleanup_done", False):
+        return getattr(process, "_evo_cleanup_error", "")
     group_pid = getattr(process, "_evo_group_pid", process.pid)
     keeper = getattr(process, "_evo_keeper", None)
     keeper_pid = keeper.pid if keeper is not None else group_pid
     if not _owned_group_is_live(process):
         return "process group ownership not established"
     if send_sigterm:
-        try:
-            os.killpg(group_pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError as exc:
-            cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        for pid in _group_member_pids(group_pid, keeper_pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError) as exc:
+                if not cleanup_error:
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         remaining = _remaining_descendants(group_pid, keeper_pid)
@@ -478,13 +508,12 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
         time.sleep(0.05)
     remaining = _remaining_descendants(group_pid, keeper_pid)
     if remaining > 0 and _owned_group_is_live(process):
-        try:
-            os.killpg(group_pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError as exc:
-            if not cleanup_error:
-                cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        for pid in _group_member_pids(group_pid, keeper_pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError) as exc:
+                if not cleanup_error:
+                    cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
             remaining = _remaining_descendants(group_pid, keeper_pid)
@@ -499,18 +528,33 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
     if remaining > 0 or remaining < 0:
         if not cleanup_error:
             cleanup_error = "process group cleanup incomplete"
+    lock = getattr(process, "_evo_cleanup_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        process._evo_cleanup_lock = lock
+    with lock:
+        if getattr(process, "_evo_cleanup_done", False):
+            return getattr(process, "_evo_cleanup_error", "")
+        process._evo_cleanup_done = True
+        process._evo_cleanup_error = cleanup_error
     return cleanup_error
 
 
 def _signal_owned_process_group(process):
-    """Signal the owned process group once. Returns True if a signal was sent."""
+    """Signal owned descendants once, preserving the keeper. Returns True if sent."""
     if not _owned_group_is_live(process):
         return False
-    try:
-        os.killpg(getattr(process, "_evo_group_pid", process.pid), signal.SIGTERM)
-        return True
-    except (ProcessLookupError, OSError):
-        return False
+    group_pid = getattr(process, "_evo_group_pid", process.pid)
+    keeper = getattr(process, "_evo_keeper", None)
+    keeper_pid = keeper.pid if keeper is not None else group_pid
+    signalled = False
+    for pid in _group_member_pids(group_pid, keeper_pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            signalled = True
+        except (ProcessLookupError, OSError):
+            pass
+    return signalled
 
 
 def _cleanup_keeper(process=None, keeper=None):

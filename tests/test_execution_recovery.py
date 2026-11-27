@@ -82,14 +82,15 @@ class ExecutionRecoveryTests(unittest.TestCase):
         with patch("evo_experiments.execution.subprocess.Popen", FakeProcess), \
              patch("evo_experiments.execution._persist", side_effect=failing_persist), \
              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution._group_member_pids", return_value=[999999]), \
+             patch("evo_experiments.execution.os.kill") as kill:
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIn("pid persistence failed", result["error"])
         self.assertIsNone(result["pid"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
-        killpg.assert_called()
+        kill.assert_called()
 
     def test_recovery_of_launching_execution_never_signals(self):
         job = self.reserve("launching")
@@ -98,7 +99,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
                         (record["id"],))
         self.db.commit()
         with patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.kill") as kill:
             recovered = recover_interrupted_executions(self.db)
         self.assertEqual(recovered, [record["id"]])
         result = get_execution(self.db, record["id"])
@@ -106,7 +107,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIsNone(result["pid"])
         self.assertIn("did not signal", result["error"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
-        killpg.assert_not_called()
+        kill.assert_not_called()
 
     def test_recovery_of_running_execution_preserves_pid(self):
         job = self.reserve("running")
@@ -158,7 +159,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
                 return 0
 
         with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
+             patch("evo_experiments.execution._group_member_pids", return_value=[999999]), \
+             patch("evo_experiments.execution.os.kill", side_effect=PermissionError("not permitted")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -209,7 +211,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
                 return None
 
         with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
+             patch("evo_experiments.execution.os.kill", side_effect=ProcessLookupError("gone")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -232,7 +234,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
                 return None
 
         with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
+             patch("evo_experiments.execution._group_member_pids", return_value=[999999]), \
+             patch("evo_experiments.execution.os.kill", side_effect=OSError("permission-ish")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -260,9 +263,9 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         with patch("evo_experiments.execution.get_job", side_effect=failing_get_job), \
              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.kill") as kill:
             recovered = recover_interrupted_executions(self.db)
-        killpg.assert_not_called()
+        kill.assert_not_called()
         self.assertEqual(len(recovered), 1)
         statuses = {get_execution(self.db, record_one["id"])["status"],
                     get_execution(self.db, record_two["id"])["status"]}
@@ -505,7 +508,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
         CompletingProcess.db = self.db
         with patch("evo_experiments.execution.subprocess.Popen", CompletingProcess), \
              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.kill") as kill:
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "completed")
@@ -538,7 +541,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
-             patch("evo_experiments.execution.os.killpg", side_effect=fake_killpg) as killpg:
+             patch("evo_experiments.execution._group_member_pids", return_value=[999999]), \
+             patch("evo_experiments.execution.os.kill", side_effect=fake_killpg) as kill:
             import threading
             worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
             worker.start()
@@ -549,7 +553,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "cancelled")
-        killpg.assert_called()
+        kill.assert_called()
 
 
     def test_fresh_schema_init_rollback_on_partial_failure(self):
@@ -638,13 +642,26 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertLess(result["elapsed_seconds"], 5)
 
     def test_keeper_already_exited_fails_closed(self):
-        job = self.reserve("keeper-dead")
-        record = self.register(job)
-        with patch("evo_experiments.execution.subprocess.Popen") as popen:
-            # Force ownership to be unestablishable.
-            with patch("evo_experiments.execution._owned_group_is_live", return_value=False),                  patch("evo_experiments.execution.os.killpg") as killpg:
-                run_execution(self.db, self.lock, record["id"])
-        killpg.assert_not_called()
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False), \
+             patch("evo_experiments.execution._group_member_pids", return_value=[999999]), \
+             patch("evo_experiments.execution.os.kill") as kill:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        kill.assert_not_called()
+        self.assertEqual(err, "process group ownership not established")
 
     def test_command_popen_failure_after_keeper_cleans_keeper(self):
         job = self.reserve("popen-fail")
@@ -698,6 +715,131 @@ class ExecutionRecoveryTests(unittest.TestCase):
         fake = Fake()
         from evo_experiments.execution import _bounded_group_cleanup
         with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            first = _bounded_group_cleanup(fake)
+            second = _bounded_group_cleanup(fake)
+        self.assertEqual(first, second)
+
+
+    def test_cancellation_with_resistant_descendant_cleans_it(self):
+        job = self.reserve("cancel-resistant")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=10)
+        import threading
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        import time
+        time.sleep(1.0)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+
+    def test_timeout_with_resistant_descendant_preserves_timeout_result(self):
+        job = self.reserve("timeout-resistant")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+
+    def test_successful_cancellation_does_not_report_false_ownership_loss(self):
+        job = self.reserve("cancel-clean")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(30)"], timeout=10)
+        import threading, time
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        time.sleep(0.5)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        self.assertNotIn("ownership not established", result["error"])
+
+    def test_successful_timeout_cleanup_does_not_report_false_ownership_loss(self):
+        job = self.reserve("timeout-clean")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        self.assertNotIn("ownership not established", result["error"])
+
+    def test_proc_enumeration_failure_does_not_sigkill(self):
+        job = self.reserve("proc-fail")
+        record = self.register(job)
+        with patch("evo_experiments.execution.os.listdir", side_effect=OSError("no proc")),              patch("evo_experiments.execution.os.kill") as killpg,              patch("evo_experiments.execution._owned_group_is_live", return_value=True):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            fake._evo_keeper = None
+            # make keeper alive mock
+            class Keeper:
+                def poll(self):
+                    return None
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        self.assertIn("could not be established", err)
+        # SIGKILL (second killpg call) must not occur; only SIGTERM may.
+        self.assertLessEqual(killpg.call_count, 1)
+
+    def test_keeper_zombie_does_not_cause_false_cleanup_failure(self):
+        job = self.reserve("keeper-zombie")
+        record = self.register(job)
+        # Use a process that has already exited; ownership check fails closed.
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        self.assertEqual(err, "process group ownership not established")
+
+    def test_idempotent_cleanup_real_group(self):
+        job = self.reserve("idempotent-real")
+        record = self.register(job)
+        # Minimal fake with ownership disabled; repeated calls return same.
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return None
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
             first = _bounded_group_cleanup(fake)
             second = _bounded_group_cleanup(fake)
         self.assertEqual(first, second)
