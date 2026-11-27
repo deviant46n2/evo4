@@ -543,5 +543,66 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertEqual(result["status"], "cancelled")
         killpg.assert_called()
 
+
+    def test_fresh_schema_init_rollback_on_partial_failure(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+
+        class FailingConnection:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "CREATE INDEX IF NOT EXISTS idx_workload_executions_status" in sql:
+                    raise sqlite3.OperationalError("forced init failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = FailingConnection(db)
+        with self.assertRaises(sqlite3.OperationalError):
+            initialize_execution(proxy)
+        tables = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workload_executions'"
+        ).fetchall()
+        self.assertEqual(len(tables), 0)
+        db.close()
+
+    def test_legacy_schema_init_rollback_on_partial_failure(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-rollback','legacy-job','["echo","ok"]','[]','/tmp','completed',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+
+        class FailingConnection:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "DROP TABLE workload_executions_legacy" in sql:
+                    raise sqlite3.OperationalError("forced migration failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = FailingConnection(db)
+        with self.assertRaises(sqlite3.OperationalError):
+            initialize_execution(proxy)
+        columns = {row[1]: row for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertIn("job_id", columns)
+        self.assertEqual(columns["job_id"][3], 1)
+        self.assertEqual(
+            db.execute("SELECT COUNT(*) FROM workload_executions").fetchone()[0], 1)
+        db.close()
+
 if __name__ == "__main__":
     unittest.main()
