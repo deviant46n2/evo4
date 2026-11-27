@@ -846,5 +846,70 @@ class ExecutionRecoveryTests(unittest.TestCase):
             second = _bounded_group_cleanup(fake)
         self.assertEqual(first, second)
 
+
+    def test_descendant_pid_terminated_after_completion(self):
+        import re, time
+        job = self.reserve("pid-capture")
+        code = ("import subprocess, sys, time; "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(0.5)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(20):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        self.assertFalse(alive)
+
+    def test_concurrent_cleanup_single_result(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        import threading
+
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self._evo_cleanup_lock = threading.Lock()
+                self._evo_cleanup_done = False
+                self._evo_cleanup_error = None
+
+        fake = Fake()
+
+        class Keeper:
+            def poll(self):
+                return None
+            def kill(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            @property
+            def pid(self):
+                return 999999
+
+        fake._evo_keeper = Keeper()
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            results = []
+            def worker():
+                results.append(_bounded_group_cleanup(fake))
+            threads = [threading.Thread(target=worker) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(len(set(results)), 1)
+
 if __name__ == "__main__":
     unittest.main()

@@ -538,8 +538,8 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
         if remaining > 0 or remaining < 0:
             if not cleanup_error:
                 cleanup_error = "process group cleanup incomplete"
-        # Reap keeper after descendant cleanup.
-        if keeper is not None:
+        # Reap keeper only after descendant cleanup is established.
+        if keeper is not None and not cleanup_error and _remaining_descendants(group_pid, keeper_pid) == 0:
             kill = getattr(keeper, "kill", None)
             if callable(kill):
                 try:
@@ -561,6 +561,8 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
                 except subprocess.TimeoutExpired:
                     if not cleanup_error:
                         cleanup_error = "keeper cleanup incomplete"
+        elif keeper is not None and cleanup_error:
+            cleanup_error = cleanup_error + "; keeper preserved for recovery"
         process._evo_cleanup_done = True
         process._evo_cleanup_error = cleanup_error
         return cleanup_error
@@ -698,6 +700,9 @@ def run_execution(connection, lock, execution_id):
             env=_safe_environment())
         process._evo_group_pid = group_pid
         process._evo_keeper = keeper
+        process._evo_cleanup_lock = threading.Lock()
+        process._evo_cleanup_done = False
+        process._evo_cleanup_error = None
         _persist(connection, lock, execution_id, status="running", pid=process.pid, started_at=started, process_started_at=started)
         with lock:
             current = get_execution(connection, execution_id)
