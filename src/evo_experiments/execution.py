@@ -400,37 +400,52 @@ def _group_has_members(process):
 
 
 def _remaining_descendants(group_pid, keeper_pid):
-    """Count group members excluding the keeper."""
+    """Count group members excluding the keeper.
+
+    Returns -1 when group membership cannot be established safely.
+    """
     count = 0
+    uncertain = False
     try:
-        for entry in os.listdir("/proc"):
-            if not entry.isdigit():
-                continue
-            pid = int(entry)
-            if pid == keeper_pid:
-                continue
-            try:
-                with open(f"/proc/{pid}/stat", "r") as handle:
-                    stat = handle.read()
-            except (OSError, ValueError):
-                continue
-            if ")" not in stat:
-                continue
-            parts = stat.rsplit(")", 1)[-1].split()
-            if len(parts) < 3:
-                continue
-            try:
-                pgrp = int(parts[2])
-            except ValueError:
-                continue
-            if pgrp == group_pid:
-                count += 1
+        entries = os.listdir("/proc")
     except OSError:
         try:
             os.killpg(group_pid, 0)
             return 1
         except (ProcessLookupError, OSError):
             return 0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == keeper_pid:
+            continue
+        try:
+            with open(f"/proc/{pid}/stat", "r") as handle:
+                stat = handle.read()
+        except FileNotFoundError:
+            # Disappeared during inspection: not a remaining member.
+            continue
+        except (OSError, ValueError):
+            # Unreadable entry: cannot prove absence.
+            uncertain = True
+            continue
+        if ")" not in stat:
+            uncertain = True
+            continue
+        parts = stat.rsplit(")", 1)[-1].split()
+        if len(parts) < 3:
+            uncertain = True
+            continue
+        try:
+            pgrp = int(parts[2])
+        except ValueError:
+            uncertain = True
+            continue
+        if pgrp == group_pid:
+            count += 1
+    if uncertain:
+        return -1
     return count
 
 
@@ -453,10 +468,16 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
             cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
-        if _remaining_descendants(group_pid, keeper_pid) == 0:
+        remaining = _remaining_descendants(group_pid, keeper_pid)
+        if remaining == 0:
+            break
+        if remaining < 0:
+            if not cleanup_error:
+                cleanup_error = "process group membership could not be established"
             break
         time.sleep(0.05)
-    if _remaining_descendants(group_pid, keeper_pid) > 0 and _owned_group_is_live(process):
+    remaining = _remaining_descendants(group_pid, keeper_pid)
+    if remaining > 0 and _owned_group_is_live(process):
         try:
             os.killpg(group_pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -466,10 +487,16 @@ def _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0):
                 cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
         deadline = time.monotonic() + 1.0
         while time.monotonic() < deadline:
-            if _remaining_descendants(group_pid, keeper_pid) == 0:
+            remaining = _remaining_descendants(group_pid, keeper_pid)
+            if remaining == 0:
+                break
+            if remaining < 0:
+                if not cleanup_error:
+                    cleanup_error = "process group membership could not be established"
                 break
             time.sleep(0.05)
-    if _remaining_descendants(group_pid, keeper_pid) > 0:
+    remaining = _remaining_descendants(group_pid, keeper_pid)
+    if remaining > 0 or remaining < 0:
         if not cleanup_error:
             cleanup_error = "process group cleanup incomplete"
     return cleanup_error
@@ -668,8 +695,8 @@ def run_execution(connection, lock, execution_id):
                     if signalled:
                         cancel_signalled.set()
                         cancelled_outcome["value"] = True
-                    # Bounded termination of the owned leader.
-                    _terminate_owned_process(process, send_signal=False)
+                    # Bounded cleanup of resistant descendants.
+                    cleanup_error_local = _bounded_group_cleanup(process, send_sigterm=False, grace_seconds=1.0)
                     _cleanup_keeper(process=process)
                     process_exited.set()
                     state["value"] = "cancelled" if cancelled_outcome["value"] else state["value"]

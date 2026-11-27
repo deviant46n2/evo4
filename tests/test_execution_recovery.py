@@ -612,5 +612,95 @@ class ExecutionRecoveryTests(unittest.TestCase):
             db.execute("SELECT COUNT(*) FROM workload_executions").fetchone()[0], 1)
         db.close()
 
+
+    def test_resistant_descendant_is_killed_by_bounded_cleanup(self):
+        job = self.reserve("resistant-descendant")
+        code = ("import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']); "
+                "print('started')")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertLess(result["elapsed_seconds"], 5)
+
+    def test_descendant_holding_pipes_does_not_block_readers(self):
+        job = self.reserve("pipe-descendant")
+        code = ("import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+                "stdout=subprocess.PIPE, stderr=subprocess.PIPE); "
+                "print('started')")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertLess(result["elapsed_seconds"], 5)
+
+    def test_keeper_already_exited_fails_closed(self):
+        job = self.reserve("keeper-dead")
+        record = self.register(job)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            # Force ownership to be unestablishable.
+            with patch("evo_experiments.execution._owned_group_is_live", return_value=False),                  patch("evo_experiments.execution.os.killpg") as killpg:
+                run_execution(self.db, self.lock, record["id"])
+        killpg.assert_not_called()
+
+    def test_command_popen_failure_after_keeper_cleans_keeper(self):
+        job = self.reserve("popen-fail")
+        record = self.register(job)
+        original_popen = __import__("evo_experiments.execution", fromlist=["subprocess"]).subprocess.Popen
+        calls = {"n": 0}
+
+        def failing_popen(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("command popen failed")
+            return original_popen(*args, **kwargs)
+
+        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+
+    def test_persistence_failure_cleans_owned_group(self):
+        job = self.reserve("persist-fail")
+        record = self.register(job)
+        original_persist = __import__("evo_experiments.execution", fromlist=["_persist"])._persist
+
+        def failing_persist(connection, lock, execution_id, **values):
+            if values.get("status") == "running":
+                raise RuntimeError("pid persistence failed")
+            return original_persist(connection, lock, execution_id, **values)
+
+        with patch("evo_experiments.execution._persist", side_effect=failing_persist):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("pid persistence failed", result["error"])
+
+    def test_repeated_cleanup_is_idempotent(self):
+        job = self.reserve("repeat-cleanup")
+        record = self.register(job)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            pass
+        # Exercise helper directly with a minimal fake process.
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self.returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+        fake = Fake()
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            first = _bounded_group_cleanup(fake)
+            second = _bounded_group_cleanup(fake)
+        self.assertEqual(first, second)
+
 if __name__ == "__main__":
     unittest.main()
