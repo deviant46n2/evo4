@@ -49,87 +49,94 @@ CREATE TABLE IF NOT EXISTS workload_executions (
  created_at TEXT NOT NULL
 )
 """
-INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_workload_executions_status
- ON workload_executions(status, created_at);
-CREATE INDEX IF NOT EXISTS idx_workload_executions_job
- ON workload_executions(job_id);
-CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run
- ON workload_executions(agent_run_id);
-"""
-SCHEMA = TABLE_SQL.rstrip() + "\n;\n" + INDEX_SQL
+INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS idx_workload_executions_status ON workload_executions(status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)",
+    "CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)",
+)
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 def _migrate_execution_schema(connection):
     columns = {row[1]: row for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
-    if not columns:
-        connection.executescript(SCHEMA)
-        connection.commit()
-        return
-    required = {
-        "job_id": None, "agent_run_id": None, "workspace_id": None, "project_id": None,
-        "approval_id": None, "approval_evidence_json": "TEXT NOT NULL DEFAULT '{}'",
-        "source_revision": None, "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
-        "requested_at": None,
-    }
-    rebuild = "job_id" in columns and columns["job_id"][3]  # notnull
-    if not rebuild:
-        for column in required:
-            if column not in columns:
-                rebuild = True
-                break
-    if not rebuild:
-        return
-    connection.execute("ALTER TABLE workload_executions RENAME TO workload_executions_legacy")
-    connection.execute(TABLE_SQL)
-    legacy_columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions_legacy)").fetchall()}
-    def col(name):
-        return name if name in legacy_columns else "NULL"
-    connection.execute(
-        f"""INSERT INTO workload_executions
-        (id, job_id, agent_run_id, workspace_id, project_id, approval_id,
-         approval_evidence_json, source_revision, cancel_requested, requested_at,
-         argv_json, policy_json, workspace, status, timeout_seconds, pid,
-         process_started_at, started_at, finished_at, returncode, elapsed_seconds,
-         stdout, stderr, error, created_at)
-        SELECT {col('id')}, {col('job_id')}, NULL, NULL, NULL, NULL, '{{}}', NULL, 0, NULL,
-               {col('argv_json')}, {col('policy_json')}, {col('workspace')}, {col('status')},
-               {col('timeout_seconds')}, {col('pid')}, {col('process_started_at')},
-               {col('started_at')}, {col('finished_at')}, {col('returncode')},
-               {col('elapsed_seconds')}, {col('stdout')}, {col('stderr')}, {col('error')},
-               {col('created_at')}
-        FROM workload_executions_legacy"""
-    )
-    connection.execute("DROP TABLE workload_executions_legacy")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
-    connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
+    managed = not connection.in_transaction
+    if managed:
+        connection.execute("BEGIN IMMEDIATE")
+    try:
+        if not columns:
+            connection.execute(TABLE_SQL)
+            for statement in INDEX_STATEMENTS:
+                connection.execute(statement)
+            if managed:
+                connection.commit()
+            return
+        required = {
+            "job_id": None, "agent_run_id": None, "workspace_id": None, "project_id": None,
+            "approval_id": None, "approval_evidence_json": "TEXT NOT NULL DEFAULT '{}'",
+            "source_revision": None, "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+            "requested_at": None,
+        }
+        rebuild = "job_id" in columns and columns["job_id"][3]  # notnull
+        if not rebuild:
+            for column in required:
+                if column not in columns:
+                    rebuild = True
+                    break
+        if not rebuild:
+            for statement in INDEX_STATEMENTS:
+                connection.execute(statement)
+            if managed:
+                connection.commit()
+            return
+        connection.execute("ALTER TABLE workload_executions RENAME TO workload_executions_legacy")
+        connection.execute(TABLE_SQL)
+        legacy_columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions_legacy)").fetchall()}
+        def col(name):
+            return name if name in legacy_columns else "NULL"
+        connection.execute(
+            f"""INSERT INTO workload_executions
+            (id, job_id, agent_run_id, workspace_id, project_id, approval_id,
+             approval_evidence_json, source_revision, cancel_requested, requested_at,
+             argv_json, policy_json, workspace, status, timeout_seconds, pid,
+             process_started_at, started_at, finished_at, returncode, elapsed_seconds,
+             stdout, stderr, error, created_at)
+            SELECT {col('id')}, {col('job_id')}, NULL, NULL, NULL, NULL, '{{}}', NULL, 0, NULL,
+                   {col('argv_json')}, {col('policy_json')}, {col('workspace')}, {col('status')},
+                   {col('timeout_seconds')}, {col('pid')}, {col('process_started_at')},
+                   {col('started_at')}, {col('finished_at')}, {col('returncode')},
+                   {col('elapsed_seconds')}, {col('stdout')}, {col('stderr')}, {col('error')},
+                   {col('created_at')}
+            FROM workload_executions_legacy"""
+        )
+        connection.execute("DROP TABLE workload_executions_legacy")
+        for statement in INDEX_STATEMENTS:
+            connection.execute(statement)
+        if managed:
+            connection.commit()
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
 
 def initialize_execution(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(workload_executions)").fetchall()}
-    if not columns:
+    managed = not connection.in_transaction
+    if managed:
         connection.execute("BEGIN IMMEDIATE")
-        try:
-            connection.execute(TABLE_SQL)
-            for statement in INDEX_SQL.split(";"):
-                if statement.strip():
-                    connection.execute(statement)
-            connection.commit()
-        except Exception:
-            if connection.in_transaction:
-                connection.rollback()
-            raise
-        return
-    connection.execute("BEGIN IMMEDIATE")
     try:
-        if "policy_json" not in columns:
-            connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
-        _migrate_execution_schema(connection)
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_status ON workload_executions(status, created_at)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_job ON workload_executions(job_id)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_workload_executions_agent_run ON workload_executions(agent_run_id)")
-        connection.commit()
+        if not columns:
+            connection.execute(TABLE_SQL)
+            for statement in INDEX_STATEMENTS:
+                connection.execute(statement)
+        else:
+            if "policy_json" not in columns:
+                connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
+            _migrate_execution_schema(connection)
+            for statement in INDEX_STATEMENTS:
+                connection.execute(statement)
+        if managed:
+            connection.commit()
     except Exception:
         if connection.in_transaction:
             connection.rollback()
@@ -281,15 +288,18 @@ def _persist(connection, lock, execution_id, **values):
             [*values.values(), execution_id])
         connection.commit()
 
-def _terminate_owned_process(process):
-    if process is None or process.poll() is not None:
+def _terminate_owned_process(process, send_signal=True):
+    if process is None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    except OSError:
-        pass
+    if process.poll() is not None:
+        return
+    if send_signal:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            pass
     try:
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
@@ -350,6 +360,17 @@ def _finalize_cancelled_execution(connection, lock, execution_id, record, starte
         if cursor.rowcount == 1:
             _finish_linked_job(connection, record, "cancelled", "Cancelled by user.")
         connection.commit()
+
+def _process_has_exited(process):
+    if process is None:
+        return True
+    if getattr(process, "returncode", None) is not None:
+        return True
+    try:
+        return process.poll() is not None
+    except Exception:
+        return False
+
 
 def run_execution(connection, lock, execution_id):
     with lock:
@@ -444,33 +465,66 @@ def run_execution(connection, lock, execution_id):
             thread = threading.Thread(target=drain, args=(pipe, target), daemon=True)
             thread.start()
             readers.append(thread)
-        timed_out = False
+
+        # Synchronized process supervisor state.
+        supervisor_lock = threading.Lock()
+        process_exited = threading.Event()
+        cancel_signalled = threading.Event()
         cancelled = {"value": False}
+        timed_out = {"value": False}
+
         def _cancel_watcher():
-            while getattr(process, "returncode", None) is None:
-                time.sleep(0.1)
-                with lock:
-                    current = get_execution(connection, execution_id)
+            while not process_exited.is_set():
+                try:
+                    with lock:
+                        current = get_execution(connection, execution_id)
+                except Exception:
+                    current = None
                 if current is not None and current.get("cancel_requested"):
-                    if getattr(process, "returncode", None) is None:
-                        try:
-                            os.killpg(process.pid, signal.SIGTERM)
-                            cancelled["value"] = True
-                        except (ProcessLookupError, OSError):
-                            pass
-                        _terminate_owned_process(process)
+                    with supervisor_lock:
+                        if process_exited.is_set():
+                            return
+                        if _process_has_exited(process):
+                            process_exited.set()
+                            return
+                        if cancel_signalled.is_set():
+                            return
+                        cancel_signalled.set()
+                    # Signal the owned process group exactly once.
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except (ProcessLookupError, OSError):
+                        pass
+                    _terminate_owned_process(process, send_signal=False)
+                    cancelled["value"] = True
                     return
+                process_exited.wait(0.05)
+
         watcher = threading.Thread(target=_cancel_watcher, daemon=True)
         watcher.start()
         try:
             returncode = process.wait(timeout=record["timeout_seconds"])
         except subprocess.TimeoutExpired:
-            timed_out = True
+            timed_out["value"] = True
             returncode = None
+            with supervisor_lock:
+                if not cancel_signalled.is_set():
+                    process_exited.set()  # stop watcher from signalling
+            _terminate_owned_process(process, send_signal=True)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+            returncode = process.returncode
+
+        # Mark exited and let watcher observe it.
+        with supervisor_lock:
+            process_exited.set()
+            if cancel_signalled.is_set():
+                cancelled["value"] = True
         watcher.join(timeout=1)
-        cancelled = cancelled["value"]
-        # Commands are bounded jobs, not daemon launchers. Clean up any descendants
-        # left in this private process group after the leader exits or times out.
+
+        # Descendant cleanup (bounded, separate from cancellation decision).
         cleanup_error = ""
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -478,7 +532,7 @@ def run_execution(connection, lock, execution_id):
             pass
         except OSError as exc:
             cleanup_error = f"{type(exc).__name__}: {str(exc)[:200]}"
-        if timed_out:
+        if timed_out["value"]:
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -509,11 +563,11 @@ def run_execution(connection, lock, execution_id):
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
-        if cancelled and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
+        if cancelled["value"] and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
             outcome = "cancelled"
         else:
-            outcome = "failed" if timed_out or returncode != 0 else "completed"
-        error = f"Command timed out after {record['timeout_seconds']} seconds" if timed_out else ""
+            outcome = "failed" if timed_out["value"] or returncode != 0 else "completed"
+        error = f"Command timed out after {record['timeout_seconds']} seconds" if timed_out["value"] else ""
         if cleanup_error:
             error = (error + "; process group cleanup failed: " + cleanup_error).strip("; ").strip()
         with lock:
