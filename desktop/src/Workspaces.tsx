@@ -370,6 +370,17 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   }, []);
   useEffect(() => {
     if (!selected) runDetailGeneration.current += 1;
+    taskFileGeneration.current += 1;
+    taskFileChangesGeneration.current += 1;
+    setTaskFiles(null);
+    setTaskFileContent(null);
+    setTaskFileDraft("");
+    setTaskFileChanges(null);
+    setNewTaskFilePath("");
+    setTaskFilePath("");
+    setTaskFileError("");
+    setTaskFileBusy(false);
+    setTaskFileSaving(false);
   }, [selected]);
   useEffect(() => {
     void refresh(); void refreshPlans();
