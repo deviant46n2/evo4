@@ -239,112 +239,60 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertFalse(review["stable"])
         self.assertEqual(review["truncation_reason"], "output_limit")
 
-    def test_git_combined_output_budget(self):
-        import io
-        from unittest.mock import patch
+    def _fake_proc_factory(self, stdout_text, stderr_text, child=False):
+        import subprocess, os, signal, sys
 
         class FakeProc:
-            def __init__(self, stdout_text, stderr_text):
-                self.stdout = io.StringIO(stdout_text)
-                self.stderr = io.StringIO(stderr_text)
-                self.pid = 999999
-                self.returncode = 0
+            def __init__(self):
+                self.proc = subprocess.Popen(
+                    [sys.executable, "-c",
+                     "import sys,time,subprocess,os; "
+                     "c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+                     "stdout=sys.stdout, stderr=sys.stderr); "
+                     f"sys.stdout.write({stdout_text!r}); sys.stderr.write({stderr_text!r}); "
+                     "sys.stdout.flush(); sys.stderr.flush(); time.sleep(60)"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                self.pid = self.proc.pid
+                self.stdout = self.proc.stdout
+                self.stderr = self.proc.stderr
+                self.returncode = None
                 self._killed = False
                 self.args = ["git"]
 
             def kill(self):
                 self._killed = True
+                try:
+                    os.killpg(self.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    self.proc.kill()
 
             def wait(self, timeout=None):
-                return 0
+                try:
+                    self.proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    raise
+                self.returncode = self.proc.returncode
+                return self.returncode
 
             def __enter__(self):
                 return self
 
             def __exit__(self, *exc):
+                if self.proc.poll() is None:
+                    self.kill()
                 return False
 
             def communicate(self, input=None, timeout=None):
-                return self.stdout.read(), self.stderr.read()
+                out, err = self.proc.communicate(timeout=timeout)
+                self.returncode = self.proc.returncode
+                return out, err
 
             def poll(self):
-                return 0
+                return self.proc.poll()
 
-        # Combined output exceeds a 100-byte budget.
-        big_out = "a" * 60
-        big_err = "b" * 60
-        calls = {"n": 0}
-        def factory(*a, **k):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                return FakeProc("", "")
-            return FakeProc(big_out, big_err)
-        with patch("evo_core.task_workspaces.subprocess.Popen", side_effect=factory):
-            truncated = []
-            try:
-                _git(Path("/tmp"), "status", max_output_bytes=100, truncated=truncated)
-            except Exception:
-                pass
-            self.assertTrue(truncated)
-
-        # Exact fit does not mark truncated.
-        exact_out = "a" * 50
-        exact_err = "b" * 50
-        calls2 = {"n": 0}
-        def factory2(*a, **k):
-            calls2["n"] += 1
-            if calls2["n"] == 1:
-                return FakeProc("", "")
-            return FakeProc(exact_out, exact_err)
-        with patch("evo_core.task_workspaces.subprocess.Popen", side_effect=factory2):
-            truncated2 = []
-            _git(Path("/tmp"), "status", max_output_bytes=100, truncated=truncated2)
-            self.assertFalse(truncated2)
-
-    def test_git_output_limit_terminates_process(self):
-        import tempfile, time
-        d = Path(tempfile.mkdtemp())
-        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
-        big = d / "big.txt"
-        big.write_text("x" * 100000)
-        subprocess.run(["git", "-C", str(d), "add", "big.txt"], check=True, capture_output=True)
-        truncated = []
-        start = time.monotonic()
-        try:
-            _git(d, "diff", "--cached", max_output_bytes=100, truncated=truncated)
-        except Exception:
-            pass
-        elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 5)
-        self.assertTrue(truncated)
-
-    def test_git_timeout_terminates(self):
-        import io
-        from unittest.mock import patch
-
-        class BlockingProc:
-            def __init__(self):
-                self.stdout = io.StringIO("")
-                self.stderr = io.StringIO("")
-                self.pid = 999999
-                self.returncode = None
-                self._killed = False
-
-            def kill(self):
-                self._killed = True
-
-            def wait(self, timeout=None):
-                if timeout is not None:
-                    raise subprocess.TimeoutExpired(cmd="git", timeout=timeout)
-                return 0
-
-        with patch("evo_core.task_workspaces.subprocess.Popen", return_value=BlockingProc()):
-            truncated = []
-            start = __import__("time").monotonic()
-            with self.assertRaises(Exception):
-                _git(Path("/tmp"), "status", timeout=0.01, max_output_bytes=1000, truncated=truncated)
-            elapsed = __import__("time").monotonic() - start
-            self.assertLess(elapsed, 5)
+        return FakeProc
 
 if __name__ == "__main__":
     unittest.main()

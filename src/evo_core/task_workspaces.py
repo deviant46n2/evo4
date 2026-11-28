@@ -221,7 +221,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             truncated.append(True)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise TaskWorkspaceProvisioningError(f"git operation could not complete: {exc}") from exc
-    if returncode:
+    if returncode and not was_truncated:
         detail = (stderr or stdout).strip()[-2000:]
         raise TaskWorkspaceProvisioningError(
             f"git {args[0] if args else 'command'} failed (exit {returncode}): {detail}"
