@@ -300,6 +300,30 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(metadata["conversation_id"],cid)
             assistant.close()
 
+    def test_managed_command_runs_without_holding_store_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("run_command",{"argv":["python","-m","unittest"]})]},
+                {"content":"The check completed.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
+
+            def assert_lock_released(db, lock, execution_id):
+                self.assertFalse(lock._is_owned(),
+                    "managed process supervision must not hold the application store lock")
+                return {"id":execution_id,"argv":["python","-m","unittest"],
+                        "returncode":0,"stdout":"OK","stderr":"",
+                        "elapsed_seconds":0.1,"status":"completed"}
+
+            with patch("evo_experiments.execution.run_execution",side_effect=assert_lock_released) as execute:
+                result=agent.run(cid,"Run the unit tests",lambda *_:True)
+            execute.assert_called_once()
+            self.assertEqual(result["verification"],"not_required")
+            assistant.close()
+
     def test_file_change_without_post_edit_check_is_explicitly_unverified(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()
