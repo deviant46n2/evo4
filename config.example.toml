@@ -29,7 +29,10 @@ context_window_tokens = 49152
 [system]
 prompt = "You are Evo, a careful local-first AI assistant. Be honest about uncertainty and distinguish evidence from inference."
 
-# Coding-agent project access. Writes and command execution still require approval.
+# Global command-policy ceiling. Project-bound coding agents intersect this
+# allowlist with components.command_policy.allowed_commands in the workspace's
+# pinned configuration revision. Missing or invalid project policy denies
+# project command execution. Allowlisting is not an OS-level sandbox.
 [workspace]
 root = "."
 allowed_commands = [["python", "-m", "unittest"], ["pytest"]]
@@ -52,6 +55,31 @@ flash_attention = ""
 notes = "Record desktop state and unusual background GPU use here."
 
 
+
+# Registry-bound provider endpoints are separately allowlisted by exact origin.
+# Loopback HTTP endpoints are handled by the fixed local-inference policy.
+[security]
+allowed_provider_origins = []
+
+# Registry component secrets are resolved only from these operator-approved
+# environment-variable names. Values never belong in AI Configuration records.
+[secrets]
+allowed_env_vars = []
+
+# Compliance is a separate operator decision from endpoint allowlisting.
+# Add one record per exact origin, adapter/interface, and approved use.
+# Legacy unscoped records remain usable only for the workspace's primary model.
+# Every additional model integration must include its exact integration_id.
+# [[provider_approvals]]
+# origin = "https://api.example.com"
+# adapter_id = "openai_compatible_chat"
+# integration_id = "integration_<32-hex-character-id>" # required for non-primary models
+# uses = ["chat_completion"]
+# status = "approved"
+# reviewed_at = "2026-11-23"
+# terms_reference = "provider terms revision reviewed"
+# data_handling_reference = "provider data-handling policy reviewed"
+
 # Named OpenAI-compatible providers. Cloud providers are optional; no paid
 # provider is required. Put API keys in environment variables, never here.
 [providers.local]
@@ -64,3 +92,31 @@ notes = "Record desktop state and unusual background GPU use here."
 # model = "provider-model-id"
 # api_key_env = "EXAMPLE_CLOUD_API_KEY"
 # timeout_seconds = 600
+
+# P3.5 dispatch admission is opt-in. Leave disabled until the P3.5 acceptance gate closes.
+[dispatch]
+enabled = false
+
+# Every Registry-bound model integration
+# requires an explicit budget. Loopback endpoints additionally require an
+# operator-owned resource profile. The integration_id is derived from the
+# exact adapter, normalized endpoint origin, and model identifier; obtain it
+# from GET /api/v1/workspaces/{workspace_id}/runtime-binding rather than guessing.
+#
+# [[dispatch.provider_budgets]]
+# integration_id = "integration_<32-hex-character-id>"
+# maximum_requests_per_utc_day = 100
+# maximum_output_tokens_per_invocation = 4096
+# maximum_reserved_output_tokens_per_utc_day = 65536
+#
+# Loopback-only profile. Values are operator estimates for the exact
+# integration, not workspace-controlled claims. GPU estimates must include
+# the incremental/cold-load memory behavior of the model server.
+# [[dispatch.local_resource_profiles]]
+# integration_id = "integration_<32-hex-character-id>"
+# compute_mode = "gpu"                 # cpu, gpu, or mixed
+# cpu_cores = 1.0
+# ram_mib = 2048
+# gpu_vram_mib = 4096
+# memory_mode = "persistent_incremental" # or cold_load
+# maximum_gpu_temperature_c = 85

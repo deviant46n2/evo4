@@ -2,19 +2,19 @@
 
 This document describes Evo4's intended architecture. It distinguishes current implementation from designed and long-term capabilities.
 
-## Evo's identity
+## Evo's identity and operating priority
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently.
+Evo4 is a local-first, model-agnostic AI workbench and development system. Its immediate product objective is to make the user's existing hardware more useful through dependable local execution, resource-aware model/runtime management, and a practical assistant and coding workflow.
 
-Evo is a portable, model-agnostic platform for cooperative intelligence. Its purpose is to provide the infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management that allow heterogeneous models, agents, and tools to produce better combined results than any participant could produce alone.
+Evo should progressively take over local repository inspection, editing, command execution, testing, build, and evidence-gathering work currently performed by Kilo. GPT-6 is the current external reasoning and technical-lead partner; Kilo remains a useful local engineering partner, independent challenger, and fallback. These roles describe the present workflow, not permanent architectural dependencies. Evo does not currently directly control either external session.
 
-The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. Target areas include memory architectures, context management, agent architectures, orchestration, tool integration, evaluation, hardware/resource efficiency, autonomous research and software development, and controlled self-improvement.
+Local operation must remain useful without paid cloud services. Models, runtimes, agent frameworks, and external providers are replaceable components. Optional cloud integrations may add capability but must not become hidden requirements.
 
-Evo is not a foundation-model trainer, custom neural-network engineering project, or general-purpose machine-learning laboratory. Existing models and frameworks are components that Evo coordinates and experiments with; they are not the foundation of Evo's architecture.
+The long-term ambition is a user-controlled substrate for increasingly capable AI systems, potentially including superintelligence, through software engineering, memory, context, tools, orchestration, evaluation, and controlled research. This is a distant ambition, not a current capability claim.
 
-The personal assistant and coding-agent experiences are the initial practical product through which the broader cooperative-intelligence purpose is realized. They are configurations assembled using Evo, not Evo's fundamental identity.
+Evo is not a foundation-model trainer or custom neural-network engineering project. It should use existing models and software as components, and use deterministic tools for deterministic work. Cooperative multi-agent execution is a later capability to be justified by measured benefit, not the immediate product objective.
 
-Evo must not imply that it already directly orchestrates external AI sessions such as GPT-6 or Kilo. Those are currently coordinated through a human-mediated workflow and Git. Future integrations must use supported interfaces and comply with provider terms, policies, licensing, and API rules.
+Provider terms, policies, licensing, supported interfaces, API rules, and data-handling requirements must be respected.
 
 ## Fundamental entities
 
@@ -69,9 +69,9 @@ Resource management determines what can execute and where.
 
 These entities must be independently identifiable and maintain appropriate histories.
 
-## Cooperation as an architectural principle
+## Cooperation as a long-term architectural capability
 
-Cooperation is a first-class architectural concern, not merely a feature. Evo must support, without prematurely implementing everything:
+Cooperation remains an important long-term architectural capability, but it is not the immediate product or implementation priority. Local execution, hardware/runtime management, and measured local intelligence come first. Evo should support, without prematurely implementing everything:
 
 - Heterogeneous participants: models, agents, tools, external services, and human participants.
 - Explicit identities, capabilities, compatibility, availability, and lifecycle for participants.
@@ -99,9 +99,11 @@ Every experiment should reference exact relevant source commits, configuration r
 
 ## Current implementation status
 
+The immediate roadmap priority is the local execution bridge, followed by hardware/model-runtime management and the GPT-6-to-Evo local development loop. See `ROADMAP.md` for sequencing and acceptance gates. Existing telemetry, advisory admission/scheduling, and managed workload execution are useful foundations but do not yet constitute complete hardware/runtime management or a general local development executor.
+
 Implemented capabilities are described in `README.md` and existing docs, especially `docs/AGENT-ORCHESTRATION.md` and `docs/BACKGROUND-AGENT-EXECUTION.md`.
 
-Platform Registry v1 is implemented through M5: AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution are present and validated. This is a registry and an API execution-boundary foundation; it does not yet provide project-scoped memory/conversation context, complete CLI/API parity, ancestor/descendant checkout exclusion, or configuration-to-provider runtime binding. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are partially implemented. They are not yet a unified cooperative control plane, and the workload scheduler is not a general task execution scheduler.
+Platform Registry v1 provides AI configurations and immutable revisions, software projects, project checkouts, workspaces, and registered-workspace execution resolution. Phase 2 project/workspace/context isolation and Phase 3 Registry-bound runtime integration are formally accepted; see `ROADMAP.md` and their acceptance records for exact scope. Existing experiment storage/runner/evaluation, hardware telemetry and advisory admission/scheduling, managed workload execution, background agent tasks, plans, approvals, cancellation, recovery, and lifecycle reconciliation are useful but partial foundations. They are not a unified cooperative control plane or a complete local development executor, and the workload scheduler is not a general task execution scheduler.
 
 ## Long-term self-development
 
@@ -133,7 +135,7 @@ Provider terms, licensing, API permissions, automation restrictions, and data-ha
 
 Agent lifecycle: discovery, evaluation, registration, authorization, availability, assignment, active work, suspension, retirement, and revocation.
 
-The development control plane is a first-class Evo subsystem, with an independent minimal bootstrap and recovery mechanism outside it.
+A governed development control plane is a long-term platform capability. The immediate product does not depend on heterogeneous multi-agent orchestration; local execution and resource management come first. Any future control plane requires an independent minimal bootstrap and recovery mechanism.
 
 ## Development philosophy and implementation strategy
 
@@ -254,9 +256,9 @@ Project isolation is a security boundary, not a UI convention. The target model 
 | API coding-agent workspace path | API agent launch resolves a registered workspace and its checkout path before constructing the coding agent. | Retain server-side resolution and validate authorization on every execution boundary. |
 | CLI workspace path | `evo code --workspace` accepts a filesystem path directly. | Make CLI and API semantics equivalent, or explicitly isolate a privileged local-only mode with clear warnings and no claim of Registry-enforced isolation. |
 | Checkout overlap | Registry enforces unique canonical checkout paths, but the schema does not by itself reject ancestor/descendant overlap. | Reject unsafe overlaps after canonicalization; define a deliberate, auditable exception mechanism if nested checkouts are ever needed. |
-| Persistent context | Conversations, messages, memories, memory candidates, lessons, research documents, and lightweight tasks are currently global in EvoStore; they do not have a project/workspace scope contract. Project coding runs can retrieve assistant context through the global assistant message builder. | Add minimum global/project/task scope partitioning before multi-project or multi-participant execution. Every retrieval/write path must apply the scope filter, not just the UI. |
+| Persistent context | Conversations, messages, memories, memory candidates, lessons, research documents, tasks, and agent plans now carry project/workspace scope fields where applicable. Store and API retrieval/write paths apply scope filters, and assistant context assembly resolves conversation scope. This is implementation evidence; it is not proof that every acceptance gate, adversarial case, or CLI/API equivalence check is closed. | Continue the Phase 2 isolation gate and Phase 3 runtime-binding work. Every retrieval/write path must apply the scope filter, not just the UI. |
 | Configuration binding | Registry workspaces reference a configuration and immutable revision, but current agent construction does not resolve that revision into a runtime participant; capabilities report provider selection as unavailable. | Resolve configuration revisions into validated runtime adapters and enforce per-project model/provider/tool/command policy. |
-| Command policy | CodingAgent receives the configured command allowlist; Registry configuration is not currently the source of runtime policy. | Bind command permissions to trusted Evo-managed project/workspace policy, and revalidate at invocation. |
+| Command policy | Coding-agent execution applies the workspace configuration's project command prefixes intersected with the global allowlist. Agent-plan proposal generation still uses the global allowlist and does not yet apply that project-specific intersection. | Enforce the effective policy consistently at every relevant boundary, including proposal, approval, and execution. Project policy can only narrow global permissions and cannot expand them; this is a command allowlist boundary, not an OS-level sandbox. |
 | Project instructions | Repository files such as README/AGENTS content are treated as untrusted project data by the coding agent. | Keep trusted Evo-managed project instructions/metadata separate from repository-provided instructions. Repository files remain untrusted context and cannot elevate permissions or override platform policy. |
 | Context budget composition | Coding-agent policy and command-allowlist text is appended after the assistant message builder has applied its current context fitting. This can cause the final prompt to exceed the budget calculated by that builder. | Include all system policy, retrieved context, history, and tool policy in one final budget calculation; test truncation priority and policy retention. This is a post-freeze implementation finding, not changed by this documentation pass. |
 
@@ -289,3 +291,10 @@ Target conceptual mapping:
 
 Before adding new cooperative task schemas, map existing records and lifecycle transitions to these concepts, identify authoritative fields and migration paths, and avoid creating duplicate sources of truth. A future single-connection/transaction boundary may be preferable, but consolidation is a design decision requiring migration/recovery analysis; the current reconciliation ledger must not be silently discarded.
 
+
+
+## CLI execution boundary
+
+The direct `evo chat` and `evo code` commands are privileged local-only modes. They use the global TOML provider/configuration and a caller-selected local workspace path; they do not resolve a Platform Registry workspace, enforce Registry project/workspace scope, or load the API's scoped repository-instruction context. They are not equivalent to workspace-scoped API execution and must not be presented as such.
+
+Both commands require the explicit `--i-understand-local-only` acknowledgement and print a warning before starting. Use the loopback desktop API for Registry-bound workspace operations. A future Registry-aware CLI mode may add an explicit workspace identifier and reuse the same runtime-binding and authorization boundary; it must not silently change the semantics of the existing local-only mode.

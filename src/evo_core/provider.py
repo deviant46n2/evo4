@@ -1,7 +1,90 @@
+import http.client
 import json
 import time
 import urllib.error
 import urllib.request
+
+from .provider_endpoint import ProviderEndpointError
+
+class _StreamingSecretRedactor:
+    """Withhold partial secret prefixes so chunk boundaries cannot leak a key."""
+
+    def __init__(self, secret):
+        self.secret = secret if isinstance(secret, str) and secret and secret != "no-key" else None
+        self.pending = ""
+
+    def push(self, text):
+        if not self.secret:
+            return text
+        combined = self.pending + text
+        safe_end = max(0, len(combined) - len(self.secret) + 1)
+        # Never emit a prefix that overlaps a complete secret spanning this boundary.
+        for start in range(max(0, safe_end - len(self.secret) + 1), safe_end):
+            if combined.startswith(self.secret, start) and start + len(self.secret) > safe_end:
+                safe_end = start
+                break
+        safe = combined[:safe_end].replace(self.secret, "[REDACTED]")
+        self.pending = combined[safe_end:]
+        return safe
+
+    def finish(self):
+        pending = self.pending
+        self.pending = ""
+        if self.secret:
+            pending = pending.replace(self.secret, "[REDACTED]")
+        return pending
+
+
+def _redact_value(value, secret):
+    if isinstance(value, str) and secret:
+        return value.replace(secret, "[REDACTED]")
+    if isinstance(value, list):
+        return [_redact_value(item, secret) for item in value]
+    if isinstance(value, dict):
+        return {
+            _redact_value(key, secret): _redact_value(item, secret)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _unique_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value):
+    raise ValueError("non-standard JSON constant")
+
+
+def _validate_utf8_strings(value):
+    if isinstance(value, str):
+        value.encode("utf-8")
+    elif isinstance(value, list):
+        for item in value:
+            _validate_utf8_strings(item)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _validate_utf8_strings(key)
+            _validate_utf8_strings(item)
+    return value
+
+
+def _strict_json_loads(value):
+    try:
+        parsed = json.loads(
+            value,
+            object_pairs_hook=_unique_json_pairs,
+            parse_constant=_reject_json_constant,
+        )
+        return _validate_utf8_strings(parsed)
+    except RecursionError as exc:
+        raise ValueError("JSON nesting exceeds the parser limit") from exc
+
 
 class ProviderError(RuntimeError):
     pass
@@ -12,33 +95,104 @@ class InvalidToolCallError(ProviderError):
         super().__init__(message)
         self.finish_reason = finish_reason
 
+class ProviderHTTPError(ProviderError):
+    def __init__(self, status_code, operation):
+        self.status_code = int(status_code)
+        super().__init__(f"{operation} HTTP {self.status_code}")
+
+
+class ProviderTimeoutError(ProviderError):
+    pass
+
+
+class ProviderTransportError(ProviderError):
+    pass
+
+
+class ProviderMalformedResponseError(ProviderError):
+    pass
+
+
 class OpenAICompatibleProvider:
-    """Streaming chat provider for llama.cpp and other OpenAI-compatible servers."""
-    def __init__(self, base_url, api_key, model, timeout=600):
+    """Streaming chat provider for llama.cpp and other OpenAI-compatible servers.
+
+    The optional pinned transport is used by Registry-bound adapters. Legacy
+    TOML callers retain urllib's existing behavior and are not silently moved
+    onto Registry endpoint policy.
+    """
+    def __init__(self, base_url, api_key, model, timeout=600, *, transport=None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.transport = transport
 
-    def list_models(self):
-        request = urllib.request.Request(self.base_url + "/v1/models",
+    def _open_response(self, request, method, route, timeout):
+        if self.transport is None:
+            return urllib.request.urlopen(request, timeout=timeout)
+        headers = {name: value for name, value in request.header_items()}
+        return self.transport.open_response(
+            self.base_url, method, route, headers=headers,
+            body=request.data, timeout=timeout,
+        )
+
+    def _redact_error(self, message):
+        text = str(message)
+        if self.api_key and self.api_key != "no-key":
+            text = text.replace(str(self.api_key), "[REDACTED]")
+        return text[:500]
+
+    def list_models(self, *, timeout_seconds=None):
+        model_url = self.base_url + ("/models" if self.transport is not None else "/v1/models")
+        request = urllib.request.Request(model_url,
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=min(self.timeout,10)) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            return [item.get("id") for item in payload.get("data",[]) if item.get("id")]
+            with self._open_response(request, "GET", "/models", min(self.timeout, 10) if timeout_seconds is None else min(self.timeout, timeout_seconds, 10)) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    raise ProviderHTTPError(status, "Model-list")
+                raw_payload = response.read(1_048_577)
+                if len(raw_payload) > 1_048_576:
+                    raise ProviderMalformedResponseError("Model-list response exceeds the size limit")
+                payload = _strict_json_loads(raw_payload.decode("utf-8"))
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise ProviderMalformedResponseError("Model-list response is malformed")
+            model_ids = []
+            for item in payload["data"]:
+                if (
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("id"), str)
+                    or not item["id"]
+                ):
+                    raise ProviderMalformedResponseError("Model-list response contains an invalid model entry")
+                model_ids.append(item["id"])
+            return model_ids
         except urllib.error.HTTPError as exc:
-            raise ProviderError(f"Model-list HTTP {exc.code}: {exc.read().decode(errors='replace')[:1000]}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            raise ProviderError(f"Model-list request failed: {exc}") from exc
+            # Provider bodies are untrusted and may echo credentials; discard by default.
+            raise ProviderHTTPError(exc.code, "Model-list") from exc
+        except TimeoutError as exc:
+            if self.transport is None:
+                raise ProviderError("Model-list request failed") from exc
+            raise ProviderTimeoutError("Model-list request timed out") from exc
+        except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
+            raise ProviderMalformedResponseError("Model-list response is malformed") from exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            raise ProviderTransportError("Model-list transport failed") from exc
+        except ProviderEndpointError as exc:
+            if "timed out" in str(exc):
+                raise ProviderTimeoutError("Model-list request timed out") from exc
+            raise ProviderTransportError("Model-list endpoint transport failed") from exc
 
-    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None):
+    def chat(self, messages, max_tokens=2048, temperature=0.2, on_token=None, tools=None, *, timeout_seconds=None):
         payload = {"model":self.model,"messages":messages,"stream":True,
                    "stream_options":{"include_usage":True},"max_tokens":max_tokens,"temperature":temperature}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        request = urllib.request.Request(self.base_url + "/v1/chat/completions",
+        completion_url = self.base_url + (
+            "/chat/completions" if self.transport is not None else "/v1/chat/completions"
+        )
+        request = urllib.request.Request(completion_url,
             data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type":"application/json","Authorization":f"Bearer {self.api_key}"},
             method="POST")
@@ -46,6 +200,7 @@ class OpenAICompatibleProvider:
         first_token = None
         usage = {}
         pieces = []
+        redactor = _StreamingSecretRedactor(self.api_key)
         tool_call_parts = {}
         content_type = ""
         saw_event = False
@@ -53,10 +208,26 @@ class OpenAICompatibleProvider:
         malformed_event = False
         finish_reason = None
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with self._open_response(request, "POST", "/chat/completions", self.timeout if timeout_seconds is None else min(self.timeout, timeout_seconds)) as response:
+                status = getattr(response, "status", 200)
+                if status >= 400:
+                    raise ProviderHTTPError(status, "Chat completion")
                 content_type = response.headers.get("Content-Type","")
-                for raw in response:
-                    line = raw.decode("utf-8",errors="replace").strip()
+                response_bytes = 0
+                while True:
+                    raw = response.readline(1_048_577)
+                    if not raw:
+                        break
+                    response_bytes += len(raw)
+                    if len(raw) > 1_048_576 or response_bytes > 4_194_304:
+                        raise ProviderMalformedResponseError("Chat completion stream exceeds the size limit")
+                    if len(raw) == 1_048_577 and not raw.endswith(b"\\n"):
+                        raise ProviderMalformedResponseError("Chat completion SSE line exceeds the size limit")
+                    try:
+                        line = raw.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        malformed_event = True
+                        continue
                     if not line.startswith("data:"):
                         continue
                     saw_event = True
@@ -64,8 +235,8 @@ class OpenAICompatibleProvider:
                     if data == "[DONE]":
                         break
                     try:
-                        event = json.loads(data)
-                    except json.JSONDecodeError:
+                        event = _strict_json_loads(data)
+                    except (ValueError, UnicodeError, json.JSONDecodeError):
                         malformed_event = True
                         continue
                     if not isinstance(event, dict):
@@ -78,43 +249,117 @@ class OpenAICompatibleProvider:
                             message = error.get("message") or error.get("detail") or str(error)
                         else:
                             message = str(error)
-                        raise ProviderError(f"Chat completion stream error: {message}")
-                    if event.get("usage"):
+                        raise ProviderError(f"Chat completion stream error: {self._redact_error(message)}")
+                    if "usage" in event and event["usage"] is not None:
+                        if not isinstance(event["usage"], dict):
+                            malformed_event = True
+                            continue
                         usage = event["usage"]
-                    choices = event.get("choices") or []
+                    choices = event.get("choices", [])
+                    if choices is None:
+                        choices = []
+                    if not isinstance(choices, list):
+                        malformed_event = True
+                        continue
                     if not choices:
                         continue
+                    if len(choices) != 1:
+                        malformed_event = True
+                        continue
                     choice = choices[0]
+                    if not isinstance(choice, dict):
+                        malformed_event = True
+                        continue
                     if choice.get("finish_reason") is not None:
-                        finish_reason = str(choice["finish_reason"])
+                        if not isinstance(choice["finish_reason"], str):
+                            malformed_event = True
+                            continue
+                        finish_reason = choice["finish_reason"]
                     delta = choice.get("delta") or {}
-                    for call in delta.get("tool_calls") or []:
-                        index = call.get("index",0)
-                        part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
-                        if call.get("id"): part["id"] = call["id"]
-                        if call.get("type"): part["type"] = call["type"]
+                    if not isinstance(delta, dict):
+                        malformed_event = True
+                        continue
+                    calls = delta.get("tool_calls") or []
+                    if not isinstance(calls, list):
+                        malformed_event = True
+                        continue
+                    for call in calls:
+                        if not isinstance(call, dict):
+                            malformed_event = True
+                            continue
+                        index = call.get("index", 0)
+                        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                            malformed_event = True
+                            continue
                         function = call.get("function") or {}
-                        if function.get("name"): part["function"]["name"] += function["name"]
-                        if function.get("arguments"): part["function"]["arguments"] += function["arguments"]
+                        if not isinstance(function, dict):
+                            malformed_event = True
+                            continue
+                        call_id = call.get("id")
+                        call_type = call.get("type")
+                        name_fragment = function.get("name", "")
+                        argument_fragment = function.get("arguments", "")
+                        if (
+                            (call_id is not None and not isinstance(call_id, str))
+                            or (call_type is not None and not isinstance(call_type, str))
+                            or not isinstance(name_fragment, str)
+                            or not isinstance(argument_fragment, str)
+                        ):
+                            malformed_event = True
+                            continue
+                        part = tool_call_parts.setdefault(index,{"id":"","type":"function","function":{"name":"","arguments":""}})
+                        if call_id: part["id"] = call_id
+                        if call_type: part["type"] = call_type
+                        if name_fragment: part["function"]["name"] += name_fragment
+                        if argument_fragment: part["function"]["arguments"] += argument_fragment
                     content = delta.get("content")
-                    if isinstance(content,list):
-                        content = "".join(part.get("text","") for part in content if isinstance(part,dict))
+                    if isinstance(content, list):
+                        if any(
+                            not isinstance(part, dict) or not isinstance(part.get("text", ""), str)
+                            for part in content
+                        ):
+                            malformed_event = True
+                            continue
+                        content = "".join(part.get("text", "") for part in content)
+                    elif content is not None and not isinstance(content, str):
+                        malformed_event = True
+                        continue
                     if isinstance(content,str) and content:
                         if first_token is None:
                             first_token = time.perf_counter()
-                        pieces.append(content)
-                        if on_token:
-                            on_token(content)
+                        safe_content = redactor.push(content)
+                        if safe_content:
+                            pieces.append(safe_content)
+                            if on_token:
+                                on_token(safe_content)
         except urllib.error.HTTPError as exc:
-            raise ProviderError(f"Chat completion HTTP {exc.code}: {exc.read().decode(errors='replace')[:2000]}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ProviderError(f"Chat completion request failed: {exc}") from exc
+            # Do not persist or expose provider response bodies by default.
+            raise ProviderHTTPError(exc.code, "Chat completion") from exc
+        except TimeoutError as exc:
+            if self.transport is None:
+                raise ProviderError("Chat completion request failed") from exc
+            raise ProviderTimeoutError("Chat completion request timed out") from exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
+            raise ProviderTransportError("Chat completion transport failed") from exc
+        except ProviderEndpointError as exc:
+            if "timed out" in str(exc):
+                raise ProviderTimeoutError("Chat completion request timed out") from exc
+            raise ProviderTransportError("Chat completion endpoint transport failed") from exc
+        final_safe_content = redactor.finish()
+        if final_safe_content:
+            pieces.append(final_safe_content)
+            if on_token:
+                on_token(final_safe_content)
         if not saw_event:
             raise ProviderError(f"Server returned no SSE data events (Content-Type: {content_type or 'unknown'})")
-        if not valid_event:
-            raise ProviderError(f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})")
+        if not valid_event or (malformed_event and self.transport is not None):
+            raise ProviderMalformedResponseError(
+                f"Server returned malformed SSE data (Content-Type: {content_type or 'unknown'})"
+            )
         if not pieces and not tool_call_parts and finish_reason != "length":
-            raise ProviderError("Server returned an empty completion")
+            raise ProviderMalformedResponseError("Server returned an empty completion")
+        if self.transport is not None and finish_reason is None:
+            raise ProviderMalformedResponseError("Server returned no terminal finish reason")
         finished = time.perf_counter()
         elapsed = finished-started
         completion_tokens = usage.get("completion_tokens")
@@ -127,10 +372,24 @@ class OpenAICompatibleProvider:
         # and perform its bounded safe continuation without executing calls.
         if finish_reason != "length":
             for index in sorted(tool_call_parts):
-                call = tool_call_parts[index]
+                secret = self.api_key if self.api_key != "no-key" else None
+                call = _redact_value(tool_call_parts[index], secret)
+                if (
+                    not isinstance(call.get("id"), str) or not call["id"]
+                    or call.get("type") != "function"
+                    or not isinstance(call.get("function"), dict)
+                    or not isinstance(call["function"].get("name"), str)
+                    or not call["function"]["name"]
+                ):
+                    raise InvalidToolCallError(
+                        "Model returned an incomplete tool call",
+                        finish_reason=finish_reason,
+                    )
                 try:
-                    arguments = json.loads(call["function"]["arguments"] or "{}")
-                except json.JSONDecodeError as exc:
+                    arguments = _strict_json_loads(call["function"]["arguments"] or "{}")
+                    if not isinstance(arguments, dict):
+                        raise ValueError("tool-call arguments must be an object")
+                except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
                     raise InvalidToolCallError(
                         f"Model returned invalid tool-call JSON: {exc}",
                         finish_reason=finish_reason,

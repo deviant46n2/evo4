@@ -1,87 +1,70 @@
 # Evo4 Development Continuity
 
-This is the concise handoff record for future development conversations. Durable decisions belong in version-controlled documentation, not only chat history.
+This is the concise handoff record for future development conversations. The authoritative roadmap and subsystem specifications contain the durable detail.
 
-## Vision and identity
+## Vision and operating priority
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently.
+Evo4's immediate purpose is to become a dependable local-first AI workbench and development system that makes the user's existing hardware more useful. The first product objective is reliable local execution, resource-aware model/runtime management, and a development workflow that can progressively take over the local repository work currently performed by Kilo.
 
-Evo is a portable, model-agnostic platform for cooperative intelligence. It supplies the coordination, shared context, delegation, verification, evaluation, governance, resource management, and user oversight that let heterogeneous models, agents, tools, and people combine their capabilities.
+The long-term ambition is a user-controlled substrate for increasingly capable AI systems, potentially including superintelligence, through software engineering, memory, context, tools, orchestration, evaluation, and controlled research. This is a distant ambition, not a current capability claim.
 
-The personal assistant and coding-agent experience is the initial practical product, not the platform's ultimate identity. GPT-6 and Kilo are the current human-mediated reasoning/implementation collaborators and a practical reference workflow, not permanent architectural dependencies. Evo does not currently orchestrate those external sessions directly. GitHub is the present handoff and source-of-truth mechanism.
-
-The long-term ambition is to improve AI capability through software engineering and controlled system-level research, potentially pursuing increasingly capable and eventually superintelligent systems. This is an ambition, not a current capability claim.
+Current collaboration:
+- The user is the Vision Officer and retains authority over goals, priorities, consequential risk, permissions, and acceptance.
+- GPT-6 is the technical lead: it owns architectural coherence, sequencing, implementation strategy, source review, and engineering decisions.
+- Kilo is the local engineering partner: it provides local repository/environment access, implementation, independent challenge, tests, builds, and runtime evidence. Keep it useful; do not disable or remove it.
+- Evo's goal is to progressively take over Kilo's local-hands work. Kilo remains a valuable fallback and independent reviewer even after Evo can perform that work.
+- GitHub is the current shared engineering source of truth and handoff mechanism. Evo does not currently directly control external GPT-6 or Kilo sessions.
 
 ## Document authority
 
-- `ROADMAP.md`: sole authority for development sequence, priorities, phase status, dependencies, milestones, and acceptance gates.
-- `docs/ARCHITECTURE.md`: system identity, domain model, architectural principles, and boundaries.
-- `docs/PRODUCT-REDESIGN-PLAN.md`: target UX and product interaction requirements only; its legacy phase outline is subordinate to `ROADMAP.md`.
-- `docs/DEVELOPMENT-CONTROL-PLANE.md`: proposed cooperative development-control architecture; not an implementation schedule or proof of implementation.
-- `docs/GEMINI-AUDIT-LEDGER.md`: audit findings, remediation evidence, and acceptance record.
-- `README.md`: user-facing description of implemented behavior and limitations.
-- `AGENTS.md`: repository engineering and safety instructions.
+- `ROADMAP.md`: sole authority for priorities, sequence, phase status, dependencies, and acceptance gates.
+- `docs/ARCHITECTURE.md`: durable system architecture, entities, and boundaries.
+- `docs/PRODUCT-REDESIGN-PLAN.md`: UX requirements only; no competing phase sequence.
+- `docs/DEVELOPMENT-CONTROL-PLANE.md`: proposed cooperative development-control semantics, not an implementation schedule.
+- `README.md`: user-facing implemented capabilities and limitations.
+- `AGENTS.md`: engineering, safety, and collaboration rules.
 
-If documents conflict, follow this hierarchy. Update the authoritative source first and reconcile dependent documents in the same documentation pass.
+If documents conflict, follow this hierarchy and reconcile dependent documents in the same documentation pass.
 
-## Canonical architectural decisions
-
-The durable architecture is defined in `docs/ARCHITECTURE.md`; cooperative governance, participant contracts, and collaboration semantics are defined in `docs/DEVELOPMENT-CONTROL-PLANE.md`; sequencing and acceptance gates are defined only in `ROADMAP.md`. Do not maintain competing copies of those detailed specifications here.
-
-The operating invariants for handoff are: user authority remains ultimate; tasks have one accountable owner; registration/capability/trust/availability never imply authorization; provider integrations must comply with their terms and supported interfaces; permissions and resource budgets are bounded; project/context isolation is mandatory; and consequential results require evidence independent of contributor self-report.
-
-## Current repository and implementation state
+## Current repository state
 
 - Repository: `deviant46n2/evo4`.
-- Active working branch: `agent-lifecycle-reconciliation-v1`.
-- Check branch HEAD from Git before every new engineering handoff; do not assume a SHA recorded in chat remains current.
-- Platform Registry v1 through M5 is implemented and validated: AI configurations, software projects, project checkouts, workspaces, and registered-workspace execution boundaries.
-- Existing agent runs, plans, approvals, cancellation, background tasks, and recovery provide partial lifecycle/orchestration foundations. They do not constitute the intended heterogeneous cooperative control plane.
-- Existing memory, experiment, and resource-management capabilities are partial. Consult the implementation documents and README before claiming completeness.
-- The desktop is an existing chat-first client with supporting workspaces; the proposed target experience is not fully implemented.
+- The active development branch for the current roadmap work is `agent-p4-selected-participant-admission-v1`. Always verify the branch and HEAD before a new handoff; this value may become stale.
+- Original local checkout preservation invariant: branch `local-demo-ready-v1`, HEAD `a8ab59324caceab5b6fb2e5c674276c5ba96d072`; do not modify or clean it unless explicitly authorized.
+- Preserve all existing worktrees and uncommitted changes. Never use destructive Git cleanup/reset operations.
+- Phase 2 isolation was accepted 2026-11-24.
+- Phase 3 participant contracts/runtime integration was accepted 2026-11-25.
+- The Phase 4 experiment-accounting correction at `591126548d08b40e1112690443a9b2688158eb05` passed Kilo validation: 58/58 focused tests, 978/978 full tests, compileall, desktop production build, and diff-check. This does not accept the entire former cooperative-experiment phase or demonstrate live multi-participant execution.
+- Project Provisioning v1 was accepted and closed at `d0b56afee86b208aab738994cee8a13c63bff107`.
+- Existing hardware telemetry, advisory resource admission/scheduling, managed workload execution, background agent tasks, memory, experiments, and runtime integration are foundations with documented limits, not a complete local execution or hardware-management system.
 
-## Stabilization freeze and authorization
+## Current priority
 
-**The stabilization freeze was lifted for the authorized Project Provisioning v1 milestone.** Broader redesign implementation still requires user authorization.
+Follow `ROADMAP.md`. The immediate next implementation phase is **Phase 4 — Local execution bridge**. Its exit benchmark is the ability to take a GPT-6-authored bounded task and safely inspect, edit, execute, verify, and report work in an explicitly selected local workspace, returning a reviewable diff and reproducible evidence.
 
-The six Gemini audit priorities are recorded as completed and accepted in `docs/GEMINI-AUDIT-LEDGER.md` and `ROADMAP.md`:
-1. Provider streaming reliability.
-2. Tool-call argument validation.
-3. Workspace filesystem boundary hardening.
-4. Untrusted retrieved-context isolation.
-5. Experiment lifecycle interruption finalization.
-6. ResourceMonitor shutdown race.
+The next phases are hardware/model-runtime management, the GPT-6-to-Evo local development loop, measured local intelligence, stronger memory/context, evaluation, and only later advanced cooperative orchestration and controlled autonomy.
 
-Reported validation: 525 Python tests passed, compileall passed, and `git diff --check` passed. These results were reported by implementation runs; GPT-6 did not independently rerun the complete suite. No desktop production build was run for the Priority 6 follow-up. Do not overstate the validation evidence.
+Do not resume the live multi-participant cooperative benchmark merely because its design and accounting infrastructure exist. It is deferred to Phase 10 unless the user explicitly changes priority.
 
-There are no outstanding stabilization tasks in the accepted audit ledger. The freeze was lifted for the authorized Project Provisioning v1 milestone; broader implementation still requires user authorization.
+## Engineering workflow
 
-## Current documentation state
+1. GPT-6 investigates source, architecture, constraints, and current branch state.
+2. GPT-6 chooses implementation ownership deliberately. It authors critical code directly when that is the better engineering choice and source access permits; Kilo implements when local access or comparative advantage makes it preferable.
+3. Kilo receives complete, copy-paste-ready prompts for local tasks. Prompts specify exact branch/SHA, scope, allowed actions, tests, preservation requirements, and expected evidence.
+4. The implementing participant does not solely certify its own consequential work. The other participant reviews source and evidence where practical.
+5. GPT-6 inspects the exact resulting diff/commit and validation report, resolves technical disagreements, and makes the engineering acceptance decision.
+6. The user makes product-direction, consequential-risk, permission, and formal phase-acceptance decisions.
 
-The unified roadmap/architecture reconciliation remains in progress. Gemini's independent critique identified material architectural, sequencing, and factual gaps; the current revision is being updated to address or explicitly disposition those findings. Do not mark Phase 1 complete until that review is reconciled and the canonical documents are mutually consistent.
+## Safety and evidence invariants
 
-**Project Provisioning v1** was accepted and closed at commit `d0b56afee86b208aab738994cee8a13c63bff107`. It provisions a language-neutral skeleton and Git checkout; workspace binding requires an explicitly selected existing configuration revision. If no configuration exists, the project remains unbound rather than receiving an invented default. Project deletion is deferred beyond this milestone and is not a Phase 2 exit prerequisite.
-
-## Working collaboration protocol
-
-The user communicates the desired outcome or objective. GPT-6 investigates the repository, existing architecture, and relevant constraints. GPT-6 determines the implementation strategy and assigns ownership. The assigned participant implements: GPT-6 authors code directly when appropriate; Kilo implements when its local access or comparative advantage makes that preferable. Kilo performs local integration, testing, builds, and runtime checks when required. The non-implementing participant independently challenges and reviews the work where practical. GPT-6 retrieves and examines the exact resulting commit, diff, and evidence. GPT-6 resolves technical disagreements and makes the final engineering acceptance decision. GPT-6 identifies and advances the next useful task without requiring the user to manage routine engineering coordination.
-
-Operational constraints:
-- Git is the current collaboration bridge.
-- Kilo receives complete, copy-paste-ready prompts for local tasks.
-- Kilo stages only files belonging to the assigned task.
-- Kilo commits and pushes to the existing branch when requested by the established workflow.
-- Never discard, overwrite, reset, stash, or clean unrelated modifications or pre-existing untracked files.
-- GPT-6 must not claim to have executed local tests or runtime checks that it has not actually run.
-- The user should not have to manage routine agent assignment, technical sequencing, or repeated incomplete handoffs.
-- Escalate to the Vision Officer for genuine product-direction decisions, consequential risk or permission tradeoffs, and changes to agreed objectives—not routine engineering details.
-- This current human-mediated collaboration is not Evo4's future internal multi-agent orchestration architecture.
-- For especially consequential work—architecture, security boundaries, persistence, migrations, lifecycle, recovery, memory isolation, and orchestration—independent investigation or alternative proposals should be considered before implementation when the expected benefit justifies the cost.
-- After several substantial development milestones, GPT-6 should periodically evaluate defects surviving implementation and review, defects independently found by each participant, rework caused by mistakes, unnecessary handoffs, whether assignments are producing good results, and whether development speed is improving without sacrificing correctness. Adjust the working arrangement based on evidence.
-
-## Next steps
-
-1. Obtain an independent Gemini critique of the current documentation pass.
-2. Evaluate each critique against the vision, architecture, implementation evidence, and freeze boundary.
-3. Revise the documents and reconcile contradictions.
-4. Project Provisioning v1 has been implemented under explicit user authorization; broader redesign implementation still requires authorization.
+- Preserve user data, local configuration, uncommitted changes, and every pre-existing worktree.
+- Do not deploy or modify the running Evo instance during ordinary development.
+- Use isolated feature branches/worktrees for code changes.
+- Local execution is workspace-bound, least-privilege, and explicitly authorized. Commands use argv arrays, not generated shell strings.
+- A managed worker may supervise only processes it starts and owns. It must not attach to, signal, kill, or reconfigure unrelated processes or an existing inference server.
+- Hardware telemetry is read-only unless a separate, explicit control contract authorizes an operation.
+- Optional cloud providers must remain optional; paid cloud access is never a core dependency.
+- Do not claim tests, builds, runtime checks, or live-model calls were run unless their exact output was observed.
+- Distinguish implemented, tested, independently reviewed, and accepted.
+- Do not autonomously merge, deploy, delete, or expand privileges.
+- GPT-6 should advance routine engineering work without requiring the user to manage handoffs; escalate only genuine product decisions and consequential tradeoffs.

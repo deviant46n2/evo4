@@ -1,10 +1,10 @@
 # Evo 4
 
-Evo exists to make cooperating AIs and tools more capable together than any of them could be independently. It is a portable, model-agnostic platform for cooperative intelligence, providing infrastructure, coordination, context, delegation, verification, evaluation, governance, and resource management for heterogeneous models, agents, and tools. The personal assistant and coding-agent experiences are the initial practical product through which that purpose is realized.
+Evo4 is a local-first, model-agnostic AI workbench and development system. Its immediate purpose is to make the user's existing hardware more useful through dependable local execution, resource-aware model/runtime management, and a practical assistant and coding workflow. It should progressively take over local repository inspection, editing, command execution, testing, builds, and evidence-gathering work currently performed by Kilo, while keeping Kilo available as a useful engineering partner and fallback.
 
-The long-term ambition is to pursue increasingly capable, potentially superintelligent AI systems through software engineering rather than foundation-model engineering. The personal assistant and coding-agent experiences are configurations built on this platform, not its fundamental identity.
+Local operation must remain useful without paid cloud services. Optional cloud providers and free tiers may extend capability, but no paid provider is a core dependency. GPT-6 is the current external reasoning/technical-lead partner; Kilo is the current local engineering partner. Evo does not yet directly control those external sessions.
 
-Hardware optimization is one capability and potential experiment area, not the defining purpose of Evo4.
+The long-term ambition is a user-controlled substrate for increasingly capable AI systems, potentially including superintelligence, through software engineering, memory, context, tools, orchestration, evaluation, and controlled research. This is a distant ambition, not a claim about current capabilities.
 
 The repository contains two independently usable applications:
 
@@ -26,11 +26,11 @@ The long-term ambition is to support increasingly capable software-engineering s
 - Real models are integration targets and experimental subjects, not prerequisites for development.
 - Every major milestone should deliver reusable capability, experimentally validated improvement, or measurable expansion of what Evo4 can support.
 - Prefer existing research and software rather than reinventing infrastructure without a demonstrated reason.
-- Keep scope focused on improving AI systems through software architecture and engineering.
+- Prioritize useful local execution and hardware efficiency now; pursue advanced cooperation and system-level research only when earlier capabilities are reliable and measured.
 
-## Self-development ambition
+## Long-term self-development ambition
 
-The long-term design should support Evo4:
+After the local execution, resource-management, memory, and evaluation foundations are reliable, the long-term design should support Evo4:
 
 - Understanding its own architecture and development history.
 - Identifying weaknesses and opportunities.
@@ -117,7 +117,7 @@ The desktop includes functional Agents, Memory, Hardware, Experiments, Projects,
 - Agents can launch the existing bounded coding agent in an active registered workspace selected from the Workspace Registry, inspect run history and recorded tool events, and approve or deny every file write and allowlisted command. Read-only inspection tools run without approval. Pending approvals expire after ten minutes and are denied by default. API execution requires a registered workspace ID; arbitrary caller-supplied paths do not authorize execution.
 - Memory can search active, archived, and superseded records; add user-sourced memories; archive active records; replace incorrect memories while preserving supersession provenance; and accept or reject automatically proposed candidates. Candidate records are not injected as trusted memory until accepted.\n- Hardware shows live CPU/RAM/GPU metrics, NVIDIA compute processes, pressure warnings, and recorded resource history. Process command-line arguments are deliberately not exposed because they can contain credentials.\n- Experiments displays Evo Lab run history and configuration aggregates, including tokens/sec, time-to-first-token, evaluation outcomes, and sampled VRAM/RAM peaks.
 - Chat turns reserve their conversation before executor submission. Conversation deletion and turn reservation are synchronized, so queued work cannot lose its conversation. Chat now validates conversation IDs with a direct indexed lookup rather than scanning a capped history list, and reconciles the completed stream with the persisted transcript.
-- Hardware resource management now includes a persistent reservation-based workload queue. Evo can reserve estimated RAM/VRAM capacity and track user-confirmed external work, but it does not launch or stop processes, change GPU clocks/power limits, stop services, or modify runtime settings. Pause/resume, live plan streaming, and runtime provider switching are not implemented and are not simulated. Background-agent cancellation is implemented as cooperative cancellation at safe boundaries; an in-flight provider request cannot be interrupted. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
+- Hardware resource management includes a persistent reservation-based workload queue. Queue admission/reservation does not itself launch work; a separate managed worker can launch explicitly approved argv commands and supervise only its own child process group. Evo does not attach to or control existing services, change GPU clocks/power limits, or modify runtime settings. Pause/resume, live plan streaming, and automatic runtime provider switching are not implemented or simulated. Background-agent cancellation is implemented as cooperative cancellation at safe boundaries; an in-flight provider request cannot be interrupted. Closing the desktop client stops event delivery but does not interrupt an in-flight provider request.
 
 Install the optional API dependencies and frontend packages:
 
@@ -181,12 +181,14 @@ The desktop API initializes/migrates the Evo Lab tables in the same SQLite datab
 
 ## Evo assistant commands
 
+The direct `chat` and `code` CLI commands are privileged local-only modes. They use global TOML settings and do not enforce Registry workspace scope; the explicit acknowledgement flag is required. Use the desktop API for Registry-bound workspace execution.
+
 ```bash
 evo doctor
 evo doctor --test-tools
-evo chat
-evo chat --conversation CONVERSATION_ID
-evo code --workspace /path/to/project
+evo chat --i-understand-local-only
+evo chat --conversation CONVERSATION_ID --i-understand-local-only
+evo code --workspace /path/to/project --i-understand-local-only
 evo conversations
 evo backup backups/evo.sqlite3
 evo memory add "The user prefers concise, evidence-based explanations" --category preferences --source user
@@ -280,7 +282,7 @@ Reserved scheduler jobs can now run explicitly approved commands through Evo's m
 
 ## Background agent execution
 
-The desktop includes Projects, Configurations, and Workspaces areas backed by Registry APIs. Configuration records support immutable revisions and archive/reactivation; reactivation is not runtime provider activation, and configuration-to-runtime binding/provider selection remain unimplemented. The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
+The desktop includes Projects, Configurations, and Workspaces areas backed by Registry APIs. Configuration records support immutable revisions and archive/reactivation. The accepted Phase 3 runtime factory binds workspace execution to the exact immutable configuration revision for chat, plan proposal, and coding-agent execution; archive/reactivation changes Registry status, not a running provider. Runtime switching is not automatic. The desktop Agents workspace runs the approval-gated coding agent as a persistent background task. Task lifecycle events are durable, worker claims are atomic, and users can request cooperative cancellation. A provider request already in flight cannot be interrupted; Evo stops at the next safe boundary. On restart, unfinished tasks are marked interrupted and are not automatically replayed. See [Background Agent Execution v1](docs/BACKGROUND-AGENT-EXECUTION.md) for lifecycle, shutdown, API, and safety details.
 
 
 ## Agent Intelligence & Orchestration v1

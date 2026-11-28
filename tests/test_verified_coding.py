@@ -60,6 +60,10 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.approve_plan(self.db, self.plan["id"])
         orchestration.attach_run(self.db, self.plan["id"], "run-1")
         orchestration.start_step(self.db, self.plan["id"], self.plan["steps"][0]["id"])
+        orchestration.record_verification(
+            self.db, self.plan["id"], self.plan["steps"][0]["id"],
+            ["python", "-m", "unittest"], "passed", 0, "OK", "",
+        )
         orchestration.finish_step(self.db, self.plan["id"], self.plan["steps"][0]["id"], "completed", "done", verification_status="passed")
         orchestration.start_step(self.db, self.plan["id"], self.plan["steps"][1]["id"])
         orchestration.finish_step(self.db, self.plan["id"], self.plan["steps"][1]["id"], "completed", "done", verification_status="not_required")
@@ -104,7 +108,7 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
         orchestration.record_verification(self.db, self.plan["id"], step["id"], ["python", "-m", "unittest"], "passed", 0, "OK", "")
         plan = orchestration.get_plan(self.db, self.plan["id"])
-        self.assertEqual(plan["steps"][0]["verification_status"], "not_run")
+        self.assertEqual(plan["steps"][0]["verification_status"], "failed")
 
     def test_all_configured_commands_passed(self):
         step = self.plan["steps"][0]
@@ -147,6 +151,10 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.approve_plan(self.db, plan["id"])
         orchestration.attach_run(self.db, plan["id"], "run-1")
         orchestration.start_step(self.db, plan["id"], step["id"])
+        orchestration.record_verification(
+            self.db, plan["id"], step["id"],
+            ["python", "-m", "unittest"], "passed", 0, "OK", "",
+        )
         orchestration.finish_step(self.db, plan["id"], step["id"], "completed", "done", verification_status="passed")
         refreshed = orchestration.get_plan(self.db, plan["id"])
         self.assertEqual(refreshed["steps"][0]["verification_status"], "passed")
@@ -187,6 +195,10 @@ class VerifiedCodingTests(unittest.TestCase):
         orchestration.approve_plan(self.db, plan["id"])
         orchestration.attach_run(self.db, plan["id"], "run-1")
         orchestration.start_step(self.db, plan["id"], step["id"])
+        orchestration.record_verification(
+            self.db, plan["id"], step["id"],
+            ["python", "-m", "unittest"], "passed", 0, "OK", "",
+        )
         orchestration.finish_step(self.db, plan["id"], step["id"], "completed", "done", verification_status="passed")
         # second step not_required
         step2 = plan["steps"][1]
@@ -251,6 +263,85 @@ class VerifiedCodingTests(unittest.TestCase):
                 "steps": [{"title": "s", "description": "d", "expected_outcome": "o",
                            "verification": "v", "verification_commands": [["python", "-m", "unittest"]]}],
             }, allowed_commands=[])
+
+    def test_empty_allowlist_rejects_unverified_executable_step(self):
+        with self.assertRaisesRegex(ValueError, "effective command allowlist"):
+            orchestration.create_plan(self.db, "x", "/w", {
+                "title": "x", "summary": "y",
+                "steps": [{"title": "s", "description": "change code", "expected_outcome": "changed",
+                           "verification": "run tests", "verification_commands": []}],
+            }, allowed_commands=[])
+
+    def test_executable_step_requires_allowlisted_verification_command(self):
+        with self.assertRaisesRegex(ValueError, "Every executable plan step"):
+            orchestration.create_plan(self.db, "x", "/w", {
+                "title": "x", "summary": "y",
+                "steps": [{"title": "s", "description": "change code", "expected_outcome": "changed",
+                           "verification": "run tests", "verification_commands": []}],
+            }, allowed_commands=[["python", "-m", "unittest"]])
+
+    def test_record_verification_rejects_unconfigured_command(self):
+        step = self.plan["steps"][0]
+        with self.assertRaisesRegex(ValueError, "not configured"):
+            orchestration.record_verification(
+                self.db, self.plan["id"], step["id"], ["pytest"], "passed", 0, "OK", ""
+            )
+
+    def test_passed_verification_requires_zero_exit_code(self):
+        step = self.plan["steps"][0]
+        with self.assertRaisesRegex(ValueError, "exit code 0"):
+            orchestration.record_verification(
+                self.db, self.plan["id"], step["id"],
+                ["python", "-m", "unittest"], "passed", 1, "", "failed",
+            )
+
+    def test_finish_step_cannot_mark_configured_verification_not_required(self):
+        step = self.plan["steps"][0]
+        orchestration.approve_plan(self.db, self.plan["id"])
+        orchestration.attach_run(self.db, self.plan["id"], "run-1")
+        orchestration.start_step(self.db, self.plan["id"], step["id"])
+        with self.assertRaisesRegex(ValueError, "cannot be marked not-required"):
+            orchestration.finish_step(
+                self.db, self.plan["id"], step["id"], "completed", "done",
+                verification_status="not_required",
+            )
+
+    def test_finish_plan_rejects_forged_pass_status_without_evidence(self):
+        step = self.plan["steps"][0]
+        orchestration.approve_plan(self.db, self.plan["id"])
+        orchestration.attach_run(self.db, self.plan["id"], "run-1")
+        with self.db:
+            self.db.execute(
+                "UPDATE agent_plan_steps SET status='completed',verification_status='passed',finished_at='now' WHERE plan_id=?",
+                (self.plan["id"],),
+            )
+        with self.assertRaisesRegex(ValueError, "passing verification evidence"):
+            orchestration.finish_plan(self.db, self.plan["id"], "completed")
+
+    def test_empty_allowlist_is_disclosed_and_executable_plan_is_rejected(self):
+        class CapturingProvider:
+            def __init__(self):
+                self.messages = None
+            def chat(self, messages, **kwargs):
+                self.messages = messages
+                return {"content": json.dumps({
+                    "title": "Inspect",
+                    "summary": "Inspection only.",
+                    "steps": [{"title": "Inspect", "description": "Read files.",
+                               "expected_outcome": "Understand the project.",
+                               "verification": "Manual inspection.",
+                               "verification_commands": []}],
+                })}
+        provider = CapturingProvider()
+        proposal = orchestration.propose_with_model(
+            provider, "inspect", "/w", allowed_commands=[]
+        )
+        self.assertEqual(proposal["title"], "Inspect")
+        self.assertIn("none configured", provider.messages[0]["content"])
+        with self.assertRaisesRegex(ValueError, "effective command allowlist"):
+            orchestration.create_plan(
+                self.db, "inspect", "/w", proposal, allowed_commands=[]
+            )
 
     def test_propose_with_model_receives_allowlist(self):
         class FakeProvider:

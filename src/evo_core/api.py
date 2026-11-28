@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,10 +17,21 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant import EvoAssistant
+from .runtime_binding import (
+    RegistryDispatchDisabledError,
+    RuntimeBindingError,
+    build_workspace_runtime,
+)
+from .runtime_invocation_snapshots import (
+    RuntimeSnapshotError,
+    assert_runtime_matches_snapshot,
+    create_runtime_invocation_snapshot,
+)
 from .coding_agent import CodingAgent
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
 from .config import load_config
+from .command_policy import CommandPolicyError, effective_project_command_prefixes
 from .store import EvoStore
 from . import platform_registry
 from .memory_review import find_duplicate_candidates
@@ -71,10 +83,18 @@ def _backend_identity():
 class ChatRequest(BaseModel):
     conversation_id: str | None = None
     message: str = Field(min_length=1, max_length=200000)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class ConversationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
+
+
+class ConversationCreate(BaseModel):
+    title: str = Field(default="New conversation", max_length=120)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class MemoryCreate(BaseModel):
@@ -82,6 +102,8 @@ class MemoryCreate(BaseModel):
     category: str = Field(default="general", max_length=80)
     source: str = Field(default="user", max_length=80)
     confidence: float = Field(default=1.0, ge=0, le=1)
+    project_id: str | None = None
+    workspace_id: str | None = None
 
 
 class MemorySupersede(BaseModel):
@@ -180,13 +202,11 @@ def create_app(config_path="config.toml", provider_name=None):
     orchestration.initialize(lab_db.connection)
     with lab_db.lock:
         recover_interrupted_executions(lab_db.connection)
-        recovered_agent_tasks = background_agent.recover(lab_db.connection)
-        orchestration.recover_plans(lab_db.connection)
-        for recovered_id in recovered_agent_tasks:
-            store.finish_agent_run(recovered_id, "interrupted", "Evo restarted; in-flight work was not resumed.")
     # Converge every lifecycle record onto one durable terminal decision. This is
     # repeatable: already-repaired records are left alone and completed records
     # are never downgraded. Nothing is replayed and no process is signalled.
+    # Background tasks and plans are intentionally not pre-finalized here; the
+    # reconciler owns their terminal convergence from durable evidence.
     lifecycle.initialize(lab_db.connection)
     app.state.lifecycle_report = lifecycle.reconcile(store, lab_db)
 
@@ -218,6 +238,186 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except workspace_registry.WorkspaceValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _build_workspace_runtime_for_request(workspace_id):
+        try:
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+        except workspace_registry.WorkspaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (RuntimeBindingError, workspace_registry.WorkspaceValidationError,
+                workspace_registry.WorkspaceRelationshipError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return runtime
+
+    def _record_workspace_invocation(runtime, invocation_kind):
+        try:
+            return create_runtime_invocation_snapshot(
+                store, runtime, invocation_id=str(uuid4()),
+                invocation_kind=invocation_kind,
+            )
+        except (RuntimeBindingError, RuntimeSnapshotError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def _require_workspace_dispatch(runtime):
+        try:
+            runtime.require_dispatch_enabled()
+        except RegistryDispatchDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/v1/workspaces/{workspace_id}/runtime-binding")
+    def workspace_runtime_binding_info(workspace_id: str):
+        """Expose only non-secret runtime identity needed for operator policy setup."""
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        from .provider_endpoint import normalize_provider_origin
+        from .provider_approvals import find_provider_approval
+        origin = normalize_provider_origin(
+            f"{urlsplit(runtime.bound_participant.endpoint).scheme}://"
+            f"{urlsplit(runtime.bound_participant.endpoint).netloc}"
+        )
+        approval = find_provider_approval(
+            config.provider_approvals, origin,
+            runtime.participant.adapter_id, "chat_completion",
+        )
+        return {
+            "workspace_id": runtime.workspace_id,
+            "project_id": runtime.project_id,
+            "configuration_id": runtime.configuration_id,
+            "configuration_revision_id": runtime.revision_id,
+            "revision_hash": runtime.revision_hash,
+            "participant_id": runtime.participant.participant_id,
+            "integration_id": runtime.participant.integration_id,
+            "adapter_id": runtime.participant.adapter_id,
+            "model": runtime.participant.display_name,
+            "origin": origin,
+            "dispatch_enabled": runtime.dispatch_enabled,
+            "provider_budget_configured": any(
+                item.integration_id == runtime.participant.integration_id
+                for item in config.provider_budgets
+            ),
+            "local_resource_profile_configured": any(
+                integration_id == runtime.participant.integration_id
+                for integration_id, _profile in config.local_resource_profiles
+            ),
+            "provider_approval_status": approval.status if approval is not None else "unknown",
+        }
+
+    @app.get("/api/v1/workspaces/{workspace_id}/participants")
+    def workspace_participants(workspace_id: str):
+        """List the non-secret participant contracts bound to this exact workspace revision."""
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        participants = []
+        for descriptor in runtime.participants:
+            participants.append({
+                "participant_id": descriptor.participant_id,
+                "integration_id": descriptor.integration_id,
+                "participant_type": descriptor.participant_type,
+                "display_name": descriptor.display_name,
+                "adapter_id": descriptor.adapter_id,
+                "adapter_contract_version": descriptor.adapter_contract_version,
+                "adapter_implementation_version": descriptor.adapter_implementation_version,
+                "capabilities": list(descriptor.capabilities),
+                "input_contract_versions": list(descriptor.input_contract_versions),
+                "output_contract_versions": list(descriptor.output_contract_versions),
+                "execution_location": descriptor.execution_location,
+                "availability": descriptor.availability,
+                "availability_observed_at": descriptor.availability_observed_at,
+                "resource_requirements": dict(descriptor.resource_requirements),
+                "limits": dict(descriptor.limits),
+                "configuration_id": descriptor.configuration_id,
+                "configuration_revision_id": descriptor.configuration_revision_id,
+                "component_key": descriptor.component_key,
+                "component_version": descriptor.component_version,
+                "compliance_reference": descriptor.compliance_reference,
+            })
+        return {
+            "workspace_id": runtime.workspace_id,
+            "project_id": runtime.project_id,
+            "configuration_id": runtime.configuration_id,
+            "configuration_revision_id": runtime.revision_id,
+            "revision_hash": runtime.revision_hash,
+            "dispatch_enabled": runtime.dispatch_enabled,
+            "participants": participants,
+        }
+
+    @app.get("/api/v1/workspaces/{workspace_id}/participants/{participant_id}/availability")
+    def workspace_participant_availability(
+        workspace_id: str, participant_id: str, timeout_seconds: int = 3,
+    ):
+        """Perform bounded, ephemeral metadata preflight; never issue a completion."""
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 10:
+            raise HTTPException(status_code=422, detail="timeout_seconds must be between 1 and 10")
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        descriptor = next(
+            (item for item in runtime.participants if item.participant_id == participant_id),
+            None,
+        )
+        if descriptor is None:
+            raise HTTPException(status_code=404, detail="participant is not bound to this workspace revision")
+        bindings = {
+            getattr(bound, "participant_id", None): (adapter, bound)
+            for adapter, bound in runtime.participant_bindings
+        }
+        binding = bindings.get(participant_id)
+        if binding is None:
+            raise HTTPException(status_code=409, detail="participant binding is unavailable")
+        adapter, bound = binding
+        if descriptor.adapter_id == "evo_deterministic_verifier":
+            # This adapter is local code, not a remote service. Its presence in
+            # the freshly built immutable runtime is the only availability check.
+            return {
+                "workspace_id": runtime.workspace_id,
+                "participant_id": participant_id,
+                "availability": "available",
+                "observed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "probe_kind": "local_binding",
+                "probe_performed": False,
+                "transport_reachable": None,
+                "model_advertised": None,
+                "completion_verified": None,
+                "ephemeral": True,
+            }
+        preflight = getattr(adapter, "preflight", None)
+        if not callable(preflight):
+            raise HTTPException(status_code=501, detail="participant adapter has no metadata preflight")
+        try:
+            evidence = preflight(bound, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            # Do not return provider exception text, which may contain endpoint
+            # details or other integration diagnostics.
+            raise HTTPException(status_code=502, detail="participant metadata preflight failed safely") from exc
+        # A metadata-only model-list response cannot establish that a
+        # completion will succeed. Keep the participant unavailable when the
+        # endpoint/model is explicitly absent; otherwise completion availability
+        # remains unknown until a separately admitted operator probe verifies it.
+        state = (
+            "unavailable"
+            if evidence.transport_reachable is False or evidence.model_advertised is False
+            else "unknown"
+        )
+        return {
+            "workspace_id": runtime.workspace_id,
+            "participant_id": participant_id,
+            "availability": state,
+            "metadata_preflight": (
+                "model_advertised"
+                if evidence.transport_reachable is True and evidence.model_advertised is True
+                else "not_advertised"
+                if evidence.model_advertised is False
+                else "reachable_unverified"
+                if evidence.transport_reachable is True
+                else "unknown"
+            ),
+            "transport_reachable": evidence.transport_reachable,
+            "model_advertised": evidence.model_advertised,
+            "completion_verified": None,
+            "observed_at_utc": evidence.observed_at_utc,
+            "evidence_reference": evidence.evidence_reference,
+            "probe_kind": "metadata_only",
+            "probe_performed": True,
+            "timeout_seconds": timeout_seconds,
+            "ephemeral": True,
+        }
 
     # Seed/clear touch both SQLite stores; serialize the cross-database operation.
     demo_data_guard = threading.Lock()
@@ -602,25 +802,38 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
 
+    def _memory_scope_filter(project_id, workspace_id):
+        if project_id is None:
+            return "(project_id IS NULL AND workspace_id IS NULL)", []
+        if workspace_id is None:
+            return "((project_id IS NULL AND workspace_id IS NULL) OR (project_id=? AND workspace_id IS NULL))", [project_id]
+        return (
+            "((project_id IS NULL AND workspace_id IS NULL) OR "
+            "(project_id=? AND workspace_id IS NULL) OR (project_id=? AND workspace_id=?))",
+            [project_id, project_id, workspace_id],
+        )
+
     @app.get("/api/v1/memories")
-    def memories(q: str | None = None, status: str = "active", limit: int = 100):
+    def memories(q: str | None = None, status: str = "active", limit: int = 100,
+                 project_id: str | None = None, workspace_id: str | None = None):
         bounded = min(max(limit, 1), 200)
         if status not in {"active", "archived", "superseded"}:
             raise HTTPException(status_code=422, detail="Invalid memory status")
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        scope_sql, scope_params = _memory_scope_filter(project_id, workspace_id)
         with store.lock:
+            params = [status] + scope_params
+            sql = "SELECT * FROM memories WHERE status=? AND " + scope_sql
             if q and q.strip():
                 pattern = "%" + q.strip().replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
-                rows = store.db.execute(
-                    """SELECT * FROM memories WHERE status=? AND
-                       (content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')
-                       ORDER BY updated_at DESC LIMIT ?""",
-                    (status, pattern, pattern, pattern, bounded),
-                ).fetchall()
-            else:
-                rows = store.db.execute(
-                    "SELECT * FROM memories WHERE status=? ORDER BY updated_at DESC LIMIT ?",
-                    (status, bounded),
-                ).fetchall()
+                sql += " AND (content LIKE ? ESCAPE '!' OR category LIKE ? ESCAPE '!' OR tags_json LIKE ? ESCAPE '!')"
+                params.extend((pattern, pattern, pattern))
+            sql += " ORDER BY updated_at DESC LIMIT ?"
+            params.append(bounded)
+            rows = store.db.execute(sql, params).fetchall()
         return [{
             "id": row["id"], "content": row["content"], "category": row["category"],
             "tags": json.loads(row["tags_json"] or "[]"), "source": row["source"],
@@ -630,12 +843,18 @@ def create_app(config_path="config.toml", provider_name=None):
         } for row in rows]
 
     @app.get("/api/v1/memories/review")
-    def memory_review(limit: int = 20):
+    def memory_review(limit: int = 20, project_id: str | None = None, workspace_id: str | None = None):
         bounded = min(max(limit, 1), 50)
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        scope_sql, scope_params = _memory_scope_filter(project_id, workspace_id)
         with store.lock:
             rows = store.db.execute(
-                """SELECT id,content,category,source,confidence,updated_at
-                   FROM memories WHERE status='active' ORDER BY updated_at DESC LIMIT 500"""
+                "SELECT id,content,category,source,confidence,updated_at FROM memories "
+                "WHERE status='active' AND " + scope_sql + " ORDER BY updated_at DESC LIMIT 500",
+                scope_params,
             ).fetchall()
         suggestions = find_duplicate_candidates(rows, limit=bounded)
         return {
@@ -648,10 +867,15 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
     @app.get("/api/v1/memories/search")
-    def memory_search_preview(q: str, limit: int = 8):
+    def memory_search_preview(q: str, limit: int = 8, project_id: str | None = None, workspace_id: str | None = None):
         if not q.strip():
             raise HTTPException(status_code=422, detail="Search query cannot be empty")
-        rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False)
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            rows = store.search_memories(q, min(max(limit, 1), 20), record_access=False,
+                                        project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             "query": q, "count": len(rows),
             "retrieval": "hybrid lexical (FTS5 + LIKE candidates; no embeddings)",
@@ -667,15 +891,22 @@ def create_app(config_path="config.toml", provider_name=None):
     @app.post("/api/v1/memories", status_code=201)
     def create_memory(payload: MemoryCreate):
         try:
+            project_id, workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
             memory_id = store.add_memory(payload.content, payload.category, source=payload.source,
-                                         confidence=payload.confidence)
+                                         confidence=payload.confidence, project_id=project_id,
+                                         workspace_id=workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"id": memory_id}
 
     @app.get("/api/v1/memory-candidates")
-    def memory_candidates(limit: int = 100):
-        rows = store.list_memory_candidates("pending", min(max(limit, 1), 200))
+    def memory_candidates(limit: int = 100, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            rows = store.list_memory_candidates("pending", min(max(limit, 1), 200),
+                                                 project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return [{
             "id": row["id"], "content": row["content"], "category": row["category"],
             "source": row["source"], "confidence": row["confidence"],
@@ -683,30 +914,77 @@ def create_app(config_path="config.toml", provider_name=None):
         } for row in rows]
 
     @app.post("/api/v1/memory-candidates/{candidate_id}/review")
-    def review_memory_candidate(candidate_id: str, payload: AgentApproval):
-        result = store.review_memory_candidate(candidate_id, payload.approved)
+    def review_memory_candidate(candidate_id: str, payload: AgentApproval,
+                                project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            result = store.review_memory_candidate(candidate_id, payload.approved,
+                                                   project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         if result is None:
             raise HTTPException(status_code=404, detail="Pending memory candidate not found")
         return {"accepted": bool(payload.approved), "memory_id": result if payload.approved else None}
 
-
     @app.post("/api/v1/memories/{memory_id}/supersede")
-    def supersede_memory(memory_id: str, payload: MemorySupersede):
+    def supersede_memory(memory_id: str, payload: MemorySupersede,
+                         project_id: str | None = None, workspace_id: str | None = None):
         try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
             replacement_id = store.supersede_memory(
                 memory_id, payload.content, source="user", confidence=1.0,
-                reason=payload.reason,
-            )
+                reason=payload.reason, project_id=project_id, workspace_id=workspace_id)
         except ValueError as exc:
-            raise HTTPException(status_code=404 if "not found" in str(exc).lower() else 422,
-                                detail=str(exc)) from exc
+            message = str(exc)
+            raise HTTPException(status_code=404 if "not found" in message.lower() else 422,
+                                detail=message) from exc
         return {"id": replacement_id, "supersedes": memory_id}
 
     @app.post("/api/v1/memories/{memory_id}/archive")
-    def archive_memory(memory_id: str):
-        if not store.archive_memory(memory_id):
+    def archive_memory(memory_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            project_id, workspace_id = store.validate_scope(project_id, workspace_id)
+            archived = store.archive_memory(memory_id, project_id=project_id, workspace_id=workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not archived:
             raise HTTPException(status_code=404, detail="Active memory not found")
         return {"archived": True, "id": memory_id}
+
+
+
+    def _validated_api_scope(project_id=None, workspace_id=None):
+        try:
+            return store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _run_visible_in_scope(row, project_id, workspace_id):
+        from .scope_validation import owned_scope_visible
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        record_project = metadata.get("project_id")
+        record_workspace = metadata.get("workspace_id")
+        if record_workspace is not None and record_project is None:
+            return False
+        try:
+            record_project, record_workspace = store.validate_scope(record_project, record_workspace)
+        except ValueError:
+            return False
+        return owned_scope_visible(record_project, record_workspace, project_id, workspace_id)
+
+    def _plan_visible_in_scope(plan, project_id, workspace_id):
+        from .scope_validation import owned_scope_visible
+        try:
+            record_project, record_workspace = store.validate_scope(
+                plan.get("project_id"), plan.get("workspace_id"))
+        except ValueError:
+            return False
+        return owned_scope_visible(record_project, record_workspace, project_id, workspace_id)
 
     def serialize_run(row):
         try:
@@ -720,14 +998,19 @@ def create_app(config_path="config.toml", provider_name=None):
         }
 
     @app.get("/api/v1/agents")
-    def agent_runs(limit: int = 50, status: str | None = None):
-        return [serialize_run(row) for row in store.list_agent_runs(min(max(limit, 1), 100), status)]
+    def agent_runs(limit: int = 50, status: str | None = None,
+                   project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        rows = store.list_agent_runs(min(max(limit, 1), 100), status, project_id=project_id, workspace_id=workspace_id)
+        return [serialize_run(row) for row in rows]
 
-    @app.get("/api/v1/agents/{run_id}")
-    def agent_run(run_id: str):
+    @app.get("/api/v1/agents/{run_id:uuid}")
+    def agent_run(run_id: UUID, project_id: str | None = None, workspace_id: str | None = None):
+        run_id = str(run_id)
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         row = store.get_agent_run(run_id)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Agent run not found")
+        if row is None or not _run_visible_in_scope(row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         result = serialize_run(row)
         with lab_db.lock:
             task = background_agent.get(lab_db.connection, run_id)
@@ -752,9 +1035,14 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures.pop(run_id, None)
 
     @app.get("/api/v1/agents/plans")
-    def agent_plans(limit: int = 50):
+    def agent_plans(limit: int = 50, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
-            return orchestration.list_plans(lab_db.connection, limit)
+            rows = orchestration.list_plans(lab_db.connection, min(max(limit, 1), 100),
+                                           project_id=project_id, workspace_id=workspace_id, store=store)
+        return [dict(row) for row in rows]
+
+
 
     @app.post("/api/v1/agents/plans", status_code=201)
     def propose_agent_plan(payload: AgentPlanCreate):
@@ -762,15 +1050,24 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         try:
+            effective_allowed_commands = runtime.effective_allowed_commands
+        except CommandPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        invocation = _record_workspace_invocation(runtime, "plan_proposal")
+        _require_workspace_dispatch(runtime)
+        try:
             proposal = orchestration.propose_with_model(
-                assistant.provider, payload.request, str(workspace), max_tokens=min(config.max_tokens, 3000),
-                allowed_commands=config.allowed_commands)
+                runtime.assistant.provider, payload.request, str(workspace), max_tokens=min(runtime.assistant.config.max_tokens, 3000),
+                allowed_commands=effective_allowed_commands)
             with lab_db.lock:
                 plan = orchestration.create_plan(
                     lab_db.connection, payload.request, workspace_id, str(workspace), proposal,
-                    allowed_commands=config.allowed_commands)
+                    allowed_commands=effective_allowed_commands,
+                    project_id=binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+                    store=store, proposal_invocation_id=invocation["invocation_id"])
             return plan
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -778,22 +1075,27 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=502, detail=f"Unable to generate a plan: {type(exc).__name__}: {str(exc)[:300]}") from exc
 
     @app.get("/api/v1/agents/plans/{plan_id}")
-    def agent_plan_detail(plan_id: str):
+    def agent_plan_detail(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
-        if plan is None:
-            raise HTTPException(status_code=404, detail="Agent plan not found")
+        if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
         return plan
 
     @app.post("/api/v1/agents/plans/{plan_id}/approve")
-    def approve_agent_plan(plan_id: str):
+    def approve_agent_plan(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         try:
             with lab_db.lock:
-                if orchestration.get_plan(lab_db.connection, plan_id) is None:
-                    raise HTTPException(status_code=404, detail="Agent plan not found")
+                plan = orchestration.get_plan(lab_db.connection, plan_id)
+                if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+                    raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
                 return orchestration.approve_plan(lab_db.connection, plan_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 
     def _finalize_agent_run(run_id, outcome, reason, plan_id=None):
         """Record one durable decision, then mirror it into dependent records.
@@ -813,29 +1115,58 @@ def create_app(config_path="config.toml", provider_name=None):
         return decision
 
     @app.post("/api/v1/agents/plans/{plan_id}/execute", status_code=202)
-    def execute_agent_plan(plan_id: str):
+    def execute_agent_plan(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
-            if plan is None:
-                raise HTTPException(status_code=404, detail="Agent plan not found")
+            if plan is None or not _plan_visible_in_scope(plan, project_id, workspace_id):
+                raise HTTPException(status_code=404, detail="Agent plan not found in this scope")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
         workspace_id = plan.get("workspace_id")
         if not workspace_id:
             raise HTTPException(status_code=409, detail="Legacy plan has no registered workspace binding and cannot be executed")
         binding = _resolve_workspace_for_execution(workspace_id)
+        runtime = _build_workspace_runtime_for_request(workspace_id)
         workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
+        plan_project_id = plan.get("project_id")
+        binding_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
+        if plan_project_id != binding_project_id:
+            raise HTTPException(status_code=409, detail="Plan workspace binding does not match its persisted project scope")
+        try:
+            effective_allowed_commands = runtime.effective_allowed_commands
+        except CommandPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from evo_experiments.execution import command_allowed
         with lab_db.lock:
             plan = orchestration.get_plan(lab_db.connection, plan_id)
             if plan is None:
                 raise HTTPException(status_code=404, detail="Agent plan not found")
             if plan["status"] != "approved":
                 raise HTTPException(status_code=409, detail="Approve the plan before execution")
+            for step in plan["steps"]:
+                commands = step.get("verification_commands") or []
+                if not commands:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' has no configured verification command and cannot be executed safely.",
+                    )
+                if any(not command_allowed(command, effective_allowed_commands) for command in commands):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
+                    )
+            invocation = _record_workspace_invocation(runtime, "plan_execution")
+            _require_workspace_dispatch(runtime)
             request_text = plan["request"]
             run_id = store.start_agent_run("orchestrated", {
-                "workspace_id": workspace_id, "workspace": str(workspace_path), "model": config.model, "base_url": config.base_url,
+                "invocation_id": invocation["invocation_id"],
+                "proposal_invocation_id": plan.get("proposal_invocation_id"),
+                "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+                "workspace": str(workspace_path), "model": runtime.assistant.config.model,
+                "base_url": runtime.assistant.config.base_url,
                 "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
             })
             background_agent.create(lab_db.connection, run_id)
@@ -871,9 +1202,15 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         binding = _resolve_workspace_for_execution(payload.workspace_id)
         workspace_id = payload.workspace_id.strip()
+        runtime = _build_workspace_runtime_for_request(workspace_id)
+        invocation = _record_workspace_invocation(runtime, "coding_agent")
+        _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_id = store.start_agent_run("coding", {
-            "workspace_id": workspace_id, "workspace": str(workspace), "model": config.model, "base_url": config.base_url,
+            "invocation_id": invocation["invocation_id"],
+            "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+            "workspace": str(workspace), "model": runtime.assistant.config.model,
+            "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
         })
         stop_event = threading.Event()
@@ -897,10 +1234,14 @@ def create_app(config_path="config.toml", provider_name=None):
         import uuid
         worker_token = uuid.uuid4().hex
         workspace = None
+        authoritative_workspace_id = None
+        authoritative_project_id = None
         if isinstance(workspace_id, str) and workspace_id.strip():
             try:
                 binding = workspace_registry.resolve_executable_workspace(store, workspace_id)
                 workspace = binding["path"] if isinstance(binding, dict) else binding.path
+                authoritative_workspace_id = binding.get("workspace_id") if isinstance(binding, dict) else getattr(binding, "workspace_id", None)
+                authoritative_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
             except Exception as exc:
                 _finalize_agent_run(run_id, "failed", f"Workspace validation failed: {exc}", plan_id)
                 with agent_registry_guard:
@@ -913,6 +1254,72 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_stop_events.pop(run_id, None)
                 agent_futures.pop(run_id, None)
             return
+
+        run_record = store.get_agent_run(run_id)
+        if run_record is None:
+            _finalize_agent_run(run_id, "failed", "Agent run record is missing", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+        run_metadata = {}
+        metadata_error = None
+        try:
+            decoded = __import__("json").loads(run_record["metadata_json"] or "{}")
+        except Exception:
+            decoded = None
+            metadata_error = "Agent run metadata is not valid JSON"
+        if metadata_error is None and not isinstance(decoded, dict):
+            metadata_error = "Agent run metadata is not a JSON object"
+        if metadata_error is not None:
+            _finalize_agent_run(run_id, "failed", metadata_error, plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+        run_metadata = decoded
+        metadata_workspace_id = run_metadata.get("workspace_id")
+        metadata_project_id = run_metadata.get("project_id")
+        if "workspace_id" not in run_metadata or "project_id" not in run_metadata:
+            _finalize_agent_run(run_id, "failed", "Agent run metadata is missing required project/workspace scope", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+        if (metadata_workspace_id != authoritative_workspace_id
+                or metadata_project_id != authoritative_project_id):
+            _finalize_agent_run(
+                run_id, "failed",
+                "Agent run metadata scope does not match the resolved workspace binding",
+                plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+
+        try:
+            runtime = build_workspace_runtime(store, config, workspace_id)
+            runtime.assert_current(store)
+            invocation_id = run_metadata.get("invocation_id")
+            if not isinstance(invocation_id, str) or not invocation_id:
+                raise RuntimeSnapshotError("Agent run has no runtime invocation snapshot reference")
+            assert_runtime_matches_snapshot(
+                store, runtime, invocation_id,
+                expected_kind="plan_execution" if plan_id else "coding_agent",
+            )
+            runtime.require_dispatch_enabled()
+            effective_allowed_commands = runtime.effective_allowed_commands
+        except (RuntimeBindingError, RuntimeSnapshotError, RegistryDispatchDisabledError, CommandPolicyError) as exc:
+            _finalize_agent_run(
+                run_id, "failed", f"Workspace runtime binding is not dispatchable: {exc}", plan_id)
+            with agent_registry_guard:
+                agent_stop_events.pop(run_id, None)
+                agent_futures.pop(run_id, None)
+            return
+
+        conversation_project_id = authoritative_project_id
+        conversation_workspace_id = authoritative_workspace_id
+
         with lab_db.lock:
             claimed = background_agent.claim(lab_db.connection, run_id, worker_token)
         if not claimed:
@@ -953,12 +1360,18 @@ def create_app(config_path="config.toml", provider_name=None):
             return bool(item["approved"]) and not stop_event.is_set() and not shutting_down.is_set()
 
         try:
-            conversation_id = assistant.new_conversation("Agent: " + request_text[:80])
+            conversation_id = runtime.assistant.new_conversation(
+                "Agent: " + request_text[:80],
+                project_id=conversation_project_id,
+                workspace_id=conversation_workspace_id,
+            )
             store.update_agent_run_metadata(run_id, {"conversation_id": conversation_id})
-            agent = CodingAgent(assistant, workspace, config.allowed_commands)
+            agent = CodingAgent(runtime.assistant, workspace, effective_allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
-                          stop_event=stop_event, on_progress=progress)
+                          stop_event=stop_event, on_progress=progress,
+                          project_id=conversation_project_id,
+                          workspace_id=conversation_workspace_id)
             else:
                 with lab_db.lock:
                     plan = orchestration.get_plan(lab_db.connection, plan_id)
@@ -981,7 +1394,9 @@ def create_app(config_path="config.toml", provider_name=None):
                         "\n\nInspect before changing files. Every write and command still requires user approval."
                     )
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
-                        stop_event=stop_event, on_progress=progress, finalize_run=False)
+                        stop_event=stop_event, on_progress=progress, finalize_run=False,
+                        project_id=conversation_project_id,
+                        workspace_id=conversation_workspace_id)
                     step_status = step_result.get("status")
                     agent_verification = step_result.get("verification", "not_configured")
                     if agent_verification not in {"passed", "failed", "not_run", "not_required", "not_configured"}:
@@ -994,6 +1409,12 @@ def create_app(config_path="config.toml", provider_name=None):
                         for command in commands:
                             if stop_event.is_set() or shutting_down.is_set():
                                 break
+                            from evo_experiments.execution import command_allowed
+                            if not command_allowed(command, effective_allowed_commands):
+                                with lab_db.lock:
+                                    orchestration.record_verification(lab_db.connection, plan_id, step["id"], command, "failed", None, "", "Verification command is not allowed by the effective project command policy.")
+                                verification_status = "failed"
+                                continue
                             approved = approval("run_command", {"argv": command, "timeout_seconds": 120})
                             if not approved:
                                 with lab_db.lock:
@@ -1001,7 +1422,23 @@ def create_app(config_path="config.toml", provider_name=None):
                                 verification_status = "failed"
                                 continue
                             try:
-                                result = agent.workspace.run(command, 120)
+                                from evo_experiments.execution import initialize_execution, register_managed_execution, run_execution
+                                with lab_db.lock:
+                                    initialize_execution(lab_db.connection)
+                                    execution = register_managed_execution(
+                                        lab_db.connection,
+                                        workspace=str(agent.workspace.root),
+                                        argv=list(command),
+                                        allowed_commands=agent.workspace.allowed_commands,
+                                        timeout_seconds=120,
+                                        agent_run_id=run_id,
+                                        workspace_id=conversation_workspace_id,
+                                        project_id=conversation_project_id,
+                                        approval_evidence={"approval": "approved", "approval_source": "plan_verification_approval", "approved_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "source": "plan_verification", "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(list(command), sort_keys=True).encode("utf-8")).hexdigest(), "policy": [list(p) for p in agent.workspace.allowed_commands]},
+                                        source_revision=None,
+                                    )
+                                execution_id = execution["id"]
+                                result = run_execution(lab_db.connection, lab_db.lock, execution_id)
                                 status = "passed" if result.get("returncode") == 0 else "failed"
                                 with lab_db.lock:
                                     orchestration.record_verification(
@@ -1046,9 +1483,13 @@ def create_app(config_path="config.toml", provider_name=None):
                 agent_futures.pop(run_id, None)
 
     @app.post("/api/v1/agents/{run_id}/cancel")
-    def cancel_agent(run_id: str):
-        # Same lock order as worker finalization prevents a late cancellation
-        # from racing a completed terminal state.
+    def cancel_agent(run_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
+        queued = False
+        plan_id = None
         with agent_registry_guard:
             with lab_db.lock:
                 task = background_agent.get(lab_db.connection, run_id)
@@ -1057,32 +1498,59 @@ def create_app(config_path="config.toml", provider_name=None):
                 previous_status = task["status"]
                 if not background_agent.request_cancel(lab_db.connection, run_id):
                     return {"cancelled": False, "status": task["status"]}
-                if previous_status == "queued":
-                    background_agent.transition(lab_db.connection, run_id, "cancelled", {"reason": "Cancelled before worker claim"})
-                    store.finish_agent_run(run_id, "cancelled", "Cancelled before execution began.")
+                from evo_experiments.execution import managed_executions_for_parent, request_cancel_managed_execution
+                for execution in managed_executions_for_parent(lab_db.connection, run_id):
+                    if execution.get("status") in {"queued", "launching", "running", "cancel_requested"}:
+                        try:
+                            request_cancel_managed_execution(lab_db.connection, execution["id"])
+                        except ValueError:
+                            pass
+                queued = previous_status == "queued"
+                if queued:
                     plan_row = lab_db.connection.execute("SELECT id FROM agent_plans WHERE run_id=?", (run_id,)).fetchone()
-                    if plan_row:
-                        orchestration.finish_plan(lab_db.connection, plan_row["id"], "cancelled",
-                                                  "Cancelled before worker claim.")
+                    plan_id = plan_row["id"] if plan_row else None
             stop_event = agent_stop_events.get(run_id)
             if stop_event:
                 stop_event.set()
+        decision = None
+        if queued:
+            decision = _finalize_agent_run(run_id, "cancelled", "Cancelled before execution began.", plan_id)
+        else:
+            with lab_db.lock:
+                decision = lifecycle.get_decision(lab_db.connection, run_id)
         with approval_guard:
             for item in pending_approvals.values():
                 if item["run_id"] == run_id:
                     item["approved"] = False
                     item["decision"].set()
-        return {"cancelled": True, "status": "cancelled" if previous_status == "queued" else "cancel_requested"}
+        with lab_db.lock:
+            latest_decision = lifecycle.get_decision(lab_db.connection, run_id)
+        if latest_decision is not None:
+            outcome = latest_decision["outcome"]
+            return {"cancelled": outcome == "cancelled", "status": outcome}
+        if queued:
+            return {"cancelled": True, "status": "cancelled"}
+        return {"cancelled": True, "status": "cancel_requested"}
 
     @app.get("/api/v1/agents/{run_id}/events")
-    def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200):
+    def agent_background_events(run_id: str, after_id: int = 0, limit: int = 200,
+                                 project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         with lab_db.lock:
             if background_agent.get(lab_db.connection, run_id) is None:
                 raise HTTPException(status_code=404, detail="Background agent task not found")
             return background_agent.events(lab_db.connection, run_id, after_id, limit)
 
     @app.post("/api/v1/agents/{run_id}/approval")
-    def decide_agent_approval(run_id: str, payload: AgentApproval):
+    def decide_agent_approval(run_id: str, payload: AgentApproval,
+                              project_id: str | None = None, workspace_id: str | None = None):
+        project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
+        run_row = store.get_agent_run(run_id)
+        if run_row is None or not _run_visible_in_scope(run_row, project_id, workspace_id):
+            raise HTTPException(status_code=404, detail="Agent run not found in this scope")
         with approval_guard:
             match = next(((key, value) for key, value in pending_approvals.items()
                           if value["run_id"] == run_id), None)
@@ -1094,8 +1562,12 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"decided": True, "approved": payload.approved}
 
     @app.get("/api/v1/conversations")
-    def conversations(limit: int = 30, q: str | None = None):
-        rows = store.list_conversations(min(max(limit, 1), 100), query=q)
+    def conversations(limit: int = 30, q: str | None = None, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        rows = store.list_conversations(min(max(limit, 1), 100), query=q, project_id=validated_project_id, workspace_id=validated_workspace_id)
         return [
             {
                 "id": row["id"],
@@ -1107,13 +1579,27 @@ def create_app(config_path="config.toml", provider_name=None):
         ]
 
     @app.post("/api/v1/conversations", status_code=201)
-    def create_conversation():
-        return {"id": assistant.new_conversation(), "title": "New conversation"}
+    def create_conversation(payload: ConversationCreate | None = None, project_id: str | None = None, workspace_id: str | None = None):
+        data = payload or ConversationCreate()
+        selected_project = project_id if project_id is not None else data.project_id
+        selected_workspace = workspace_id if workspace_id is not None else data.workspace_id
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(selected_project, selected_workspace)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        conversation_id = assistant.new_conversation(data.title or "New conversation", project_id=validated_project_id, workspace_id=validated_workspace_id)
+        return {"id": conversation_id, "title": (data.title or "New conversation")[:120]}
 
     @app.patch("/api/v1/conversations/{conversation_id}")
-    def rename_conversation(conversation_id: str, payload: ConversationUpdate):
+    def rename_conversation(conversation_id: str, payload: ConversationUpdate, project_id: str | None = None, workspace_id: str | None = None):
         try:
-            updated = store.rename_conversation(conversation_id, payload.title)
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        try:
+            updated = store.rename_conversation(conversation_id, payload.title, project_id=validated_project_id, workspace_id=validated_workspace_id)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if not updated:
@@ -1121,8 +1607,12 @@ def create_app(config_path="config.toml", provider_name=None):
         return {"id": conversation_id, "title": payload.title.strip()}
 
     @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
-    def delete_conversation(conversation_id: str):
-        if store.get_conversation(conversation_id) is None:
+    def delete_conversation(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         # The reservation check and deletion must be atomic with respect to chat
         # registration. Queued turns are reserved before executor submission.
@@ -1130,13 +1620,17 @@ def create_app(config_path="config.toml", provider_name=None):
             entry = conversation_locks.get(conversation_id)
             if entry and entry["users"]:
                 raise HTTPException(status_code=409, detail="Conversation is currently active")
-            if not store.delete_conversation(conversation_id):
+            if not store.delete_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id):
                 raise HTTPException(status_code=404, detail="Conversation not found")
         return None
 
     @app.get("/api/v1/conversations/{conversation_id}/messages")
-    def messages(conversation_id: str):
-        if store.get_conversation(conversation_id) is None:
+    def messages(conversation_id: str, project_id: str | None = None, workspace_id: str | None = None):
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(project_id, workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
         return [
             {
@@ -1144,7 +1638,7 @@ def create_app(config_path="config.toml", provider_name=None):
                 "content": row["content"],
                 "created_at": row["created_at"],
             }
-            for row in store.get_messages(conversation_id, 500)
+            for row in store.get_messages(conversation_id, 500, project_id=validated_project_id, workspace_id=validated_workspace_id)
             if row["role"] in {"user", "assistant"}
         ]
 
@@ -1156,12 +1650,33 @@ def create_app(config_path="config.toml", provider_name=None):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
 
+        try:
+            validated_project_id, validated_workspace_id = store.validate_scope(payload.project_id, payload.workspace_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if validated_workspace_id is not None and payload.conversation_id is not None:
+            with locks_guard:
+                if store.get_conversation(
+                    payload.conversation_id,
+                    project_id=validated_project_id,
+                    workspace_id=validated_workspace_id,
+                ) is None:
+                    raise HTTPException(status_code=404, detail="Conversation not found")
+        runtime = None
+        invocation_id = None
+        if validated_workspace_id is not None:
+            runtime = _build_workspace_runtime_for_request(validated_workspace_id)
+            invocation = _record_workspace_invocation(runtime, "workspace_chat")
+            invocation_id = invocation["invocation_id"]
+            _require_workspace_dispatch(runtime)
+        turn_assistant = runtime.assistant if runtime is not None else assistant
+
         conversation_id = payload.conversation_id
         if conversation_id is None:
             # Create and reserve in the same critical section too, so even a
             # second local client cannot delete the new conversation in between.
             with locks_guard:
-                conversation_id = assistant.new_conversation()
+                conversation_id = turn_assistant.new_conversation(project_id=validated_project_id, workspace_id=validated_workspace_id)
                 reservation = {"lock": threading.Lock(), "users": 1}
                 conversation_locks[conversation_id] = reservation
         else:
@@ -1169,7 +1684,7 @@ def create_app(config_path="config.toml", provider_name=None):
             # delete can therefore happen either before this check or after the
             # reservation is released, never in the middle.
             with locks_guard:
-                if store.get_conversation(conversation_id) is None:
+                if store.get_conversation(conversation_id, project_id=validated_project_id, workspace_id=validated_workspace_id) is None:
                     raise HTTPException(status_code=404, detail="Conversation not found")
                 reservation = conversation_locks.get(conversation_id)
                 if reservation is None:
@@ -1201,11 +1716,14 @@ def create_app(config_path="config.toml", provider_name=None):
                     with reservation["lock"]:
                         if shutting_down.is_set():
                             raise RuntimeError("Evo is shutting down")
-                        result = assistant.turn(
+                        result = turn_assistant.turn(
                             conversation_id, text,
                             on_token=lambda token: publish(
                                 {"event": "token", "data": token}
                             ),
+                            project_id=validated_project_id,
+                            workspace_id=validated_workspace_id,
+                            invocation_id=invocation_id,
                         )
                     publish({
                         "event": "complete",
@@ -1293,4 +1811,5 @@ def create_app(config_path="config.toml", provider_name=None):
         assistant.close()
         lab_db.close()
 
+    app.state.run_agent = run_agent
     return app

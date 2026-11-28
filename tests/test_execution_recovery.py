@@ -17,7 +17,7 @@ from evo_experiments.scheduler import create_job, dispatch_jobs, get_job, initia
 class FakeProcess:
     def __init__(self, *args, **kwargs):
         self.pid = 999999
-        self.returncode = 0
+        self.returncode = None
         self.stdout = io.BytesIO(b"worker-ok\n")
         self.stderr = io.BytesIO(b"")
         self.killed = False
@@ -30,6 +30,26 @@ class FakeProcess:
 
     def kill(self):
         self.killed = True
+
+
+
+def _pid_terminated(pid):
+    """Return True if pid is missing or a zombie (state Z)."""
+    try:
+        with open(f"/proc/{pid}/stat", "r") as handle:
+            stat = handle.read()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        # Race or permission; treat as not provably terminated.
+        return False
+    if ")" not in stat:
+        return False
+    parts = stat.rsplit(")", 1)[-1].split()
+    if not parts:
+        return False
+    state = parts[0]
+    return state == "Z"
 
 
 class ExecutionRecoveryTests(unittest.TestCase):
@@ -81,14 +101,16 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         with patch("evo_experiments.execution.subprocess.Popen", FakeProcess), \
              patch("evo_experiments.execution._persist", side_effect=failing_persist), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg"), \
+             patch("evo_experiments.execution.os.killpg") as kill:
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIn("pid persistence failed", result["error"])
         self.assertIsNone(result["pid"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
-        killpg.assert_called()
+        kill.assert_called()
 
     def test_recovery_of_launching_execution_never_signals(self):
         job = self.reserve("launching")
@@ -96,7 +118,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.db.execute("UPDATE workload_executions SET status='launching', pid=NULL WHERE id=?",
                         (record["id"],))
         self.db.commit()
-        with patch("evo_experiments.execution.os.killpg") as killpg:
+        with patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg") as kill:
             recovered = recover_interrupted_executions(self.db)
         self.assertEqual(recovered, [record["id"]])
         result = get_execution(self.db, record["id"])
@@ -104,7 +127,7 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIsNone(result["pid"])
         self.assertIn("did not signal", result["error"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
-        killpg.assert_not_called()
+        kill.assert_not_called()
 
     def test_recovery_of_running_execution_preserves_pid(self):
         job = self.reserve("running")
@@ -155,7 +178,9 @@ class ExecutionRecoveryTests(unittest.TestCase):
                     raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
                 return 0
 
-        with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
+        with patch("evo_experiments.execution.subprocess.Popen", PermissionProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg"), \
+             patch("evo_experiments.execution.os.killpg", side_effect=PermissionError("not permitted")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -205,7 +230,8 @@ class ExecutionRecoveryTests(unittest.TestCase):
             def poll(self):
                 return None
 
-        with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
+        with patch("evo_experiments.execution.subprocess.Popen", MissingProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg", side_effect=ProcessLookupError("gone")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -227,7 +253,9 @@ class ExecutionRecoveryTests(unittest.TestCase):
             def poll(self):
                 return None
 
-        with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
+        with patch("evo_experiments.execution.subprocess.Popen", GenericOsProcess),              patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg"), \
+             patch("evo_experiments.execution.os.killpg", side_effect=OSError("permission-ish")):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
@@ -254,9 +282,10 @@ class ExecutionRecoveryTests(unittest.TestCase):
             return original_get_job(connection, job_id)
 
         with patch("evo_experiments.execution.get_job", side_effect=failing_get_job), \
-             patch("evo_experiments.execution.os.killpg") as killpg:
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg") as kill:
             recovered = recover_interrupted_executions(self.db)
-        killpg.assert_not_called()
+        kill.assert_not_called()
         self.assertEqual(len(recovered), 1)
         statuses = {get_execution(self.db, record_one["id"])["status"],
                     get_execution(self.db, record_two["id"])["status"]}
@@ -378,6 +407,804 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertIn("Launch intent could not be persisted", result["error"])
         self.assertEqual(get_job(self.db, job["id"])["status"], "failed")
 
+    def test_legacy_schema_migration_preserves_rows_and_adds_columns(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-exec','legacy-job','["echo","ok"]','[]','/tmp','completed',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+        from evo_experiments.execution import initialize_execution
+        initialize_execution(db)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertIn("agent_run_id", columns)
+        self.assertIn("cancel_requested", columns)
+        self.assertIn("approval_evidence_json", columns)
+        row = db.execute("SELECT * FROM workload_executions WHERE id='legacy-exec'").fetchone()
+        self.assertEqual(row["job_id"], "legacy-job")
+        self.assertEqual(row["status"], "completed")
+        self.assertEqual(row["cancel_requested"], 0)
+        # idempotent
+        initialize_execution(db)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM workload_executions").fetchone()[0], 1)
+        db.close()
+
+    def test_terminal_execution_is_not_overwritten_by_cancel_finalization(self):
+        job = self.reserve("terminal-guard")
+        record = self.register(job)
+        self.db.execute("UPDATE workload_executions SET status='completed', returncode=0 WHERE id=?", (record["id"],))
+        self.db.commit()
+        from evo_experiments.execution import _finalize_cancelled_execution
+        _finalize_cancelled_execution(self.db, self.lock, record["id"], record, 0.0, 0.0)
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+
+    def test_agent_approval_evidence_is_strict_and_command_bound(self):
+        from evo_experiments.execution import register_managed_execution
+        store_db = self.db
+        argv = ["python", "-c", "print('ok')"]
+        allowed = [["python", "-c"]]
+        # missing evidence
+        with self.assertRaises(ValueError):
+            register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                      agent_run_id="run-1", approval_evidence=None)
+        valid = {
+            "approval": "approved",
+            "approval_source": "user",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(argv, sort_keys=True).encode()).hexdigest(),
+            "policy": allowed,
+        }
+        rec = register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                        agent_run_id="run-1", approval_evidence=valid)
+        self.assertEqual(rec["approval_evidence"]["argv_sha256"], valid["argv_sha256"])
+        # mismatched hash
+        bad = dict(valid, argv_sha256="0" * 64)
+        with self.assertRaises(ValueError):
+            register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                      agent_run_id="run-2", approval_evidence=bad)
+        # scheduler compatibility: no agent run, no evidence required
+        job = self.reserve("approval-compat")
+        sched_rec = register_managed_execution(store_db, workspace="/tmp", argv=argv, allowed_commands=allowed,
+                                             job_id=job["id"])
+        self.assertEqual(sched_rec["approval_evidence"], {})
+
+    def test_cancelled_execution_does_not_overwrite_terminal_result(self):
+        job = self.reserve("cancel-race")
+        record = self.register(job)
+        self.db.execute("UPDATE workload_executions SET status='completed', returncode=0, cancel_requested=1 WHERE id=?",
+                        (record["id"],))
+        self.db.commit()
+        from evo_experiments.execution import request_cancel_managed_execution
+        result = request_cancel_managed_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(get_execution(self.db, record["id"])["status"], "completed")
+
+    def test_migration_preserves_job_id_nullability_and_indexes(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-null','legacy-job','["echo","ok"]','[]','/tmp','queued',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+        from evo_experiments.execution import initialize_execution
+        initialize_execution(db)
+        columns = {row[1]: row for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertEqual(columns["job_id"][3], 0)
+        indexes = {row[1] for row in db.execute("PRAGMA index_list(workload_executions)").fetchall()}
+        self.assertIn("idx_workload_executions_agent_run", indexes)
+        info = db.execute("PRAGMA index_info(idx_workload_executions_agent_run)").fetchall()
+        self.assertEqual([row[2] for row in info], ["agent_run_id"])
+        self.assertIn("idx_workload_executions_job", indexes)
+        info = db.execute("PRAGMA index_info(idx_workload_executions_job)").fetchall()
+        self.assertEqual([row[2] for row in info], ["job_id"])
+        self.assertIn("idx_workload_executions_status", indexes)
+        info = db.execute("PRAGMA index_info(idx_workload_executions_status)").fetchall()
+        self.assertEqual([row[2] for row in info], ["status", "created_at"])
+        db.close()
+
+    def test_natural_completion_before_cancellation_is_not_relabelled(self):
+        job = self.reserve("natural-completion-race")
+        record = self.register(job)
+
+        class CompletingProcess(FakeProcess):
+            def wait(self, timeout=None):
+                # Simulate the process exiting successfully before cancellation is observed.
+                self.db.execute("UPDATE workload_executions SET cancel_requested=1 WHERE id=?", (record["id"],))
+                self.db.commit()
+                self.returncode = 0
+                return 0
+
+        CompletingProcess.db = self.db
+        with patch("evo_experiments.execution.subprocess.Popen", CompletingProcess), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg") as kill:
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["returncode"], 0)
+
+    def test_cancellation_while_running_terminates_owned_process(self):
+        job = self.reserve("cancel-running")
+        record = self.register(job)
+
+        import threading
+        class RunningProcess(FakeProcess):
+            started = threading.Event()
+            cancelled = threading.Event()
+
+            def wait(self, timeout=None):
+                self.started.set()
+                if self.cancelled.wait(timeout if timeout is not None else None):
+                    self.returncode = -15
+                    return self.returncode
+                raise __import__("subprocess").TimeoutExpired(cmd="x", timeout=timeout)
+
+            def poll(self):
+                return None
+
+        RunningProcess.started.clear()
+        RunningProcess.cancelled.clear()
+
+        def fake_killpg(pid, sig):
+            RunningProcess.cancelled.set()
+
+        with patch("evo_experiments.execution.subprocess.Popen", RunningProcess), \
+             patch("evo_experiments.execution.os.getpgid", return_value=999999), \
+             patch("evo_experiments.execution.os.killpg"), \
+             patch("evo_experiments.execution.os.killpg", side_effect=fake_killpg) as kill:
+            import threading
+            worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+            worker.start()
+            RunningProcess.started.wait(timeout=5)
+            from evo_experiments.execution import request_cancel_managed_execution
+            request_cancel_managed_execution(self.db, record["id"])
+            worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        kill.assert_called()
+
+
+    def test_fresh_schema_init_rollback_on_partial_failure(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+
+        class FailingConnection:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "CREATE INDEX IF NOT EXISTS idx_workload_executions_status" in sql:
+                    raise sqlite3.OperationalError("forced init failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = FailingConnection(db)
+        with self.assertRaises(sqlite3.OperationalError):
+            initialize_execution(proxy)
+        tables = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workload_executions'"
+        ).fetchall()
+        self.assertEqual(len(tables), 0)
+        db.close()
+
+    def test_legacy_schema_init_rollback_on_partial_failure(self):
+        db = sqlite3.connect(":memory:", check_same_thread=False)
+        db.row_factory = sqlite3.Row
+        db.execute("""CREATE TABLE workload_executions (
+            id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE, argv_json TEXT NOT NULL,
+            policy_json TEXT NOT NULL DEFAULT '[]', workspace TEXT NOT NULL, status TEXT NOT NULL,
+            timeout_seconds INTEGER NOT NULL, pid INTEGER, process_started_at TEXT, started_at TEXT,
+            finished_at TEXT, returncode INTEGER, elapsed_seconds REAL, stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)""")
+        db.execute("""INSERT INTO workload_executions(id,job_id,argv_json,policy_json,workspace,status,timeout_seconds,created_at)
+                      VALUES('legacy-rollback','legacy-job','["echo","ok"]','[]','/tmp','completed',5,'2026-01-01T00:00:00Z')""")
+        db.commit()
+
+        class FailingConnection:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "DROP TABLE workload_executions_legacy" in sql:
+                    raise sqlite3.OperationalError("forced migration failure")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = FailingConnection(db)
+        with self.assertRaises(sqlite3.OperationalError):
+            initialize_execution(proxy)
+        columns = {row[1]: row for row in db.execute("PRAGMA table_info(workload_executions)").fetchall()}
+        self.assertIn("job_id", columns)
+        self.assertEqual(columns["job_id"][3], 1)
+        self.assertEqual(
+            db.execute("SELECT COUNT(*) FROM workload_executions").fetchone()[0], 1)
+        db.close()
+
+
+    def test_resistant_descendant_is_killed_by_bounded_cleanup(self):
+        job = self.reserve("resistant-descendant")
+        code = ("import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']); "
+                "print('started')")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertLess(result["elapsed_seconds"], 5)
+
+    def test_descendant_holding_pipes_does_not_block_readers(self):
+        job = self.reserve("pipe-descendant")
+        code = ("import subprocess, sys; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+                "stdout=subprocess.PIPE, stderr=subprocess.PIPE); "
+                "print('started')")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertLess(result["elapsed_seconds"], 5)
+
+    def test_keeper_already_exited_fails_closed(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False), \
+             patch("evo_experiments.execution.os.killpg"), \
+             patch("evo_experiments.execution.os.killpg") as kill:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        kill.assert_not_called()
+        self.assertEqual(err, "process group ownership not established")
+
+    def test_command_popen_failure_after_keeper_cleans_keeper(self):
+        import time
+        job = self.reserve("popen-fail")
+        record = self.register(job)
+        original_popen = __import__("evo_experiments.execution", fromlist=["subprocess"]).subprocess.Popen
+        calls = {"n": 0}
+        keeper_pid = {"value": None}
+
+        def failing_popen(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                proc = original_popen(*args, **kwargs)
+                keeper_pid["value"] = proc.pid
+                return proc
+            raise RuntimeError("command popen failed")
+
+        import evo_experiments.execution as E
+        original_cleanup = E._cleanup_keeper
+        cleanup_calls = {"n": 0}
+
+        def counting_cleanup(*args, **kwargs):
+            cleanup_calls["n"] += 1
+            return original_cleanup(*args, **kwargs)
+
+        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen), \
+             patch("evo_experiments.execution._cleanup_keeper", side_effect=counting_cleanup):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("command popen failed", result["error"])
+        self.assertEqual(cleanup_calls["n"], 1)
+        # keeper should be reaped
+        if keeper_pid["value"] is not None:
+            for _ in range(20):
+                try:
+                    os.kill(keeper_pid["value"], 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            try:
+                os.kill(keeper_pid["value"], 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            self.assertFalse(alive)
+
+    def test_persistence_failure_cleans_owned_group(self):
+        job = self.reserve("persist-fail")
+        record = self.register(job)
+        original_persist = __import__("evo_experiments.execution", fromlist=["_persist"])._persist
+
+        def failing_persist(connection, lock, execution_id, **values):
+            if values.get("status") == "running":
+                raise RuntimeError("pid persistence failed")
+            return original_persist(connection, lock, execution_id, **values)
+
+        with patch("evo_experiments.execution._persist", side_effect=failing_persist):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("pid persistence failed", result["error"])
+
+    def test_repeated_cleanup_is_idempotent(self):
+        job = self.reserve("repeat-cleanup")
+        record = self.register(job)
+        with patch("evo_experiments.execution.subprocess.Popen") as popen:
+            pass
+        # Exercise helper directly with a minimal fake process.
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self.returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+        fake = Fake()
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            first = _bounded_group_cleanup(fake)
+            second = _bounded_group_cleanup(fake)
+        self.assertEqual(first, second)
+
+
+    def test_cancellation_with_resistant_descendant_cleans_it(self):
+        job = self.reserve("cancel-resistant")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=10)
+        import threading
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        import time
+        time.sleep(1.0)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+
+    def test_timeout_with_resistant_descendant_preserves_timeout_result(self):
+        job = self.reserve("timeout-resistant")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+
+    def test_successful_cancellation_does_not_report_false_ownership_loss(self):
+        job = self.reserve("cancel-clean")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(30)"], timeout=10)
+        import threading, time
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        time.sleep(0.5)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        self.assertNotIn("ownership not established", result["error"])
+
+    def test_successful_timeout_cleanup_does_not_report_false_ownership_loss(self):
+        job = self.reserve("timeout-clean")
+        record = self.register(job, [sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        self.assertNotIn("ownership not established", result["error"])
+
+    def test_proc_enumeration_failure_does_not_sigkill(self):
+        job = self.reserve("proc-fail")
+        record = self.register(job)
+        with patch("evo_experiments.execution.os.listdir", side_effect=OSError("no proc")),              patch("evo_experiments.execution.os.killpg") as killpg,              patch("evo_experiments.execution._owned_group_is_live", return_value=True):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            fake._evo_keeper = None
+            # make keeper alive mock
+            class Keeper:
+                def poll(self):
+                    return None
+                def wait(self, timeout=None):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        self.assertTrue("ownership not established" in err or "could not be established" in err)
+
+    def test_keeper_zombie_does_not_cause_false_cleanup_failure(self):
+        job = self.reserve("keeper-zombie")
+        record = self.register(job)
+        # Use a process that has already exited; ownership check fails closed.
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        self.assertEqual(err, "process group ownership not established")
+
+    def test_idempotent_cleanup_real_group(self):
+        job = self.reserve("idempotent-real")
+        record = self.register(job)
+        # Minimal fake with ownership disabled; repeated calls return same.
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            from evo_experiments.execution import _bounded_group_cleanup
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return None
+                def wait(self, timeout=None):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            first = _bounded_group_cleanup(fake)
+            second = _bounded_group_cleanup(fake)
+        self.assertEqual(first, second)
+
+
+    def test_descendant_pid_terminated_after_completion(self):
+        import re, time
+        job = self.reserve("pid-capture")
+        code = ("import subprocess, sys, time; "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(0.5)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=5)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(20):
+            if _pid_terminated(pid):
+                break
+            time.sleep(0.1)
+        self.assertTrue(_pid_terminated(pid))
+
+    def test_concurrent_cleanup_single_result(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        import threading
+
+        class Fake:
+            def __init__(self):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self._evo_cleanup_lock = threading.Lock()
+                self._evo_cleanup_done = False
+                self._evo_cleanup_error = None
+
+        fake = Fake()
+
+        class Keeper:
+            def poll(self):
+                return None
+            def kill(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            @property
+            def pid(self):
+                return 999999
+
+        fake._evo_keeper = Keeper()
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False):
+            results = []
+            def worker():
+                results.append(_bounded_group_cleanup(fake))
+            threads = [threading.Thread(target=worker) for _ in range(5)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(len(set(results)), 1)
+
+
+    def test_cancellation_resistant_descendant_pid_terminated(self):
+        import re, time
+        job = self.reserve("cancel-resistant-pid")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=10)
+        import threading
+        worker = threading.Thread(target=run_execution, args=(self.db, self.lock, record["id"]))
+        worker.start()
+        time.sleep(1.0)
+        from evo_experiments.execution import request_cancel_managed_execution
+        request_cancel_managed_execution(self.db, record["id"])
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive())
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "cancelled")
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(30):
+            if _pid_terminated(pid):
+                break
+            time.sleep(0.1)
+        self.assertTrue(_pid_terminated(pid))
+
+    def test_timeout_resistant_descendant_pid_terminated(self):
+        import re, time
+        job = self.reserve("timeout-resistant-pid")
+        code = ("import subprocess, sys, time, signal; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                "print('PID', p.pid, flush=True); time.sleep(30)")
+        record = self.register(job, [sys.executable, "-c", code], timeout=1)
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("timed out", result["error"])
+        match = re.search(r"PID (\d+)", result["stdout"])
+        self.assertIsNotNone(match)
+        pid = int(match.group(1))
+        for _ in range(30):
+            if _pid_terminated(pid):
+                break
+            time.sleep(0.1)
+        self.assertTrue(_pid_terminated(pid))
+
+    def test_proc_enumeration_failure_escalates_group(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution.os.listdir", side_effect=OSError("no proc")), \
+             patch("evo_experiments.execution._owned_group_is_live", return_value=True), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+                    self._evo_cleanup_lock = threading.Lock()
+                    self._evo_cleanup_done = False
+                    self._evo_cleanup_error = None
+            fake = Fake()
+            class Keeper:
+                def poll(self):
+                    return None
+                def kill(self):
+                    pass
+                def wait(self, timeout=None):
+                    return 0
+                @property
+                def pid(self):
+                    return 999999
+            fake._evo_keeper = Keeper()
+            err = _bounded_group_cleanup(fake)
+        # SIGTERM then SIGKILL
+        self.assertGreaterEqual(killpg.call_count, 2)
+        self.assertEqual(killpg.call_args_list[0].args, (999999, __import__("signal").SIGTERM))
+        self.assertEqual(killpg.call_args_list[1].args, (999999, __import__("signal").SIGKILL))
+        self.assertTrue(err)  # cleanup not reported successful
+
+    def test_concurrent_cleanup_blocks_and_reuses_result(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        import evo_experiments.execution as E
+        import threading, time, signal
+
+        class InstrumentedLock:
+            def __init__(self):
+                self._lock = threading.Lock()
+                self._count_lock = threading.Lock()
+                self.attempt_count = 0
+                self.all_attempted = threading.Event()
+
+            def acquire(self, blocking=True, timeout=-1):
+                with self._count_lock:
+                    self.attempt_count += 1
+                    if self.attempt_count >= 4:
+                        self.all_attempted.set()
+                return self._lock.acquire(blocking, timeout)
+
+            def release(self):
+                self._lock.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                self.release()
+
+        class Fake:
+            def __init__(self, lock):
+                self.pid = 999999
+                self._evo_group_pid = 999999
+                self._evo_keeper = None
+                self._evo_cleanup_lock = lock
+                self._evo_cleanup_done = False
+                self._evo_cleanup_error = None
+
+        instrumented_lock = InstrumentedLock()
+        fake = Fake(instrumented_lock)
+
+        keeper_state = {"kill": 0, "wait": 0}
+
+        class Keeper:
+            def poll(self):
+                return None
+            def kill(self):
+                keeper_state["kill"] += 1
+            def wait(self, timeout=None):
+                keeper_state["wait"] += 1
+                return 0
+            @property
+            def pid(self):
+                return 999999
+
+        fake._evo_keeper = Keeper()
+
+        entered = threading.Event()
+        release = threading.Event()
+        call_count = {"n": 0}
+
+        def blocking_remaining(group_pid, keeper_pid):
+            if call_count["n"] == 0:
+                call_count["n"] += 1
+                entered.set()
+                release.wait(timeout=5)
+            return 0
+
+        killpg_calls = []
+
+        def fake_killpg(pgid, sig):
+            killpg_calls.append((pgid, sig))
+
+        original_remaining = E._remaining_descendants
+        original_owned = E._owned_group_is_live
+        original_killpg = E.os.killpg
+        E._remaining_descendants = blocking_remaining
+        E._owned_group_is_live = lambda p: True
+        E.os.killpg = fake_killpg
+        try:
+            results = []
+
+            def worker():
+                results.append(_bounded_group_cleanup(fake))
+
+            threads = [threading.Thread(target=worker) for _ in range(4)]
+            for t in threads:
+                t.start()
+            entered.wait(timeout=5)
+            instrumented_lock.all_attempted.wait(timeout=5)
+            # All four callers have attempted acquisition; first still blocked.
+            self.assertEqual(instrumented_lock.attempt_count, 4)
+            self.assertEqual(len(results), 0)
+            release.set()
+            for t in threads:
+                t.join(timeout=5)
+            self.assertEqual(len(results), 4)
+            self.assertTrue(all(t is not None and not t.is_alive() for t in threads))
+            self.assertEqual(len(set(results)), 1)
+            self.assertEqual(len(killpg_calls), 1)
+            self.assertEqual(killpg_calls[0], (999999, signal.SIGTERM))
+            self.assertEqual(keeper_state["kill"], 1)
+            self.assertEqual(keeper_state["wait"], 1)
+        finally:
+            E._remaining_descendants = original_remaining
+            E._owned_group_is_live = original_owned
+            E.os.killpg = original_killpg
+
+    def test_pid_terminated_helper(self):
+        import os, builtins
+        # Missing pid -> terminated
+        self.assertTrue(_pid_terminated(999999999))
+        # Live non-zombie -> not terminated
+        alive_pid = os.getpid()
+        self.assertFalse(_pid_terminated(alive_pid))
+
+        # Zombie state -> terminated
+        original_open = builtins.open
+        def zombie_open(path, *args, **kwargs):
+            if path == "/proc/12345/stat":
+                return io.StringIO("12345 (test) Z 1 2 3 4")
+            return original_open(path, *args, **kwargs)
+        with patch("builtins.open", side_effect=zombie_open):
+            self.assertTrue(_pid_terminated(12345))
+
+        # Disappearance during inspection -> terminated
+        def missing_open(path, *args, **kwargs):
+            if path == "/proc/54321/stat":
+                raise FileNotFoundError("gone")
+            return original_open(path, *args, **kwargs)
+        with patch("builtins.open", side_effect=missing_open):
+            self.assertTrue(_pid_terminated(54321))
+
+
+    def test_no_signal_after_ownership_lost(self):
+        from evo_experiments.execution import _bounded_group_cleanup
+        with patch("evo_experiments.execution._owned_group_is_live", return_value=False), \
+             patch("evo_experiments.execution.os.killpg") as killpg:
+            class Fake:
+                def __init__(self):
+                    self.pid = 999999
+                    self._evo_group_pid = 999999
+                    self._evo_keeper = None
+                    self._evo_cleanup_lock = threading.Lock()
+                    self._evo_cleanup_done = False
+                    self._evo_cleanup_error = None
+            fake = Fake()
+            err = _bounded_group_cleanup(fake)
+        killpg.assert_not_called()
+        self.assertEqual(err, "process group ownership not established")
+
+
+    def test_command_popen_failure_reports_keeper_cleanup_failure(self):
+        job = self.reserve("popen-fail-cleanup")
+        record = self.register(job)
+        original_popen = __import__("evo_experiments.execution", fromlist=["subprocess"]).subprocess.Popen
+        calls = {"n": 0}
+
+        def failing_popen(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return original_popen(*args, **kwargs)
+            raise RuntimeError("command popen failed")
+
+        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen), \
+             patch("evo_experiments.execution._cleanup_keeper", return_value="keeper cleanup failed"):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("command popen failed", result["error"])
+        self.assertIn("keeper cleanup failed", result["error"])
 
 if __name__ == "__main__":
     unittest.main()

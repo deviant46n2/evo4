@@ -199,6 +199,8 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(metadata.get("provider_response_attempts"),2)
             self.assertEqual(metadata.get("malformed_tool_call_retries"),1)
             self.assertEqual(metadata.get("tool_calls_processed"),0)
+            self.assertEqual(metadata.get("last_finish_reason"), "tool_calls")
+            self.assertEqual(metadata.get("truncated_responses"), 0)
             assistant.close()
 
     def test_generic_provider_error_is_not_retried(self):
@@ -285,7 +287,7 @@ class CodingAgentTests(unittest.TestCase):
             assistant=self.make_assistant(tmp,provider)
             cid=assistant.new_conversation()
             agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
-            with patch.object(agent.workspace,"run",return_value={"argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1}):
+            with patch("evo_experiments.execution.run_execution",return_value={"id":"exec-test","argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1,"status":"completed"}):
                 result=agent.run(cid,"Create and verify main.py",lambda *_:True)
             self.assertEqual(result["verification"],"passed")
             self.assertIn("Verification signal: PASSED",result["content"])

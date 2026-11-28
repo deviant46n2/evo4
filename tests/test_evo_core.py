@@ -23,6 +23,16 @@ class StubProvider:
         return ["stub-model"]
 
 class EvoCoreTests(unittest.TestCase):
+    def test_interactive_cli_requires_local_only_acknowledgement(self):
+        parser = evo_cli.build_parser()
+        with self.assertRaises(SystemExit) as missing:
+            parser.parse_args(["chat"])
+        self.assertEqual(missing.exception.code, 2)
+        args = parser.parse_args(["chat", "--i-understand-local-only"])
+        self.assertTrue(args.i_understand_local_only)
+        code_args = parser.parse_args(["code", "--i-understand-local-only", "--workspace", "/tmp/work"])
+        self.assertEqual(code_args.workspace, "/tmp/work")
+
     def make_config(self,path):
         return EvoConfig("http://127.0.0.1:1","no-key","stub-model",3,Path(path),
                          64,0.0,"You are Evo.",8,10)
@@ -49,6 +59,32 @@ class EvoCoreTests(unittest.TestCase):
             self.assertEqual(metadata["finish_reason"],"length")
             self.assertTrue(metadata["truncated"])
             assistant.close()
+
+    def test_assistant_persists_runtime_invocation_id_on_both_turn_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=self.make_config(Path(tmp)/"evo.db")
+            store=EvoStore(config.database)
+            assistant=EvoAssistant(config,store,StubProvider())
+            cid=assistant.new_conversation()
+            assistant.turn(cid,"Workspace-scoped turn",invocation_id="invocation-123")
+            rows=store.db.execute(
+                "SELECT role,metadata_json FROM messages WHERE conversation_id=? ORDER BY id",
+                (cid,)).fetchall()
+            self.assertEqual([row["role"] for row in rows],["user","assistant"])
+            for row in rows:
+                metadata=json.loads(row["metadata_json"] or "{}")
+                self.assertEqual(metadata["runtime_invocation_id"],"invocation-123")
+
+            global_cid=assistant.new_conversation()
+            assistant.turn(global_cid,"Global turn")
+            global_rows=store.db.execute(
+                "SELECT metadata_json FROM messages WHERE conversation_id=? ORDER BY id",
+                (global_cid,)).fetchall()
+            for row in global_rows:
+                metadata=json.loads(row["metadata_json"] or "{}")
+                self.assertNotIn("runtime_invocation_id",metadata)
+            assistant.close()
+            store.close()
 
     def test_memory_lifecycle_and_lexical_search(self):
         with tempfile.TemporaryDirectory() as tmp:
