@@ -207,7 +207,7 @@ class CodingAgent:
             import hashlib
             import json
             from datetime import datetime, timezone
-            from evo_experiments.execution import register_managed_execution, run_execution
+            from evo_experiments.execution import get_execution, register_managed_execution, run_execution
 
             store = self.assistant.store
             from evo_experiments.execution import initialize_execution
@@ -240,7 +240,12 @@ class CodingAgent:
             # Do not hold the application store lock while the managed worker
             # supervises a process. The worker must be able to persist lifecycle
             # updates and other threads must be able to request cancellation.
-            result = run_execution(store.db, store.lock, execution["id"])
+            run_execution(store.db, store.lock, execution["id"])
+            # The supervisor persists lifecycle state; retrieve the authoritative
+            # record after it returns instead of relying on a return value.
+            result = get_execution(store.db, execution["id"])
+            if result is None:
+                raise WorkspaceError("Managed execution record disappeared before result retrieval")
             return {
                 "execution_id": result.get("id"),
                 "argv": result.get("argv", argv),
