@@ -77,6 +77,26 @@ Given a GPT-6-authored, bounded repository task and an explicitly selected works
 - No autonomous merge, deployment, destructive cleanup, or privilege expansion.
 - The existing Phase 4 cooperative-experiment ledger/accounting work is retained as reusable evaluation infrastructure. The live multi-participant benchmark is deferred; it is not a prerequisite for local execution.
 
+### Product UX milestone — Chat-first redesign
+**Status: scheduled next, immediately after Phase 4 acceptance and before Phase 5 is considered user-facing complete.**
+
+The redesign is an explicit product priority, not optional polish. The goal is to make Evo feel like one coherent assistant/workbench rather than a collection of disconnected subsystem screens. Preserve the existing backend, Registry, execution, approval, and evidence foundations; redesign how users reach and understand them.
+
+**Scope**
+- Chat is the primary home and task-launch surface. A user working in a project can start a task in that project without hunting through the Agents area or manually understanding Registry internals.
+- Agent/task activity appears inline in chat with status, progress, approvals, cancellation, and links to detailed evidence.
+- Projects provide clear project context, instructions, workspace readiness, and a direct “new task” action. Missing prerequisites must be explained with a clear next step.
+- Memory, hardware/runtime, configurations/Cyberdeck, experiments, and supporting capabilities become coherent views accessible from a minimal, consistent navigation structure.
+- Visual hierarchy, responsive layout, accessibility, empty/error/loading states, and interaction consistency receive a deliberate pass.
+- Preserve project/workspace isolation, explicit approvals, least privilege, and truthful capability status. The redesign must not bypass backend safety controls.
+- Reuse current APIs and components where sound; redesign is not permission for an unnecessary backend rewrite.
+
+**Acceptance**
+- A user can enter a project, start a bounded task, follow it in chat, approve/reject consequential actions, and inspect its final review/evidence without navigating an unrelated subsystem.
+- Project/workspace/task scope is visible and remains correct throughout the workflow.
+- Primary navigation and core workflows are coherent, keyboard-accessible, and validated by desktop build plus focused frontend/integration tests.
+- The user reviews the working experience before the redesign is accepted.
+
 ### Phase 5 — Hardware and model-runtime management
 **Status: planned; depends on Phase 4 execution lifecycle.**
 
@@ -184,7 +204,7 @@ Only after execution, recovery, evaluation, memory, and authorization are demons
 
 ## Cross-cutting product and UX work
 
-The desktop remains chat-first. Projects, memory, runtime state, tasks, approvals, execution evidence, and experiments should appear as coherent views into real backend capabilities. UX improvements may accompany a validated phase when they materially improve its operation; a wholesale visual redesign is not a prerequisite. Frontend and end-to-end test coverage should grow with workflow complexity.
+The desktop remains chat-first. The dedicated Chat-first redesign milestone above is the required next product priority after Phase 4 acceptance; it is not optional polish. Projects, memory, runtime state, tasks, approvals, execution evidence, and experiments should appear as coherent views into real backend capabilities. Frontend and end-to-end test coverage should grow with workflow complexity.
 
 ## Dependency rules
 
