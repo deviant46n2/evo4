@@ -215,5 +215,18 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                     "unsafe", approved=True,
                 )
 
+
+    def test_approved_apply_can_create_empty_file_for_editor(self):
+        result = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "new-module.py",
+            "", approved=True,
+        )
+        self.assertEqual((self.task_root / "new-module.py").read_bytes(), b"")
+        opened = read_task_workspace_file(
+            self.store, self.operation["operation_id"], "new-module.py",
+        )
+        self.assertEqual(opened["content"], "")
+        self.assertEqual(opened["sha256"], result["after_sha256"])
+
 if __name__ == "__main__":
     unittest.main()
