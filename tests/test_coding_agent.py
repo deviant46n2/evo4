@@ -409,6 +409,28 @@ class CodingAgentTests(unittest.TestCase):
             self.assertEqual(result["status"],"completed")
             assistant.close()
 
+    def test_disallowed_command_is_rejected_before_requesting_approval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("run_command",{"argv":["python","unsafe.py"]})]},
+                {"content":"The command was outside the workspace policy.","tool_calls":[]}
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["pytest"]])
+            approvals=[]
+            result=agent.run(cid,"Run an unapproved command",
+                             lambda name,args: approvals.append((name,args)) or True)
+            self.assertEqual(approvals,[])
+            event=assistant.store.db.execute(
+                "SELECT status,output_json FROM tool_events ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(event["status"],"failed")
+            self.assertIn("not permitted",event["output_json"])
+            self.assertEqual(result["status"],"completed")
+            assistant.close()
+
     def test_write_requires_approval_and_denial_is_recorded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()

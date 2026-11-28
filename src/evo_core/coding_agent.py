@@ -738,7 +738,26 @@ class CodingAgent:
 
                     try:
                         if name in {"write_file", "run_command"}:
-                            if not approval(name, args):
+                            if name == "run_command":
+                                from evo_experiments.execution import command_allowed
+                                if not command_allowed(
+                                    args.get("argv"), self.workspace.allowed_commands
+                                ):
+                                    output = {
+                                        "error": (
+                                            "Command is not permitted by the effective "
+                                            "workspace command policy."
+                                        )
+                                    }
+                                    status = "failed"
+                                else:
+                                    output = None
+                                    status = None
+                            else:
+                                output = None
+                                status = None
+
+                            if status is None and not approval(name, args):
                                 output = {
                                     "error": (
                                         "User denied this action; no changes "
@@ -746,7 +765,7 @@ class CodingAgent:
                                     )
                                 }
                                 status = "denied"
-                            else:
+                            elif status is None:
                                 if stop_event is not None and stop_event.is_set():
                                     raise AgentCancelled(
                                         "Cancellation requested before the "
