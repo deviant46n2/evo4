@@ -156,13 +156,13 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
                 r"^filter\..*\.(clean|smudge|process)$",
                 r"^diff\..*\.(command|textconv)$",
             ):
+                discovery_truncated = []
                 discovery = _git(
                     root, "config", "--local", "--name-only", "--get-regexp", pattern,
                     timeout=min(timeout, 10), max_output_bytes=65536,
-                    truncated=[], env=safe_env, discover_helpers=False,
+                    truncated=discovery_truncated, env=safe_env, discover_helpers=False,
                 )
-                # Discovery output must be complete; a truncated list is never safe.
-                if isinstance(discovery, tuple):
+                if discovery_truncated:
                     raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
                 helper_keys.extend(line for line in discovery.splitlines() if line)
             for key in sorted(set(helper_keys)):
@@ -500,18 +500,52 @@ def _safe_relative_path(path_text):
     return candidate
 
 
+def _open_regular_file_at(root, relative_path):
+    """Open a regular file beneath root without following any path symlink."""
+    import stat
+    required = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")
+    if any(not hasattr(os, flag) for flag in required) or os.open not in os.supports_dir_fd:
+        raise OSError("safe descriptor-relative file access is unavailable")
+    parts = Path(relative_path).parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise OSError("unsafe relative path")
+    directory_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
+        os.close(fd)
+        raise OSError("file is not a private regular file")
+    return fd, info
+
+
+def _stat_signature(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode, info.st_nlink)
+
+
 def _untracked_signature(root, paths):
     import hashlib
     result = []
     for path in paths:
-        candidate = root / Path(path)
         try:
-            st = os.stat(str(candidate), follow_symlinks=False)
+            fd, before = _open_regular_file_at(root, path)
             digest = hashlib.sha256()
-            with candidate.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(65536), b""):
+            try:
+                while True:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
                     digest.update(chunk)
-            result.append((path, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_mode, digest.hexdigest()))
+                after = os.fstat(fd)
+            finally:
+                os.close(fd)
+            result.append((path, _stat_signature(after), digest.hexdigest()) if _stat_signature(before) == _stat_signature(after) else (path, "unstable"))
         except OSError:
             result.append((path, None))
     return tuple(result)
@@ -702,51 +736,34 @@ def get_task_workspace_review(
         chunks = []
         read_total = 0
         binary = False
-        # Validate parent components are not symlinks.
-        cursor = root
-        parent_symlink = False
-        for part in rel.parts[:-1]:
-            cursor = cursor / part
-            if cursor.exists() and cursor.is_symlink():
-                parent_symlink = True
-                break
-        if parent_symlink:
-            unreadable.append({"path": path, "reason": "symlink"})
+        try:
+            fd, st_before = _open_regular_file_at(root, str(rel))
+        except OSError:
+            unreadable.append({"path": path, "reason": "unsafe_or_unreadable"})
             continue
         try:
-            fd = os.open(str(candidate), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            while read_total < per_file_cap:
+                chunk = os.read(fd, min(8192, per_file_cap - read_total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                read_total += len(chunk)
+                if b"\\x00" in chunk:
+                    binary = True
+                    break
+            file_truncated = False
+            if not binary and read_total == per_file_cap:
+                file_truncated = bool(os.read(fd, 1))
+            st_after = os.fstat(fd)
+            if _stat_signature(st_before) != _stat_signature(st_after):
+                unreadable.append({"path": path, "reason": "changed_during_read"})
+                unstable = True
+                continue
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
-        try:
-            st = os.fstat(fd)
-            import stat as stat_mod
-            if not stat_mod.S_ISREG(st.st_mode):
-                os.close(fd)
-                unreadable.append({"path": path, "reason": "not_regular"})
-                continue
-            if st.st_nlink > 1:
-                os.close(fd)
-                unreadable.append({"path": path, "reason": "hard_link"})
-                continue
-            with os.fdopen(fd, "rb", closefd=True) as handle:
-                while read_total < per_file_cap:
-                    chunk = handle.read(min(8192, per_file_cap - read_total))
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    read_total += len(chunk)
-                    if b"\x00" in chunk:
-                        binary = True
-                        break
-                file_truncated = (read_total == per_file_cap)
-        except OSError:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-            unreadable.append({"path": path, "reason": "unreadable"})
-            continue
+        finally:
+            os.close(fd)
         data = b"".join(chunks)
         if binary:
             unreadable.append({"path": path, "reason": "binary"})
