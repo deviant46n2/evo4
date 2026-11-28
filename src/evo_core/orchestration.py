@@ -47,7 +47,8 @@ def initialize(connection):
       exit_code INTEGER,
       stdout TEXT NOT NULL DEFAULT '',
       stderr TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      execution_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_plan_step_verifications ON agent_plan_step_verifications(plan_id,step_id,id);
     """)
@@ -66,6 +67,9 @@ def initialize(connection):
     columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plans)")}
     if "proposal_invocation_id" not in columns:
         connection.execute("ALTER TABLE agent_plans ADD COLUMN proposal_invocation_id TEXT")
+    verification_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_plan_step_verifications)")}
+    if "execution_id" not in verification_columns:
+        connection.execute("ALTER TABLE agent_plan_step_verifications ADD COLUMN execution_id TEXT")
     connection.commit()
 
 def _event(connection, plan_id, event_type, payload=None, step_id=None):
@@ -201,7 +205,7 @@ def get_plan(connection, plan_id):
         "SELECT * FROM agent_plan_steps WHERE plan_id=? ORDER BY position", (plan_id,)).fetchall()]
     for step in steps:
         step["verification_checks"] = [dict(v) for v in connection.execute(
-            "SELECT id,command_json,status,exit_code,stdout,stderr,created_at FROM agent_plan_step_verifications WHERE step_id=? ORDER BY id",
+            "SELECT id,command_json,status,exit_code,stdout,stderr,created_at,execution_id FROM agent_plan_step_verifications WHERE step_id=? ORDER BY id",
             (step["id"],)).fetchall()]
         for check in step["verification_checks"]:
             try:
@@ -333,7 +337,7 @@ def finish_step(connection, plan_id, step_id, outcome, result="", verification_s
         _event(connection, plan_id, "step_" + outcome, {"result": str(result)[:1000], "verification_status": verification_status}, step_id)
     return True
 
-def record_verification(connection, plan_id, step_id, command, status, exit_code=None, stdout="", stderr=""):
+def record_verification(connection, plan_id, step_id, command, status, exit_code=None, stdout="", stderr="", execution_id=None):
     if status not in {"passed", "failed", "denied", "error", "timed_out"}:
         raise ValueError("Invalid verification status")
     if status == "passed" and (type(exit_code) is not int or exit_code != 0):
@@ -356,12 +360,16 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
             raise ValueError("Configured verification commands are invalid") from exc
         if list(command) not in configured:
             raise ValueError("Verification evidence command was not configured for this step")
+        if execution_id is not None and (
+            not isinstance(execution_id, str) or not execution_id.strip() or len(execution_id) > 128
+        ):
+            raise ValueError("execution_id must be a non-empty identifier of at most 128 characters")
         connection.execute(
             """INSERT INTO agent_plan_step_verifications
-               (plan_id,step_id,position,command_json,status,exit_code,stdout,stderr,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               (plan_id,step_id,position,command_json,status,exit_code,stdout,stderr,created_at,execution_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (plan_id, step_id, step["position"], json.dumps(list(command)), status,
-             exit_code, str(stdout)[:4000], str(stderr)[:4000], stamp))
+             exit_code, str(stdout)[:4000], str(stderr)[:4000], stamp, execution_id))
     return True
 
 def step_verification_status(step):
