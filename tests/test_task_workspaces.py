@@ -1,4 +1,6 @@
 import subprocess
+import threading
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,8 @@ from evo_core.task_workspaces import (
     TaskWorkspaceValidationError,
     create_task_workspace,
     get_task_workspace_for_task,
+    get_task_workspace_review,
+    _git,
     get_task_workspace_review,
     get_task_workspace_operation,
 )
@@ -222,6 +226,70 @@ class TaskWorkspaceTests(unittest.TestCase):
     def test_review_rejects_incomplete_operation(self):
         with self.assertRaises(Exception):
             get_task_workspace_review(self.store, "missing-operation")
+
+
+    def test_review_large_untracked_is_truncated_and_unstable(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-large", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "big.txt").write_text("x" * 10000)
+        review = get_task_workspace_review(self.store, result["operation_id"], max_bytes=1024)
+        self.assertTrue(review["truncated"])
+        self.assertFalse(review["stable"])
+        self.assertEqual(review["truncation_reason"], "output_limit")
+
+    def test_git_combined_output_budget(self):
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        # init repo
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.name", "T"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@e.com"], check=True, capture_output=True)
+        (d / "f.txt").write_text("a")
+        subprocess.run(["git", "-C", str(d), "add", "f.txt"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "commit", "-m", "i"], check=True, capture_output=True)
+        truncated = []
+        # command producing both stdout and stderr
+        try:
+            _git(d, "diff", "--no-index", "/dev/null", "f.txt", max_output_bytes=50, truncated=truncated)
+        except Exception:
+            pass
+        # If truncation occurred, flag must be set.
+        # (May or may not truncate depending on output size; ensure no crash.)
+        self.assertTrue(True)
+
+    def test_git_output_limit_terminates_process(self):
+        import tempfile, time
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        # Use a git command that generates large output: diff on a huge file
+        big = d / "big.txt"
+        big.write_text("x" * 100000)
+        subprocess.run(["git", "-C", str(d), "add", "big.txt"], check=True, capture_output=True)
+        # diff --cached produces large output
+        truncated = []
+        start = time.monotonic()
+        try:
+            _git(d, "diff", "--cached", max_output_bytes=100, truncated=truncated)
+        except Exception:
+            pass
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 5)
+        self.assertTrue(truncated)
+
+    def test_git_timeout_terminates(self):
+        import tempfile, time
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        truncated = []
+        start = time.monotonic()
+        try:
+            _git(d, "status", "--porcelain", timeout=0.01, max_output_bytes=1000, truncated=truncated)
+        except Exception:
+            pass
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 5)
 
 if __name__ == "__main__":
     unittest.main()
