@@ -495,7 +495,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setTaskOperations([]);
     setTaskOperationDetail(null);
     setTaskOperationError("");
-    setTaskFiles(null); setTaskFileContent(null); setTaskFilePath(""); setTaskFileError("");
+    setTaskFiles(null); setTaskFileContent(null); setTaskFileDraft(""); setTaskFilePath(""); setTaskFileError(""); setTaskFileSaving(false);
     setPlan(null);
     setError("");
     void refresh();
