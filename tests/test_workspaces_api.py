@@ -339,6 +339,46 @@ class WorkspaceApiTests(unittest.TestCase):
             status, body = asgi_request(self.app, "POST", f"/api/v1/workspaces/{wid}/archive", {"expected_version": value})
             self.assertEqual(status, 422)
 
+    def test_task_workspace_review_api_returns_isolated_bounded_artifact(self):
+        import subprocess
+        from evo_core.task_workspaces import create_task_workspace
+
+        project, checkout, directory, configuration, revision = self._make_fixtures()
+        subprocess.run(["git", "-C", str(directory), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "config", "user.name", "Evo Test"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "config", "user.email", "evo-test@example.invalid"], check=True, capture_output=True)
+        (directory / "README.md").write_text("baseline\\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(directory), "add", "README.md"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "commit", "-m", "baseline"], check=True, capture_output=True)
+        workspace = create_workspace(
+            self.store, "Parent workspace", project["project_id"],
+            configuration["configuration_id"], revision["revision_id"],
+            checkout_id=checkout["checkout_id"],
+        )
+        task = create_task_workspace(
+            self.store, workspace["workspace_id"], "api-review-task", self.root,
+        )
+        task_path = Path(task["canonical_path"])
+        (task_path / "result.txt").write_text("isolated result\\n", encoding="utf-8")
+
+        status, body = asgi_request(
+            self.app, "GET",
+            f"/api/v1/task-workspaces/{task['operation_id']}/review",
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["operation_id"], task["operation_id"])
+        self.assertTrue(body["stable"])
+        self.assertEqual(body["changed_file_count"], 1)
+        self.assertEqual(body["changed_files"], [{"status": "A", "path": "result.txt"}])
+        self.assertIn("+isolated result", body["patch"])
+        self.assertFalse((directory / "result.txt").exists())
+        source_status = subprocess.run(
+            ["git", "-C", str(directory), "status", "--porcelain"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        self.assertEqual(source_status, "")
+
     def test_task_workspace_review_api_error_mapping_is_safe(self):
         from unittest.mock import patch
         from evo_core.task_workspaces import TaskWorkspaceProvisioningError
