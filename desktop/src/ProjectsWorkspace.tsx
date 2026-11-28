@@ -682,6 +682,7 @@ export function ProjectsWorkspace({ onStartTask }: { onStartTask?: (projectId: s
               </div>
 
               <div className="inline-actions configuration-actions">
+                <button className="primary-button" disabled={saving || !onStartTask} onClick={() => onStartTask?.(selected.project_id)}>New task</button>
                 <button className="quiet-button" disabled={saving} onClick={beginEditProject}>Edit project</button>
                 <button className="quiet-button" disabled={saving} onClick={() => void changeProjectStatus()}>{selected.status === "active" ? "Archive project" : "Reactivate project"}</button>
                 <button className="quiet-button" disabled={loading || saving} onClick={() => void refresh()}>Reload from server</button>
