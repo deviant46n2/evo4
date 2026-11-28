@@ -123,6 +123,8 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         status, history = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/changes")
         self.assertEqual(status, 200)
         self.assertEqual(history["items"][0]["change_id"], body["change_id"])
+        self.assertEqual(history["total"], 1)
+        self.assertFalse(history["truncated"])
 
 if __name__ == "__main__":
     unittest.main()
