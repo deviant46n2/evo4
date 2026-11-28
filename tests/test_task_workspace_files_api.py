@@ -379,7 +379,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(review["status"], "ok")
         self.assertIn("generated.py", {item["path"] for item in review["changed_files"]})
-        self.assertEqual(review["file_change_history"]["summary"]["applied"], 1)
+        self.assertEqual(review["file_change_summary"]["applied"], 1)
         evidence = [item for item in review["execution_evidence"] if item["run_id"] == run_id]
         self.assertEqual(len(evidence), 1)
         executions = evidence[0]["managed_executions"]
