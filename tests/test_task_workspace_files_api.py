@@ -173,7 +173,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         }
         with self.app.state.lab_db.lock:
             plan = orchestration.create_plan(
-                self.app.state.lab_db.connection, "Implement and verify", workspace=str(self.task_root),
+                self.app.state.lab_db.connection, "Implement and verify", workspace=str(self.root),
                 workspace_id=self.operation["parent_workspace_id"], project_id=project_id, proposal=proposal,
                 allowed_commands=None, store=self.app.state.store,
             )
