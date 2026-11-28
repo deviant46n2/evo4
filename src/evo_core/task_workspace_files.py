@@ -204,6 +204,24 @@ def _ensure_file_change_table(store):
                 created_at TEXT NOT NULL
             )"""
         )
+        columns = {
+            row["name"] for row in store.db.execute(
+                "PRAGMA table_info(task_workspace_file_changes)"
+            ).fetchall()
+        }
+        if "status" not in columns:
+            store.db.execute(
+                "ALTER TABLE task_workspace_file_changes "
+                "ADD COLUMN status TEXT NOT NULL DEFAULT 'applied'"
+            )
+        if "error_code" not in columns:
+            store.db.execute(
+                "ALTER TABLE task_workspace_file_changes ADD COLUMN error_code TEXT"
+            )
+        if "finalized_at" not in columns:
+            store.db.execute(
+                "ALTER TABLE task_workspace_file_changes ADD COLUMN finalized_at TEXT"
+            )
         store.db.execute(
             "CREATE INDEX IF NOT EXISTS idx_task_workspace_file_changes_operation "
             "ON task_workspace_file_changes(operation_id, created_at, change_id)"
@@ -299,6 +317,21 @@ def apply_task_workspace_file(
             finally:
                 os.close(existing_fd)
 
+        after_sha256 = hashlib.sha256(data).hexdigest()
+        change_id = str(uuid.uuid4())
+        created_at = utc_now()
+        _ensure_file_change_table(store)
+        with store.lock:
+            store.db.execute(
+                """INSERT INTO task_workspace_file_changes
+                   (change_id, operation_id, path, before_sha256, after_sha256,
+                    size_bytes, created_at, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (change_id, operation["operation_id"], str(relative), before_sha256,
+                 after_sha256, len(data), created_at),
+            )
+            store.db.commit()
+
         temp_fd = os.open(
             temp_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -344,9 +377,34 @@ def apply_task_workspace_file(
                 dst_dir_fd=directory_fd,
             )
         os.fsync(directory_fd)
+        with store.lock:
+            store.db.execute(
+                "UPDATE task_workspace_file_changes SET status='applied', finalized_at=? "
+                "WHERE change_id=? AND status='pending'",
+                (utc_now(), change_id),
+            )
+            store.db.commit()
     except TaskWorkspaceValidationError:
+        if "change_id" in locals():
+            with store.lock:
+                store.db.execute(
+                    "UPDATE task_workspace_file_changes SET status='failed', "
+                    "error_code='validation_failed', finalized_at=? "
+                    "WHERE change_id=? AND status='pending'",
+                    (utc_now(), change_id),
+                )
+                store.db.commit()
         raise
     except OSError as exc:
+        if "change_id" in locals():
+            with store.lock:
+                store.db.execute(
+                    "UPDATE task_workspace_file_changes SET status='failed', "
+                    "error_code='filesystem_error', finalized_at=? "
+                    "WHERE change_id=? AND status='pending'",
+                    (utc_now(), change_id),
+                )
+                store.db.commit()
         raise TaskWorkspaceValidationError("file could not be safely applied") from exc
     finally:
         if temp_fd is not None:
@@ -357,19 +415,6 @@ def apply_task_workspace_file(
             pass
         os.close(directory_fd)
 
-    after_sha256 = hashlib.sha256(data).hexdigest()
-    _ensure_file_change_table(store)
-    change_id = str(uuid.uuid4())
-    created_at = utc_now()
-    with store.lock:
-        store.db.execute(
-            """INSERT INTO task_workspace_file_changes
-               (change_id, operation_id, path, before_sha256, after_sha256, size_bytes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (change_id, operation["operation_id"], str(relative), before_sha256,
-             after_sha256, len(data), created_at),
-        )
-        store.db.commit()
     return {
         "change_id": change_id,
         "operation_id": operation["operation_id"],
