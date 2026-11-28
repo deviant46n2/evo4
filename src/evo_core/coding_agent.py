@@ -1,5 +1,6 @@
 import json
 import threading
+from pathlib import Path
 from .workspace import Workspace, WorkspaceError, is_test_path
 from .provider import InvalidToolCallError
 from . import workspaces as workspace_registry
@@ -153,11 +154,23 @@ class CodingAgent:
                 "Task workspace operation is no longer available; refusing further actions"
             ) from exc
 
+        bound_workspace_id = getattr(self, "_workspace_id", None)
+        bound_project_id = getattr(self, "_project_id", None)
+        bound_source_revision = getattr(self, "_source_revision", None)
         if (
             operation.get("status") != "completed"
-            or operation.get("task_workspace_id") != getattr(self, "_workspace_id", None)
-            or operation.get("project_id") != getattr(self, "_project_id", None)
-            or operation.get("source_revision") != getattr(self, "_source_revision", None)
+            or (
+                bound_workspace_id is not None
+                and operation.get("task_workspace_id") != bound_workspace_id
+            )
+            or (
+                bound_project_id is not None
+                and operation.get("project_id") != bound_project_id
+            )
+            or (
+                bound_source_revision is not None
+                and operation.get("source_revision") != bound_source_revision
+            )
             or operation.get("destination_path") != workspace_path
         ):
             raise WorkspaceBindingInvalidatedError(
