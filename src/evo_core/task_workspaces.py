@@ -146,20 +146,19 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             )
             stdout_chunks = []
             stderr_chunks = []
-            stdout_len = [0]
-            stderr_len = [0]
+            total = [0]
             exceeded = {"value": False}
 
-            def _reader(stream, chunks, counter):
+            def _reader(stream, chunks):
                 while True:
                     chunk = stream.read(8192)
                     if not chunk:
                         break
-                    if counter[0] + len(chunk) > max_output_bytes:
-                        keep = max_output_bytes - counter[0]
+                    if total[0] + len(chunk) > max_output_bytes:
+                        keep = max_output_bytes - total[0]
                         if keep > 0:
                             chunks.append(chunk[:keep])
-                            counter[0] += keep
+                            total[0] += keep
                         exceeded["value"] = True
                         try:
                             proc.kill()
@@ -167,11 +166,14 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                             pass
                         break
                     chunks.append(chunk)
-                    counter[0] += len(chunk)
-                stream.close()
+                    total[0] += len(chunk)
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
-            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks, stdout_len), daemon=True)
-            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks, stderr_len), daemon=True)
+            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks), daemon=True)
+            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks), daemon=True)
             t1.start()
             t2.start()
             try:
@@ -179,12 +181,20 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             except subprocess.TimeoutExpired:
                 proc.kill()
                 exceeded["value"] = True
-            t1.join(timeout=timeout)
-            t2.join(timeout=timeout)
+            t1.join(timeout=timeout + 1)
+            t2.join(timeout=timeout + 1)
+            if t1.is_alive() or t2.is_alive():
+                proc.kill()
+                t1.join(timeout=1)
+                t2.join(timeout=1)
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
             stdout = "".join(stdout_chunks)
             stderr = "".join(stderr_chunks)
             returncode = proc.returncode
-            was_truncated = exceeded["value"] or len(stdout) >= max_output_bytes
+            was_truncated = exceeded["value"]
         if truncated is not None and was_truncated:
             truncated.append(True)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -460,11 +470,16 @@ def get_task_workspace_review(
     max_files = max(1, int(max_files))
     max_bytes = max(1024, int(max_bytes))
 
-    head_before = _git(root, "rev-parse", "--verify", "HEAD")
-    status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
+    head_before_truncated = []
+    head_before = _git(root, "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated)
+    status_before_truncated = []
+    status_before = _git(root, "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_before_truncated)
     diff_before_truncated = []
     diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
-    untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    untracked_before_truncated = []
+    untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
+    if head_before_truncated or status_before_truncated or diff_before_truncated or untracked_before_truncated:
+        raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
 
     changed = []  # list of (status, path, old_path)
     excluded = []
@@ -488,7 +503,10 @@ def get_task_workspace_review(
         return True
 
     # Tracked changes relative to the immutable baseline (NUL-delimited).
-    name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline)
+    name_status_truncated = []
+    name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated)
+    if name_status_truncated:
+        raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     for path in name_status.split("\x00"):
         if not path:
             continue
@@ -532,7 +550,10 @@ def get_task_workspace_review(
         changed.append((token, str(rel), None))
 
     # Untracked files.
-    untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    untracked_truncated = []
+    untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated)
+    if untracked_truncated:
+        raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     untracked_paths = [p for p in untracked_output.split("\x00") if p.strip()]
     for path in untracked_paths:
         rel = _safe_relative_path(path)
@@ -543,7 +564,14 @@ def get_task_workspace_review(
             excluded.append(path)
             continue
         candidate = root / rel
-        if candidate.is_symlink():
+        cursor = root
+        symlink = False
+        for part in rel.parts:
+            cursor = cursor / part
+            if cursor.exists() and cursor.is_symlink():
+                symlink = True
+                break
+        if symlink or candidate.is_symlink():
             unreadable.append({"path": path, "reason": "symlink"})
             continue
         if not candidate.is_file():
@@ -603,8 +631,7 @@ def get_task_workspace_review(
                         binary = True
                         break
                 # Check if more data remains.
-                extra = handle.read(1)
-                file_truncated = bool(extra)
+                file_truncated = (read_total == per_file_cap)
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
@@ -624,12 +651,22 @@ def get_task_workspace_review(
                 truncation_reason = "output_limit"
             break
 
-    head_after = _git(root, "rev-parse", "--verify", "HEAD")
-    status_after = _git(root, "status", "--porcelain", "--untracked-files=all")
-    diff_after = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024)
-    untracked_after = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    head_after_truncated = []
+    head_after = _git(root, "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_after_truncated)
+    status_after_truncated = []
+    status_after = _git(root, "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_after_truncated)
+    diff_after_truncated = []
+    diff_after = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated)
+    untracked_after_truncated = []
+    untracked_after = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated)
+    metadata_truncated = bool(head_after_truncated or status_after_truncated or diff_after_truncated or untracked_after_truncated)
+    if metadata_truncated:
+        truncated = True
+        if truncation_reason is None:
+            truncation_reason = "output_limit"
     snapshot_stable = (
         not truncated
+        and not metadata_truncated
         and head_before == head_after
         and status_before == status_after
         and diff_before == diff_after
