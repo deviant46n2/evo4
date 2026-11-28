@@ -70,7 +70,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             {
                 "verification_commands": [["pytest", "-q"], ["pytest", "-q"], ["ruff", "check", "."]],
                 "verification_checks": [
-                    {"command": ["pytest", "-q"], "status": "passed", "workspace_snapshot_stable": True},
+                    {"command": ["pytest", "-q"], "status": "passed", "exit_code": 0, "workspace_snapshot_stable": True},
                     {"command": ["pytest", "-q"], "status": "failed", "workspace_snapshot_stable": False},
                     {"command": ["unexpected"], "status": "error", "workspace_snapshot_stable": None},
                 ],
@@ -117,6 +117,13 @@ class AgentOrchestrationTests(unittest.TestCase):
         }])
         self.assertEqual(invalid_pass["invalid_checks"], 1)
         self.assertEqual(invalid_pass["command_coverage_state"], "failed")
+        missing_exit_code = orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed"}],
+        }])
+        self.assertEqual(missing_exit_code["invalid_checks"], 1)
+        self.assertEqual(missing_exit_code["passed_checks"], 0)
+        self.assertEqual(missing_exit_code["command_coverage_state"], "failed")
 
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
