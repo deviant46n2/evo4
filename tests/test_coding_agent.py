@@ -287,7 +287,20 @@ class CodingAgentTests(unittest.TestCase):
             assistant=self.make_assistant(tmp,provider)
             cid=assistant.new_conversation()
             agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
-            with patch("evo_experiments.execution.run_execution",return_value={"id":"exec-test","argv":["python","-m","unittest"],"returncode":0,"stdout":"OK","stderr":"","elapsed_seconds":0.1,"status":"completed"}):
+            def complete_persisted_execution(db, lock, execution_id):
+                # Model the supervisor's contract: it persists its final state;
+                # the coding agent then retrieves that authoritative row.
+                with lock:
+                    db.execute(
+                        """UPDATE workload_executions
+                           SET status='completed',returncode=0,stdout='OK',stderr='',
+                               elapsed_seconds=0.1,finished_at='2026-01-01T00:00:00Z'
+                           WHERE id=?""",
+                        (execution_id,),
+                    )
+                    db.commit()
+
+            with patch("evo_experiments.execution.run_execution",side_effect=complete_persisted_execution):
                 result=agent.run(cid,"Create and verify main.py",lambda *_:True)
             self.assertEqual(result["verification"],"passed")
             self.assertIn("Verification signal: PASSED",result["content"])
