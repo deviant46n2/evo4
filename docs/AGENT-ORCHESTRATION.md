@@ -42,6 +42,9 @@ The coding agent can now be called with `finalize_run=False` so a multi-step pla
 
 Cancellation is cooperative at provider/tool safe boundaries and between steps. Terminal completion is serialized against cancellation so a late cancellation cannot silently overwrite a completed task or vice versa. If the application restarts while a plan is approved or executing, it becomes `interrupted`; active steps are marked interrupted, pending steps skipped, and no work is replayed.
 
+- When explicit verification commands are configured, each command still requires its own approval and is run through managed execution. The persisted verification record now carries the managed execution ID, allowing the review surface to trace a result back to its execution record rather than relying only on copied stdout/stderr.
+- The task-workspace review API joins agent runs and plan verification only when project ID, task workspace ID, operation ID, and pinned source revision all match. It exposes the run/plan status and bounded command results; this is provenance linkage, not proof that a passing command establishes overall correctness.
+
 ## Important limitations
 
 - Step completion currently means the coding-agent loop returned a completed result for that step. The verification instruction is included in the step prompt and stored for audit, but the instruction text itself is **not** an independent verification oracle. When a step defines explicit `verification_commands`, the worker separately executes each command through the existing approval callback and records its result; denied, failed, or unrun commands prevent the step from completing. These command results provide deterministic evidence for the checks they directly exercise, but do not prove overall correctness or replace independent review.
