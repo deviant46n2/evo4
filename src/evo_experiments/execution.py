@@ -318,17 +318,26 @@ def _validate_resource_limits(value):
         if number < 0:
             raise ValueError(f"resource limit {key!r} must be non-negative")
         result[canonical] = number
-    if result and not _resource_limits_supported():
+    if result and not _resource_limits_supported(result):
         raise ValueError("resource limits are not enforceable on this platform")
     return result
 
 
-def _resource_limits_supported():
+def _resource_limits_supported(limits=None):
     try:
         import resource
     except ImportError:
         return False
-    return hasattr(resource, "setrlimit") and hasattr(resource, "RLIMIT_CPU")
+    if not hasattr(resource, "setrlimit"):
+        return False
+    required = {
+        "cpu_seconds": "RLIMIT_CPU",
+        "memory_bytes": "RLIMIT_AS",
+        "open_files": "RLIMIT_NOFILE",
+        "processes": "RLIMIT_NPROC",
+        "file_size_bytes": "RLIMIT_FSIZE",
+    }
+    return all(hasattr(resource, required[name]) for name, value in (limits or {}).items() if value > 0)
 
 
 def _validate_expected_artifacts(value):
@@ -366,61 +375,92 @@ def _safe_relative_artifact_path(value):
 
 
 def _collect_artifacts(workspace, expected_artifacts, max_bytes=10 * 1024 * 1024):
+    """Hash expected regular files without following symlinks in any path component."""
+    import errno
     import hashlib
     import os
     import stat as stat_module
+
     collected = []
     total = 0
-    for relative in expected_artifacts:
+    dir_flag = getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if (not dir_flag or not nofollow_flag or os.open not in getattr(os, "supports_dir_fd", set())):
+        return [
+            {"path": str(path), "status": "unsafe", "reason": "safe_open_unavailable"}
+            for path in expected_artifacts
+        ][:100]
+
+    for relative in expected_artifacts[:100]:
         safe = _safe_relative_artifact_path(relative)
         if safe is None:
             collected.append({"path": str(relative), "status": "unsafe", "reason": "unsafe_path"})
             continue
-        target = os.path.join(str(workspace), *safe.split("/"))
+        parts = safe.split("/")
+        directory_fd = None
+        file_fd = None
         try:
-            info = os.lstat(target)
-        except FileNotFoundError:
-            collected.append({"path": safe, "status": "missing"})
-            continue
-        except OSError as exc:
-            collected.append({"path": safe, "status": "unreadable", "reason": str(exc)[:200]})
-            continue
-        if stat_module.S_ISLNK(info.st_mode):
-            collected.append({"path": safe, "status": "unsafe", "reason": "symlink"})
-            continue
-        if not stat_module.S_ISREG(info.st_mode):
-            collected.append({"path": safe, "status": "unsafe", "reason": "not_regular_file"})
-            continue
-        if info.st_size > max_bytes or total + info.st_size > max_bytes:
-            collected.append({"path": safe, "status": "oversized", "size_bytes": info.st_size})
-            continue
-        try:
+            directory_fd = os.open(str(workspace), os.O_RDONLY | dir_flag | nofollow_flag)
+            for component in parts[:-1]:
+                next_fd = os.open(
+                    component, os.O_RDONLY | dir_flag | nofollow_flag,
+                    dir_fd=directory_fd,
+                )
+                os.close(directory_fd)
+                directory_fd = next_fd
+            file_fd = os.open(
+                parts[-1], os.O_RDONLY | nofollow_flag,
+                dir_fd=directory_fd,
+            )
+            before = os.fstat(file_fd)
+            if not stat_module.S_ISREG(before.st_mode):
+                collected.append({"path": safe, "status": "unsafe", "reason": "not_regular_file"})
+                continue
+            if before.st_size > max_bytes or total + before.st_size > max_bytes:
+                collected.append({"path": safe, "status": "oversized", "size_bytes": before.st_size})
+                continue
             digest = hashlib.sha256()
             read_bytes = 0
-            with open(target, "rb") as handle:
-                while True:
-                    chunk = handle.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    read_bytes += len(chunk)
-                    if total + read_bytes > max_bytes:
-                        raise OSError("artifact exceeds byte budget")
-                    digest.update(chunk)
-            after = os.lstat(target)
-            if (after.st_dev, after.st_ino, after.st_size, after.st_mode) != (info.st_dev, info.st_ino, info.st_size, info.st_mode):
+            while True:
+                chunk = os.read(file_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                read_bytes += len(chunk)
+                if total + read_bytes > max_bytes:
+                    break
+                digest.update(chunk)
+            after = os.fstat(file_fd)
+            signature_before = (
+                before.st_dev, before.st_ino, before.st_size, before.st_mode,
+                before.st_mtime_ns, before.st_ctime_ns,
+            )
+            signature_after = (
+                after.st_dev, after.st_ino, after.st_size, after.st_mode,
+                after.st_mtime_ns, after.st_ctime_ns,
+            )
+            if read_bytes > max_bytes - total:
+                collected.append({"path": safe, "status": "oversized", "size_bytes": read_bytes})
+            elif signature_before != signature_after or read_bytes != before.st_size:
                 collected.append({"path": safe, "status": "changed", "reason": "file changed during collection"})
-                continue
-            collected.append({
-                "path": safe,
-                "status": "collected",
-                "size_bytes": info.st_size,
-                "sha256": digest.hexdigest(),
-            })
-            total += info.st_size
-        except (OSError, ValueError) as exc:
-            collected.append({"path": safe, "status": "unreadable", "reason": str(exc)[:200]})
-    return collected[:100]
-
+            else:
+                collected.append({
+                    "path": safe, "status": "collected",
+                    "size_bytes": read_bytes, "sha256": digest.hexdigest(),
+                })
+                total += read_bytes
+        except FileNotFoundError:
+            collected.append({"path": safe, "status": "missing"})
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                collected.append({"path": safe, "status": "unsafe", "reason": "symlink_or_non_directory"})
+            else:
+                collected.append({"path": safe, "status": "unreadable", "reason": str(exc)[:200]})
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if directory_fd is not None:
+                os.close(directory_fd)
+    return collected
 
 def _canonical_execution_specification(argv, workspace, environment_contract, timeout_seconds, output_limit_bytes, resource_limits, expected_artifacts, allowed_commands):
     import hashlib, json as _json
@@ -948,7 +988,7 @@ def run_execution(connection, lock, execution_id):
     except ValueError as exc:
         _persist(connection, lock, execution_id, status="failed", error=str(exc)[:2000], finished_at=_now())
         return
-    if resource_limits and not _resource_limits_supported():
+    if resource_limits and not _resource_limits_supported(resource_limits):
         _persist(connection, lock, execution_id, status="failed", error="resource limits are not enforceable on this platform", finished_at=_now())
         return
     preexec = _make_preexec(resource_limits) if resource_limits else None

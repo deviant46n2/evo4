@@ -130,6 +130,22 @@ class ManagedExecutionTests(unittest.TestCase):
         self.assertEqual(artifacts["out.txt"]["status"], "collected")
         self.assertEqual(artifacts["missing.txt"]["status"], "missing")
 
+    def test_artifact_collection_rejects_symlinked_parent_directory(self):
+        from evo_experiments.execution import _collect_artifacts
+        root = Path(tempfile.mkdtemp())
+        outside = Path(tempfile.mkdtemp())
+        (outside / "secret.txt").write_text("outside", encoding="utf-8")
+        (root / "linked").symlink_to(outside, target_is_directory=True)
+        result = _collect_artifacts(str(root), ["linked/secret.txt"])
+        self.assertEqual(result[0]["status"], "unsafe")
+        self.assertNotIn("sha256", result[0])
+
+    def test_resource_support_requires_every_requested_limit(self):
+        from evo_experiments.execution import _resource_limits_supported
+        with patch("evo_experiments.execution._resource_limits_supported", wraps=_resource_limits_supported):
+            with patch.dict("sys.modules", {"resource": None}):
+                self.assertFalse(_resource_limits_supported({"cpu_seconds": 1}))
+
     def test_duplicate_execution_and_unapproved_command_are_rejected(self):
         job = self.reserve("duplicate")
         with self.assertRaisesRegex(ValueError, "not permitted"):
