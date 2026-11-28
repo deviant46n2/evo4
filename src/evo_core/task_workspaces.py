@@ -530,7 +530,15 @@ def list_task_workspace_operations(store, *, project_id=None, status=None, limit
             " ORDER BY created_at DESC, operation_id DESC LIMIT ?",
             (*values, limit),
         ).fetchall()
-    return [dict(row) for row in rows]
+    public_fields = (
+        "operation_id", "task_id", "parent_workspace_id", "task_workspace_id",
+        "project_id", "checkout_id", "source_revision", "destination_path",
+        "status", "created_at", "updated_at",
+    )
+    return [
+        {**{key: row[key] for key in public_fields}, "error_recorded": bool(row["error"])}
+        for row in rows
+    ]
 
 
 def get_task_workspace_operation_status(store, operation_id):
@@ -540,6 +548,7 @@ def get_task_workspace_operation_status(store, operation_id):
     change its status, invoke Git, or remove/re-register any filesystem resource.
     """
     operation = get_task_workspace_operation(store, operation_id)
+    operation["error_recorded"] = bool(operation.pop("error", None))
     path = Path(operation["destination_path"])
     try:
         is_symlink = path.is_symlink()
