@@ -65,6 +65,38 @@ class AgentOrchestrationTests(unittest.TestCase):
             {"verification_status": "failed"},
         ]), "failed")
 
+    def test_verification_evidence_summary_tracks_command_coverage_and_snapshots(self):
+        summary = orchestration.verification_evidence_summary([
+            {
+                "verification_commands": [["pytest", "-q"], ["pytest", "-q"], ["ruff", "check", "."]],
+                "verification_checks": [
+                    {"command": ["pytest", "-q"], "status": "passed", "workspace_snapshot_stable": True},
+                    {"command": ["pytest", "-q"], "status": "failed", "workspace_snapshot_stable": False},
+                    {"command": ["unexpected"], "status": "error", "workspace_snapshot_stable": None},
+                ],
+            },
+            {
+                "verification_commands": [["python", "-m", "compileall"]],
+                "verification_checks": [
+                    {"command": ["python", "-m", "compileall"], "status": "denied", "workspace_snapshot_stable": None},
+                ],
+            },
+        ])
+        self.assertEqual(summary, {
+            "configured_commands": 4,
+            "recorded_checks": 4,
+            "unrecorded_commands": 1,
+            "unmatched_checks": 1,
+            "passed_checks": 1,
+            "failed_checks": 1,
+            "denied_checks": 1,
+            "error_checks": 1,
+            "timed_out_checks": 0,
+            "stable_snapshots": 1,
+            "changed_or_incomplete_snapshots": 1,
+            "unavailable_snapshots": 2,
+        })
+
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
         self.assertEqual([s["position"] for s in self.plan["steps"]], [0, 1])
