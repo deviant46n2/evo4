@@ -27,6 +27,27 @@ class AgentOrchestrationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def test_plan_verification_state_preserves_incomplete_and_not_required_distinctions(self):
+        state = orchestration.plan_verification_state
+        self.assertEqual(state([]), "not_configured")
+        self.assertEqual(state([{"verification_status": "passed"}]), "passed")
+        self.assertEqual(state([{"verification_status": "failed"}]), "failed")
+        self.assertEqual(state([{"verification_status": "not_run"}]), "not_run")
+        self.assertEqual(state([{"verification_status": "not_required"}]), "not_required")
+        self.assertEqual(state([{"verification_status": "not_configured"}]), "not_configured")
+        self.assertEqual(state([
+            {"verification_status": "passed"},
+            {"verification_status": "not_configured"},
+        ]), "incomplete")
+        self.assertEqual(state([
+            {"verification_status": "passed"},
+            {"verification_status": "not_required"},
+        ]), "incomplete")
+        self.assertEqual(state([
+            {"verification_status": "passed"},
+            {"verification_status": "failed"},
+        ]), "failed")
+
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
         self.assertEqual([s["position"] for s in self.plan["steps"]], [0, 1])
