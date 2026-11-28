@@ -135,6 +135,7 @@ class AgentApproval(BaseModel):
 
 
 class TaskWorkspaceFileApply(BaseModel):
+    path: str = Field(min_length=1, max_length=2000)
     content: str = Field(min_length=1, max_length=1048576)
     expected_sha256: str | None = None
     approved: bool = False
@@ -357,7 +358,7 @@ def create_app(config_path="config.toml", provider_name=None):
     def apply_task_workspace_file_route(operation_id: str, request: TaskWorkspaceFileApply):
         try:
             return apply_task_workspace_file(
-                store, operation_id, request.path if hasattr(request, "path") else "",
+                store, operation_id, request.path,
                 request.content, expected_sha256=request.expected_sha256,
                 approved=request.approved,
             )
