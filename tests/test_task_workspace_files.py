@@ -189,6 +189,22 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             {first["change_id"], second["change_id"]},
         )
 
+    def test_recent_pending_write_is_not_reconciled_while_active(self):
+        result = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "active.txt",
+            "active", approved=True,
+        )
+        with self.store.lock:
+            self.store.db.execute(
+                "UPDATE task_workspace_file_changes SET status='pending' WHERE change_id=?",
+                (result["change_id"],),
+            )
+            self.store.db.commit()
+        recent = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"],
+        )
+        self.assertEqual(recent["items"][0]["status"], "pending")
+
     def test_legacy_change_history_schema_is_migrated(self):
         with self.store.lock:
             self.store.db.execute(
