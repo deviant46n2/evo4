@@ -54,7 +54,7 @@ type RegistryWorkspace = {workspace_id:string;name:string;status:string;project_
 type ProjectSummary = {project_id:string;name:string;status:string};
 type ConfigurationSummary = {configuration_id:string;name:string;status:string};
 type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_status:string};
-type TaskWorkspaceReview = {operation_id:string;status:string;stable:boolean;unstable:boolean;source_revision:string;current_head:string;changed_files:Array<{status:string;path:string}>;excluded_files:string[];unreadable_files:Array<{path:string;reason:string}>;patch:string;patch_bytes:number;truncated:boolean;truncation_reason:string|null};
+type TaskWorkspaceReview = {operation_id:string;status:string;stable:boolean;unstable:boolean;source_revision:string;current_head:string;changed_files:Array<{status:string;path:string}>;changed_file_count:number;changed_files_omitted:number;excluded_files:string[];excluded_files_omitted:number;unreadable_files:Array<{path:string;reason:string}>;unreadable_files_omitted:number;patch:string;patch_bytes:number;truncated:boolean;truncation_reason:string|null;max_files:number;max_bytes:number};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -231,6 +231,10 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [isolateWorkspace, setIsolateWorkspace] = useState(false);
   const [taskReview, setTaskReview] = useState<TaskWorkspaceReview | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [taskReviewError, setTaskReviewError] = useState("");
+  const taskReviewGeneration = useRef(0);
+  const selectedRunRef = useRef<string | null>(selected);
+  selectedRunRef.current = selected;
   const [registryWorkspaces, setRegistryWorkspaces] = useState<RegistryWorkspace[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [configurations, setConfigurations] = useState<ConfigurationSummary[]>([]);
@@ -340,12 +344,19 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     return () => {window.clearInterval(handle);window.removeEventListener("evo-demo-data-changed",changed);};
   }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan?.id]);
   async function loadTaskReview(operationId: string) {
-    setReviewBusy(true); setError("");
+    const token = ++taskReviewGeneration.current;
+    const requestedRunId = selectedRunRef.current;
+    setReviewBusy(true); setTaskReviewError("");
     try {
       const result = await api<TaskWorkspaceReview>("/task-workspaces/" + encodeURIComponent(operationId) + "/review");
+      if (token !== taskReviewGeneration.current || selectedRunRef.current !== requestedRunId) return;
       setTaskReview(result);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setReviewBusy(false); }
+    } catch (e) {
+      if (token !== taskReviewGeneration.current || selectedRunRef.current !== requestedRunId) return;
+      setTaskReviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (token === taskReviewGeneration.current) setReviewBusy(false);
+    }
   }
   async function start(event: React.FormEvent) {
     event.preventDefault();
@@ -353,7 +364,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setBusy(true); setError("");
     try {
       const result = await api<{run_id: string;task_workspace_operation_id?:string}>("/agents", json({ request: request.trim(), workspace_id: workspaceId, isolate_workspace: isolateWorkspace }));
-      setRequest(""); setTaskReview(null); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
+      setRequest(""); taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -402,7 +413,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setPlans([]);
     setSelected(null);
     setDetail(null);
+    taskReviewGeneration.current += 1;
     setTaskReview(null);
+    setTaskReviewError("");
     setPlan(null);
     setError("");
     void refresh();
@@ -463,16 +476,16 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
         <h3>Plan event history</h3><div className="event-list">{plan.events.map(event=><article className="event-card" key={event.id}><div className="event-head"><strong>{event.type.replaceAll("_"," ")}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div>{Object.keys(event.payload).length>0&&<pre>{JSON.stringify(event.payload,null,2)}</pre>}</article>)}</div>
         {plan.error&&<p className="failed-note">{plan.error}</p>}
         {["proposed","approved"].includes(plan.status)&&<button disabled={busy||planning} onClick={()=>void approveAndExecutePlan()}>{plan.status==="proposed"?"Approve plan and execute":"Execute approved plan"}</button>}
-        {plan.run_id&&<button className="quiet-button" onClick={()=>{setSelected(plan.run_id!);void refreshDetail(plan.run_id!);}}>Open execution run</button>}
+        {plan.run_id&&<button className="quiet-button" onClick={()=>{taskReviewGeneration.current += 1;setTaskReview(null);setTaskReviewError("");setSelected(plan.run_id!);void refreshDetail(plan.run_id!);}}>Open execution run</button>}
       </div>}
     </section>
     <div className="agent-layout">
       <section className="workspace-panel run-list-panel"><div className="panel-toolbar"><div><h2>Run history</h2><p>Most recent first</p></div><button className="quiet-button" onClick={() => void refresh()}>Refresh</button></div>
-        <div className="run-list">{runs.map(run => <button key={run.id} className={"run-row " + (selected === run.id ? "selected" : "")} onClick={() => { setTaskReview(null); setSelected(run.id); void refreshDetail(run.id); }}><span className={"run-status " + run.status}>{run.status}</span><strong>{String(run.metadata.request || run.summary || "Coding run").slice(0, 90)} {run.metadata.demo_seed&&<span className="demo-tag">SAMPLE</span>}</strong><small>{new Date(run.started_at).toLocaleString()}</small></button>)}{runs.length === 0 && <div className="empty-state">No agent runs yet.</div>}</div>
+        <div className="run-list">{runs.map(run => <button key={run.id} className={"run-row " + (selected === run.id ? "selected" : "")} onClick={() => { taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setSelected(run.id); void refreshDetail(run.id); }}><span className={"run-status " + run.status}>{run.status}</span><strong>{String(run.metadata.request || run.summary || "Coding run").slice(0, 90)} {run.metadata.demo_seed&&<span className="demo-tag">SAMPLE</span>}</strong><small>{new Date(run.started_at).toLocaleString()}</small></button>)}{runs.length === 0 && <div className="empty-state">No agent runs yet.</div>}</div>
       </section>
       <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <div className="inline-actions"><span className={"run-status " + (detail.background_task?.status || detail.status)}>{detail.background_task?.status || detail.status}</span>{detail.background_task && ["queued","running","awaiting_approval","cancel_requested"].includes(detail.background_task.status) && <button className="quiet-button danger" onClick={()=>void cancelRun()}>Request cancellation</button>}</div>}</div>
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
-          {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Changes are isolated from the registered source checkout.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)?"Refresh review":"Review changes"}</button></div>{taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<><div className="policy-note">Source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_files.length} changed files · {taskReview.patch_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable review":"Review may be incomplete"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"limit"}</span>}</div>{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}</div><pre>{taskReview.patch||"No reviewable patch content."}</pre></>}</section>}
+          {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Read-only snapshot of changes in this task’s isolated worktree.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)?"Refresh review":"Review changes"}</button></div>{taskReviewError&&<p className="workspace-error" role="alert">{taskReviewError}</p>}{taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<><div className="policy-note">Pinned source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_file_count} changed files · {taskReview.patch_bytes.toLocaleString()} / {taskReview.max_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable snapshot":taskReview.truncated?"Incomplete snapshot":"Snapshot changed during review"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"output limit"}</span>}</div>{taskReview.changed_files_omitted>0&&<p className="policy-note">{taskReview.changed_files_omitted} changed file entries omitted by the {taskReview.max_files}-file metadata limit.</p>}{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}{taskReview.excluded_files_omitted>0?` · ${taskReview.excluded_files_omitted} more omitted`:""}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}{taskReview.unreadable_files_omitted>0?` · ${taskReview.unreadable_files_omitted} more omitted`:""}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}{taskReview.changed_files.length===0&&<div className="empty-state">No reviewable changed files were found.</div>}</div><details><summary>View patch ({taskReview.patch_bytes.toLocaleString()} bytes)</summary><pre>{taskReview.patch||"No patch content."}</pre></details></>}</section>}
           {detail.pending_approval && <div className="approval-card"><div className="approval-title">Approval required · {detail.pending_approval.tool_name}</div><pre>{JSON.stringify(detail.pending_approval.arguments, null, 2)}</pre><div className="inline-actions"><button className="quiet-button danger" onClick={() => void decide(false)}>Deny</button><button onClick={() => void decide(true)}>Approve action</button></div></div>}
           <section className="workspace-panel"><h3>Task lifecycle</h3><div className="event-list">{(detail.background_events || []).map(event => <article className="event-card" key={"task-" + event.id}><div className="event-head"><strong>{event.type.replaceAll("_", " ")}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div><pre>{JSON.stringify(event.payload, null, 2)}</pre></article>)}{!(detail.background_events || []).length && <div className="empty-state">No lifecycle events recorded.</div>}</div></section>
           <div className="event-list">{detail.events.map(event => <article className="event-card" key={event.id}><div className="event-head"><strong>{event.tool_name}</strong><span className={"run-status " + event.status}>{event.status}</span></div><pre>{JSON.stringify(event.input, null, 2)}</pre><p>{event.output}</p><small>{new Date(event.created_at).toLocaleString()}</small></article>)}{detail.events.length === 0 && <div className="empty-state">No tool activity recorded yet.</div>}</div>
