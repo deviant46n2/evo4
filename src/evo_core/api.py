@@ -455,6 +455,16 @@ def create_app(config_path="config.toml", provider_name=None):
             # this task workspace and the owning agent run.
             with lab_db.lock:
                 executions = managed_executions_for_parent(lab_db.connection, row["id"])
+            executions = [
+                execution for execution in executions
+                if (
+                    execution.get("agent_run_id") == row["id"]
+                    and execution.get("workspace_id") == operation.get("task_workspace_id")
+                    and execution.get("project_id") == operation.get("project_id")
+                    and execution.get("source_revision") == operation.get("source_revision")
+                    and execution.get("workspace") == operation.get("destination_path")
+                )
+            ]
             item["managed_executions_omitted"] = max(0, len(executions) - 10)
             executions = executions[-10:]
             def bounded_execution_output(value, limit=8192):
@@ -464,14 +474,6 @@ def create_app(config_path="config.toml", provider_name=None):
                     data = data[-limit:]
                 return data.decode("utf-8", errors="replace"), truncated
             for execution in executions:
-                if (
-                    execution.get("agent_run_id") != row["id"]
-                    or execution.get("workspace_id") != operation.get("task_workspace_id")
-                    or execution.get("project_id") != operation.get("project_id")
-                    or execution.get("source_revision") != operation.get("source_revision")
-                    or execution.get("workspace") != operation.get("destination_path")
-                ):
-                    continue
                 approval = execution.get("approval_evidence") or {}
                 stdout, stdout_truncated = bounded_execution_output(execution.get("stdout", ""))
                 stderr, stderr_truncated = bounded_execution_output(execution.get("stderr", ""))
