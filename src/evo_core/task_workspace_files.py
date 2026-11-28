@@ -388,6 +388,10 @@ def list_task_workspace_file_changes(store, operation_id, *, limit=100):
     operation, _root = _task_root(store, operation_id)
     _ensure_file_change_table(store)
     with store.lock:
+        total = store.db.execute(
+            "SELECT COUNT(*) FROM task_workspace_file_changes WHERE operation_id=?",
+            (operation["operation_id"],),
+        ).fetchone()[0]
         rows = store.db.execute(
             """SELECT change_id, operation_id, path, before_sha256, after_sha256,
                       size_bytes, created_at
@@ -399,5 +403,7 @@ def list_task_workspace_file_changes(store, operation_id, *, limit=100):
         "operation_id": operation["operation_id"],
         "source_revision": operation["source_revision"],
         "items": [dict(row) for row in rows],
+        "total": total,
+        "truncated": total > limit,
         "limit": limit,
     }
