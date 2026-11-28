@@ -224,6 +224,43 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         item = next(row for row in history["items"] if row["path"] == "post-mutation.txt")
         self.assertEqual(item["status"], "applied")
 
+    def test_post_replace_fsync_failure_is_reconciled_as_applied(self):
+        import hashlib
+        import os
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+
+        target = self.task_root / "README.txt"
+        expected = hashlib.sha256(target.read_bytes()).hexdigest()
+        real_fsync = os.fsync
+        calls = {"count": 0}
+
+        def fail_directory_fsync(fd):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise OSError("simulated directory fsync failure after replace")
+            return real_fsync(fd)
+
+        with patch("evo_core.task_workspace_files.os.fsync", side_effect=fail_directory_fsync):
+            with self.assertRaises(ValueError):
+                apply_task_workspace_file(
+                    self.store, self.operation["operation_id"], "README.txt",
+                    "replacement persisted", expected_sha256=expected, approved=True,
+                )
+        self.assertEqual(target.read_text(), "replacement persisted")
+        with self.store.lock:
+            self.store.db.execute(
+                "UPDATE task_workspace_file_changes SET created_at=? WHERE path=?",
+                ((datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat(),
+                 "README.txt"),
+            )
+            self.store.db.commit()
+        history = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"],
+        )
+        item = next(row for row in history["items"] if row["path"] == "README.txt")
+        self.assertEqual(item["status"], "applied")
+
     def test_recent_pending_write_is_not_reconciled_while_active(self):
         result = apply_task_workspace_file(
             self.store, self.operation["operation_id"], "active.txt",
