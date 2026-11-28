@@ -136,7 +136,7 @@ class AgentApproval(BaseModel):
 
 class TaskWorkspaceFileApply(BaseModel):
     path: str = Field(min_length=1, max_length=2000)
-    content: str = Field(min_length=1, max_length=1048576)
+    content: str = Field(min_length=0, max_length=1048576)
     expected_sha256: str | None = None
     approved: bool = False
 
