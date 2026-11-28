@@ -623,17 +623,31 @@ def _untracked_signature(root, paths, max_total_bytes=64 * 1024 * 1024):
                 consumed = max_total_bytes
                 continue
             digest = hashlib.sha256()
+            over_budget = False
             try:
+                remaining = max_total_bytes - consumed
                 while True:
-                    chunk = os.read(fd, 65536)
+                    # Read at most one byte beyond the remaining allowance so
+                    # a file that grows during hashing cannot evade the budget.
+                    chunk = os.read(fd, min(65536, remaining + 1))
                     if not chunk:
                         break
+                    if len(chunk) > remaining:
+                        over_budget = True
+                        consumed = max_total_bytes
+                        break
                     consumed += len(chunk)
+                    remaining -= len(chunk)
                     digest.update(chunk)
                 after = os.fstat(fd)
             finally:
                 os.close(fd)
-            result.append((path, _stat_signature(after), digest.hexdigest()) if _stat_signature(before) == _stat_signature(after) else (path, "unstable"))
+            if _stat_signature(before) != _stat_signature(after):
+                result.append((path, "unstable"))
+            elif over_budget:
+                result.append((path, "over_budget", _stat_signature(after)))
+            else:
+                result.append((path, _stat_signature(after), digest.hexdigest()))
         except OSError:
             result.append((path, None))
     return tuple(result)
@@ -765,7 +779,7 @@ def get_task_workspace_review(
             record_unreadable(path, "unsafe_path")
             continue
         if _is_excluded(rel):
-            excluded.append(path)
+            record_excluded(path)
             continue
         candidate = root / rel
         cursor = root
@@ -796,10 +810,10 @@ def get_task_workspace_review(
     for path in untracked_paths:
         rel = _safe_relative_path(path)
         if rel is None:
-            unreadable.append({"path": path, "reason": "unsafe_path"})
+            record_unreadable(path, "unsafe_path")
             continue
         if _is_excluded(rel):
-            excluded.append(path)
+            record_excluded(path)
             continue
         candidate = root / rel
         cursor = root
@@ -810,11 +824,11 @@ def get_task_workspace_review(
                 symlink = True
                 break
         if symlink or candidate.is_symlink():
-            unreadable.append({"path": path, "reason": "symlink"})
+            record_unreadable(path, "symlink")
             continue
         if not candidate.is_file():
             continue
-        if len(changed) >= max_files:
+        if metadata_count >= max_files:
             changed_omitted += 1
             truncated = True
             if truncation_reason is None:
@@ -874,7 +888,7 @@ def get_task_workspace_review(
                     break
                 chunks.append(chunk)
                 read_total += len(chunk)
-                if b"\\x00" in chunk:
+                if b"\x00" in chunk:
                     binary = True
                     break
             file_truncated = False
@@ -920,7 +934,7 @@ def get_task_workspace_review(
     diff_after = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated, strip_output=False)
     untracked_after_truncated = []
     untracked_after = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated, strip_output=False)
-    untracked_after_sig = _untracked_signature(root, [p for p in untracked_after.split("\x00") if p.strip()])
+    untracked_after_sig = _untracked_signature(root, [p for p in untracked_after.split("\x00") if p])
     metadata_truncated = bool(head_after_truncated or status_after_truncated or diff_after_truncated or untracked_after_truncated)
     if metadata_truncated:
         truncated = True
