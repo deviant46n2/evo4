@@ -317,14 +317,14 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                     {"content": "", "tool_calls": [{
                         "id": "write-1", "type": "function",
                         "function": {"name": "write_file", "arguments": {
-                            "path": "generated.py", "content": "VALUE = 42\\n",
+                            "path": "generated.py", "content": "VALUE = 42\n",
                         }},
                     }]},
                     {"content": "", "tool_calls": [{
                         "id": "test-write-1", "type": "function",
                         "function": {"name": "write_file", "arguments": {
                             "path": "test_generated.py",
-                            "content": "import unittest\\nfrom generated import VALUE\\n\\nclass GeneratedValueTests(unittest.TestCase):\\n    def test_generated_value(self):\\n        self.assertEqual(VALUE, 42)\\n",
+                            "content": "import unittest\nfrom generated import VALUE\n\nclass GeneratedValueTests(unittest.TestCase):\n    def test_generated_value(self):\n        self.assertEqual(VALUE, 42)\n",
                         }},
                     }]},
                     {"content": "", "tool_calls": [{
@@ -376,7 +376,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["verification"], "passed")
-        self.assertEqual((self.task_root / "generated.py").read_text(), "VALUE = 42\\n")
+        self.assertEqual((self.task_root / "generated.py").read_text(), "VALUE = 42\n")
         self.assertEqual(self._git(self.source, "rev-parse", "HEAD"), source_head)
         self.assertEqual(self._git(self.source, "status", "--porcelain"), source_status)
 
