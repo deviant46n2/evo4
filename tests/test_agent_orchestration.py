@@ -36,7 +36,6 @@ class AgentOrchestrationTests(unittest.TestCase):
             }],
         })
         step_id = plan["steps"][0]["id"]
-        orchestration.finish_step if False else None
         self.db.execute(
             "UPDATE agent_plan_steps SET verification_status='not_required' WHERE id=?",
             (step_id,),
