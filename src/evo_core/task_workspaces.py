@@ -128,6 +128,7 @@ _DEFAULT_GIT_OUTPUT_BYTES = 8 * 1024 * 1024
 
 def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None, discover_helpers=True, strip_output=True):
     """Run Git without inherited Git overrides, external helpers, or unbounded output."""
+    operation_deadline = __import__("time").monotonic() + timeout
     safe_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     if env is not None:
         safe_env.update({key: value for key, value in env.items() if not key.startswith("GIT_")})
@@ -173,9 +174,12 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
             ):
                 discovery_truncated = []
                 try:
+                    discovery_remaining = operation_deadline - __import__("time").monotonic()
+                    if discovery_remaining <= 0:
+                        raise TaskWorkspaceProvisioningError("git helper discovery timed out")
                     discovery = _git(
                         root, "config", "--local", "--name-only", "--get-regexp", pattern,
-                        timeout=min(timeout, 10), max_output_bytes=65536,
+                        timeout=min(discovery_remaining, 10), max_output_bytes=65536,
                         truncated=discovery_truncated, env=safe_env, discover_helpers=False,
                     )
                 except TaskWorkspaceProvisioningError as exc:
@@ -265,7 +269,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         out_thread.start()
         err_thread.start()
         try:
-            proc.wait(timeout=timeout)
+            remaining = operation_deadline - __import__("time").monotonic()\n            if remaining <= 0:\n                raise subprocess.TimeoutExpired(command, timeout)\n            proc.wait(timeout=remaining)
         except subprocess.TimeoutExpired as exc:
             _cleanup_process_group(proc)
             out_thread.join(timeout=2)
