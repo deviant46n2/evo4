@@ -1167,7 +1167,17 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
 
     root_fd = None
     try:
+        root_before = os.stat(root, follow_symlinks=False)
+        if not stat.S_ISDIR(root_before.st_mode):
+            raise OSError("task workspace root changed type")
         root_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        root_opened = os.fstat(root_fd)
+        if (
+            not stat.S_ISDIR(root_opened.st_mode)
+            or (root_opened.st_dev, root_opened.st_ino)
+            != (root_before.st_dev, root_before.st_ino)
+        ):
+            raise OSError("task workspace root changed before traversal")
         visit(root_fd, Path())
     except (OSError, OverflowError, TimeoutError) as exc:
         return {"fingerprint": None, "complete": False, "file_count": files,

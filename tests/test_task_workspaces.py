@@ -507,6 +507,34 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertIsNone(snapshot["fingerprint"])
         self.assertIn("directory changed before traversal", snapshot["reason"])
 
+    def test_fingerprint_rejects_root_replacement_before_traversal(self):
+        import os
+        from unittest.mock import patch
+        from evo_core.task_workspaces import get_task_workspace_fingerprint
+
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"],
+            "fingerprint-root-race", self.destinations,
+        )
+        task_path = Path(result["canonical_path"])
+        real_open = os.open
+        replaced = []
+
+        def replace_before_open(path, flags, *args, **kwargs):
+            if path == str(task_path) and flags & os.O_DIRECTORY and not replaced:
+                os.rename(task_path, task_path.with_name(task_path.name + "-original"))
+                task_path.mkdir()
+                replaced.append(True)
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open):
+            snapshot = get_task_workspace_fingerprint(self.store, result["operation_id"])
+
+        self.assertEqual(replaced, [True])
+        self.assertFalse(snapshot["complete"])
+        self.assertIsNone(snapshot["fingerprint"])
+        self.assertIn("task workspace root changed before traversal", snapshot["reason"])
+
     def test_fingerprint_directory_entry_budget_returns_incomplete(self):
         from unittest.mock import patch
         from evo_core.task_workspaces import get_task_workspace_fingerprint
