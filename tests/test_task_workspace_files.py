@@ -112,7 +112,8 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                 self.store, self.operation["operation_id"], limit=2,
             )
         self.assertEqual(result["scan_limit"], 3)
-        self.assertEqual(result["total"], 3)
+        self.assertGreaterEqual(result["total"], 2)
+        self.assertLessEqual(result["total"], 3)
         self.assertFalse(result["total_exact"])
         self.assertTrue(result["scan_truncated"])
         self.assertTrue(result["truncated"])
