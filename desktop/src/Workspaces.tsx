@@ -346,7 +346,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   async function loadTaskReview(operationId: string) {
     const token = ++taskReviewGeneration.current;
     const requestedRunId = selectedRunRef.current;
-    setReviewBusy(true); setTaskReviewError("");
+    setReviewBusy(true); setTaskReviewError(""); setTaskReview(null);
     try {
       const result = await api<TaskWorkspaceReview>("/task-workspaces/" + encodeURIComponent(operationId) + "/review");
       if (token !== taskReviewGeneration.current || selectedRunRef.current !== requestedRunId) return;
@@ -364,7 +364,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setBusy(true); setError("");
     try {
       const result = await api<{run_id: string;task_workspace_operation_id?:string}>("/agents", json({ request: request.trim(), workspace_id: workspaceId, isolate_workspace: isolateWorkspace }));
-      setRequest(""); taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
+      setRequest(""); taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setReviewBusy(false); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -416,6 +416,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     taskReviewGeneration.current += 1;
     setTaskReview(null);
     setTaskReviewError("");
+    setReviewBusy(false);
     setPlan(null);
     setError("");
     void refresh();
@@ -481,7 +482,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     </section>
     <div className="agent-layout">
       <section className="workspace-panel run-list-panel"><div className="panel-toolbar"><div><h2>Run history</h2><p>Most recent first</p></div><button className="quiet-button" onClick={() => void refresh()}>Refresh</button></div>
-        <div className="run-list">{runs.map(run => <button key={run.id} className={"run-row " + (selected === run.id ? "selected" : "")} onClick={() => { taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setSelected(run.id); void refreshDetail(run.id); }}><span className={"run-status " + run.status}>{run.status}</span><strong>{String(run.metadata.request || run.summary || "Coding run").slice(0, 90)} {run.metadata.demo_seed&&<span className="demo-tag">SAMPLE</span>}</strong><small>{new Date(run.started_at).toLocaleString()}</small></button>)}{runs.length === 0 && <div className="empty-state">No agent runs yet.</div>}</div>
+        <div className="run-list">{runs.map(run => <button key={run.id} className={"run-row " + (selected === run.id ? "selected" : "")} onClick={() => { taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setReviewBusy(false); setSelected(run.id); void refreshDetail(run.id); }}><span className={"run-status " + run.status}>{run.status}</span><strong>{String(run.metadata.request || run.summary || "Coding run").slice(0, 90)} {run.metadata.demo_seed&&<span className="demo-tag">SAMPLE</span>}</strong><small>{new Date(run.started_at).toLocaleString()}</small></button>)}{runs.length === 0 && <div className="empty-state">No agent runs yet.</div>}</div>
       </section>
       <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <div className="inline-actions"><span className={"run-status " + (detail.background_task?.status || detail.status)}>{detail.background_task?.status || detail.status}</span>{detail.background_task && ["queued","running","awaiting_approval","cancel_requested"].includes(detail.background_task.status) && <button className="quiet-button danger" onClick={()=>void cancelRun()}>Request cancellation</button>}</div>}</div>
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
