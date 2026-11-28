@@ -492,6 +492,36 @@ DEFAULT_REVIEW_MAX_FILES = 100
 DEFAULT_REVIEW_MAX_BYTES = 256 * 1024
 
 
+def _quote_patch_path(path_text):
+    """Quote unusual paths so filenames cannot inject patch headers."""
+    escaped = []
+    needs_quotes = False
+    for char in path_text:
+        code = ord(char)
+        if char == "\\\\":
+            escaped.append("\\\\\\\\")
+            needs_quotes = True
+        elif char == '"':
+            escaped.append('\\\\"')
+            needs_quotes = True
+        elif char == "\\t":
+            escaped.append("\\\\t")
+            needs_quotes = True
+        elif char == "\\n":
+            escaped.append("\\\\n")
+            needs_quotes = True
+        elif char == "\\r":
+            escaped.append("\\\\r")
+            needs_quotes = True
+        elif code < 32 or code >= 127:
+            escaped.append(f"\\\\{code:03o}")
+            needs_quotes = True
+        else:
+            escaped.append(char)
+    value = "".join(escaped)
+    return '"' + value + '"' if needs_quotes else value
+
+
 def _safe_relative_path(path_text):
     if not isinstance(path_text, str) or not path_text or "\x00" in path_text:
         return None
