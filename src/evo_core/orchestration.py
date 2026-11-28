@@ -380,7 +380,7 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
                 or any(char not in "0123456789abcdef" for char in fingerprint)
             ):
                 raise ValueError("workspace fingerprints must be lowercase SHA-256 digests")
-        if workspace_snapshot_stable not in (None, True, False):
+        if workspace_snapshot_stable is not None and not isinstance(workspace_snapshot_stable, bool):
             raise ValueError("workspace_snapshot_stable must be a boolean or None")
         if workspace_snapshot_stable is True and (
             workspace_fingerprint_before is None
