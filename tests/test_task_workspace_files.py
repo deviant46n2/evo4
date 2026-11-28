@@ -163,6 +163,32 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         history = list_task_workspace_file_changes(self.store, self.operation["operation_id"])
         self.assertEqual(history["items"][0]["change_id"], result["change_id"])
 
+    def test_change_history_is_bounded_and_reports_total(self):
+        first = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "first.txt",
+            "one", approved=True,
+        )
+        second = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "second.txt",
+            "two", approved=True,
+        )
+        result = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"], limit=1,
+        )
+        self.assertEqual(result["total"], 2)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["items"][0]["change_id"], second["change_id"])
+        complete = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"], limit=2,
+        )
+        self.assertEqual(complete["total"], 2)
+        self.assertFalse(complete["truncated"])
+        self.assertEqual(
+            {item["change_id"] for item in complete["items"]},
+            {first["change_id"], second["change_id"]},
+        )
+
     def test_apply_requires_approval_and_expected_hash_for_replacement(self):
         import hashlib
         target = self.task_root / "README.txt"
