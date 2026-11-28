@@ -236,16 +236,19 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
     def test_interrupted_file_change_journal_is_reconciled(self):
         import hashlib
         import uuid
-        from evo_core.store import utc_now
+        from datetime import datetime, timedelta, timezone
 
+        stale_timestamp = (
+            datetime.now(timezone.utc) - timedelta(minutes=2)
+        ).isoformat()
         applied = apply_task_workspace_file(
             self.store, self.operation["operation_id"], "reconcile.txt",
             "current", approved=True,
         )
         with self.store.lock:
             self.store.db.execute(
-                "UPDATE task_workspace_file_changes SET status='pending' WHERE change_id=?",
-                (applied["change_id"],),
+                "UPDATE task_workspace_file_changes SET status='pending', created_at=? WHERE change_id=?",
+                (stale_timestamp, applied["change_id"]),
             )
             failed_id = str(uuid.uuid4())
             self.store.db.execute(
@@ -254,7 +257,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                     size_bytes, created_at, status)
                    VALUES (?, ?, ?, NULL, ?, ?, ?, 'pending')""",
                 (failed_id, self.operation["operation_id"], "not-created.txt",
-                 hashlib.sha256(b"future").hexdigest(), 6, utc_now()),
+                 hashlib.sha256(b"future").hexdigest(), 6, stale_timestamp),
             )
             uncertain_id = str(uuid.uuid4())
             self.store.db.execute(
@@ -264,7 +267,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
                 (uncertain_id, self.operation["operation_id"], "reconcile.txt",
                  hashlib.sha256(b"old").hexdigest(), hashlib.sha256(b"new").hexdigest(),
-                 3, utc_now()),
+                 3, stale_timestamp),
             )
             self.store.db.commit()
 
