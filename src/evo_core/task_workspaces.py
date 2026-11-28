@@ -122,7 +122,7 @@ def _cleanup_process_group(proc):
         pass
 
 
-def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None):
+def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None, discover_helpers=True):
     # Do not inherit repository-selection or index overrides from the Evo
     # server environment; they could redirect Git away from the validated path.
     if env is None:
@@ -141,19 +141,22 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         "-c", "core.fsmonitor=false",
         "-c", "credential.helper=",
     ]
-    # Discover and blank executable helper configuration.
-    for pattern in (r"^filter\..*\.(smudge|process)$", r"^diff\..*\.(command|textconv)$"):
-        config = subprocess.run(
-            ["git", "-C", str(path), "config", "--local", "--name-only", "--get-regexp", pattern],
-            text=True, encoding="utf-8", errors="replace",
-            capture_output=True, check=False, timeout=10, shell=False, env=env,
-        )
-        if config.returncode not in (0, 1):
-            raise TaskWorkspaceProvisioningError("could not inspect repository configuration")
-        for key in sorted(set(config.stdout.splitlines())):
-            if (re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key) or
-                    re.fullmatch(r"diff\.[A-Za-z0-9._-]+\.(command|textconv)", key)):
-                command.extend(["-c", f"{key}="])
+    if discover_helpers:
+        for pattern in (r"^filter\..*\.(smudge|process)$", r"^diff\..*\.(command|textconv)$"):
+            try:
+                config_stdout = _git(
+                    path, "config", "--local", "--name-only", "--get-regexp", pattern,
+                    timeout=10, max_output_bytes=65536, discover_helpers=False,
+                )
+            except TaskWorkspaceProvisioningError as exc:
+                if "exit 1" in str(exc):
+                    config_stdout = ""
+                else:
+                    raise
+            for key in sorted(set(config_stdout.splitlines())):
+                if (re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key) or
+                        re.fullmatch(r"diff\.[A-Za-z0-9._-]+\.(command|textconv)", key)):
+                    command.extend(["-c", f"{key}="])
     command.extend(args)
     try:
         if max_output_bytes is None:
@@ -678,7 +681,12 @@ def get_task_workspace_review(
         read_total = 0
         binary = False
         try:
-            with candidate.open("rb") as handle:
+            fd = os.open(str(candidate), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            unreadable.append({"path": path, "reason": "unreadable"})
+            continue
+        try:
+            with os.fdopen(fd, "rb", closefd=True) as handle:
                 while read_total < per_file_cap:
                     chunk = handle.read(min(8192, per_file_cap - read_total))
                     if not chunk:
@@ -688,7 +696,6 @@ def get_task_workspace_review(
                     if b"\x00" in chunk:
                         binary = True
                         break
-                # Check if more data remains.
                 file_truncated = (read_total == per_file_cap)
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})

@@ -300,6 +300,8 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except TaskWorkspaceProvisioningError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         except Exception as exc:
             import logging
             logging.getLogger("evo.api").exception("task workspace review failed")
