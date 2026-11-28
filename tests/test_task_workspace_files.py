@@ -205,5 +205,14 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_task_workspace_file(self.store, self.operation["operation_id"], "binary.txt", "a\x00b", approved=True)
 
+
+    def test_apply_rejects_dot_empty_and_repeated_path_segments(self):
+        for path in (".", "src/./new.py", "src//new.py", "src/../new.py", "/absolute.py"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                apply_task_workspace_file(
+                    self.store, self.operation["operation_id"], path,
+                    "unsafe", approved=True,
+                )
+
 if __name__ == "__main__":
     unittest.main()
