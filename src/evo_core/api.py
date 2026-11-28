@@ -1268,7 +1268,6 @@ def create_app(config_path="config.toml", provider_name=None):
         parent_workspace_id = payload.workspace_id.strip()
         binding = _resolve_workspace_for_execution(parent_workspace_id)
         runtime = _build_workspace_runtime_for_request(parent_workspace_id)
-        _require_workspace_dispatch(runtime)
         task_workspace_info = None
         workspace_id = parent_workspace_id
         if payload.isolate_workspace:
@@ -1277,8 +1276,8 @@ def create_app(config_path="config.toml", provider_name=None):
             workspace_id = task_workspace_info["workspace"]["workspace_id"]
             binding = _resolve_workspace_for_execution(workspace_id)
             runtime = _build_workspace_runtime_for_request(workspace_id)
-            _require_workspace_dispatch(runtime)
         invocation = _record_workspace_invocation(runtime, "coding_agent")
+        _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_metadata = {
             "invocation_id": invocation["invocation_id"],

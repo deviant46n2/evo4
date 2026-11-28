@@ -689,7 +689,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            return result.stdout.strip()
+            return result.stdout.rstrip("\n")
 
         git("init", "--initial-branch=main")
         git("config", "user.name", "Evo Test")
@@ -748,7 +748,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
                 capture_output=True, text=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            return result.stdout.strip()
+            return result.stdout.rstrip("\n")
 
         git("init", "--initial-branch=main")
         git("config", "user.name", "Evo Test")
