@@ -148,8 +148,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         # configured clean/smudge/process filter or diff helper to execute.
         helper_keys = []
         for pattern in (
-            r"^filter\\..*\\.(clean|smudge|process)$",
-            r"^diff\\..*\\.(command|textconv)$",
+            r"^filter\..*\.(clean|smudge|process)$",
+            r"^diff\..*\.(command|textconv)$",
         ):
             discovery_truncated = []
             discovery_remaining = operation_deadline - __import__("time").monotonic()
@@ -170,7 +170,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
                 raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
             helper_keys.extend(line for line in discovery.splitlines() if line)
         for key in sorted(set(helper_keys)):
-            if re.fullmatch(r'filter\\..+\\.(clean|smudge|process)', key) or re.fullmatch(r'diff\\..+\\.(command|textconv)', key):
+            if re.fullmatch(r'filter\..+\.(clean|smudge|process)', key) or re.fullmatch(r'diff\..+\.(command|textconv)', key):
                 overrides.extend(["-c", f"{key}="])
 
     command = [
