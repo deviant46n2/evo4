@@ -424,10 +424,10 @@ class CodingAgentTests(unittest.TestCase):
                              lambda name,args: approvals.append((name,args)) or True)
             self.assertEqual(approvals,[])
             event=assistant.store.db.execute(
-                "SELECT status,output_json FROM tool_events ORDER BY created_at DESC LIMIT 1"
+                "SELECT status,output_summary FROM tool_events ORDER BY created_at DESC LIMIT 1"
             ).fetchone()
             self.assertEqual(event["status"],"failed")
-            self.assertIn("not permitted",event["output_json"])
+            self.assertIn("not permitted",event["output_summary"])
             self.assertEqual(result["status"],"completed")
             assistant.close()
 
