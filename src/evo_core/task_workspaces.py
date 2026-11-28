@@ -504,6 +504,63 @@ def get_task_workspace_operation(store, operation_id):
     return dict(row)
 
 
+def list_task_workspace_operations(store, *, project_id=None, status=None, limit=100):
+    """List task workspace operation records without touching their worktrees."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+        raise TaskWorkspaceValidationError("limit must be an integer between 1 and 500")
+    if project_id is not None and (
+        not isinstance(project_id, str) or not project_id.strip() or len(project_id) > 128
+    ):
+        raise TaskWorkspaceValidationError("project_id must be a non-empty identifier")
+    allowed_statuses = {"provisioning", "completed", "recovery_required", "failed"}
+    if status is not None and status not in allowed_statuses:
+        raise TaskWorkspaceValidationError("unsupported task workspace status")
+    _ensure_table(store)
+    clauses, values = [], []
+    if project_id is not None:
+        clauses.append("project_id=?")
+        values.append(project_id.strip())
+    if status is not None:
+        clauses.append("status=?")
+        values.append(status)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    with store.lock:
+        rows = store.db.execute(
+            "SELECT * FROM task_workspaces" + where +
+            " ORDER BY created_at DESC, operation_id DESC LIMIT ?",
+            (*values, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_task_workspace_operation_status(store, operation_id):
+    """Return a read-only operation snapshot with conservative filesystem observations.
+
+    This deliberately does not infer that a provisioning record is abandoned,
+    change its status, invoke Git, or remove/re-register any filesystem resource.
+    """
+    operation = get_task_workspace_operation(store, operation_id)
+    path = Path(operation["destination_path"])
+    try:
+        is_symlink = path.is_symlink()
+        exists = path.exists()
+        is_directory = path.is_dir() if exists and not is_symlink else False
+    except OSError:
+        is_symlink, exists, is_directory = False, False, False
+    operation["filesystem"] = {
+        "path_exists": exists,
+        "path_is_directory": is_directory,
+        "path_is_symlink": is_symlink,
+    }
+    operation["recovery_guidance"] = (
+        "Inspect the recorded destination and Git worktree metadata before taking action. "
+        "Evo has not changed or removed any files."
+        if operation["status"] in ("provisioning", "recovery_required")
+        else None
+    )
+    return operation
+
+
 DEFAULT_REVIEW_MAX_FILES = 100
 DEFAULT_REVIEW_MAX_BYTES = 256 * 1024
 
