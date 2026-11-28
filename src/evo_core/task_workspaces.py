@@ -87,10 +87,13 @@ def _ensure_table(store):
         db.commit()
 
 
-def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
+def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None):
     # Do not inherit repository-selection or index overrides from the Evo
     # server environment; they could redirect Git away from the validated path.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    if env is None:
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    else:
+        env = dict(env)
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -134,6 +137,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             stderr = result.stderr
             returncode = result.returncode
             was_truncated = False
+            if metrics is not None:
+                metrics["captured_bytes"] = len((stdout or "").encode("utf-8", errors="replace")) + len((stderr or "").encode("utf-8", errors="replace"))
         else:
             proc = subprocess.Popen(
                 command,
