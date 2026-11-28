@@ -30,6 +30,27 @@ The source checkout is never used as the task's write target. Task worktrees are
 detached so they cannot silently move a project branch. A task ID is unique
 within a project.
 
+## Agent execution integration
+
+The coding-agent endpoint and approved-plan execution endpoint can opt into
+task isolation:
+
+- `POST /api/v1/agents` accepts `isolate_workspace: true`.
+- `POST /api/v1/agents/plans/{plan_id}/execute` accepts
+  `isolate_workspace=true` as a query parameter.
+
+When enabled, Evo provisions a task worktree from the selected parent workspace
+before creating the runtime invocation snapshot. The run is bound to the new
+task workspace—not the parent checkout—and inherits the parent's immutable
+configuration revision and project policy. The response includes the task
+`workspace_id` and `task_workspace_operation_id`; run metadata also records the
+parent workspace, task identity, operation, and pinned source revision.
+
+The destination parent is the configured `workspace.root`, which must already
+exist and must not overlap any registered checkout. The parent Git checkout
+must be clean. Isolation is currently explicit opt-in for API compatibility;
+non-isolated runs retain their existing behavior.
+
 ## Failure and recovery
 
 The operation record is created before Git mutates worktree metadata. Failures

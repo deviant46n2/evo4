@@ -1198,6 +1198,9 @@ def create_app(config_path="config.toml", provider_name=None):
             binding = _resolve_workspace_for_execution(workspace_id)
             runtime = _build_workspace_runtime_for_request(workspace_id)
             workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
+            task_project_id = binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None)
+            if task_project_id != plan_project_id:
+                raise HTTPException(status_code=409, detail="Task workspace project does not match the approved plan")
             effective_allowed_commands = runtime.effective_allowed_commands
         invocation = _record_workspace_invocation(runtime, "plan_execution")
         _require_workspace_dispatch(runtime)
@@ -1249,7 +1252,13 @@ def create_app(config_path="config.toml", provider_name=None):
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start orchestrated worker") from exc
-        return {"plan_id": plan_id, "run_id": run_id, "status": "running"}
+        response = {"plan_id": plan_id, "run_id": run_id, "status": "running"}
+        if task_workspace_info is not None:
+            response.update({
+                "workspace_id": workspace_id,
+                "task_workspace_operation_id": task_workspace_info["operation_id"],
+            })
+        return response
 
     @app.post("/api/v1/agents", status_code=202)
     def start_agent(payload: AgentCreate):
@@ -1301,7 +1310,13 @@ def create_app(config_path="config.toml", provider_name=None):
             with agent_registry_guard:
                 agent_stop_events.pop(run_id, None)
             raise HTTPException(status_code=503, detail="Unable to start agent worker") from exc
-        return {"run_id": run_id, "status": "running"}
+        response = {"run_id": run_id, "status": "running"}
+        if task_workspace_info is not None:
+            response.update({
+                "workspace_id": workspace_id,
+                "task_workspace_operation_id": task_workspace_info["operation_id"],
+            })
+        return response
 
     def run_agent(run_id, request_text, workspace_id, stop_event, plan_id=None):
         import uuid

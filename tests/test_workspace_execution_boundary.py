@@ -722,6 +722,8 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         run = self.store.get_agent_run(body["run_id"])
         metadata = json.loads(run["metadata_json"])
         self.assertEqual(metadata["workspace_id"], task_workspace_id)
+        self.assertEqual(body["workspace_id"], task_workspace_id)
+        self.assertEqual(body["task_workspace_operation_id"], metadata["task_workspace_operation_id"])
         self.assertEqual(metadata["parent_workspace_id"], self.workspace["workspace_id"])
         self.assertEqual(metadata["task_workspace_source_revision"], source_revision)
         operation = get_task_workspace_for_task(
@@ -734,3 +736,39 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertEqual(str(task_binding["canonical_path"]), metadata["workspace"])
         self.assertEqual(git("rev-parse", "HEAD"), source_revision)
         self.assertEqual(git("status", "--porcelain"), "")
+
+
+    def test_isolated_agent_rejects_dirty_parent_before_dispatch(self):
+        import subprocess
+
+        def git(*args):
+            result = subprocess.run(
+                ["git", "-C", str(self.directory), *args],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
+
+        git("init", "--initial-branch=main")
+        git("config", "user.name", "Evo Test")
+        git("config", "user.email", "evo-test@example.invalid")
+        (self.directory / "tracked.txt").write_text("source\n", encoding="utf-8")
+        git("add", "tracked.txt")
+        git("commit", "-m", "source revision")
+        (self.directory / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
+
+        submitted = []
+        with patch(
+            "evo_core.runtime_binding.RegistryBoundRuntime.require_dispatch_enabled",
+            return_value=None,
+        ), patch.object(self.app.state.chat_executor, "submit", side_effect=lambda *a, **k: submitted.append((a, k))):
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+                "request": "must not run",
+                "workspace_id": self.workspace["workspace_id"],
+                "isolate_workspace": True,
+            })
+
+        self.assertEqual(status, 409)
+        self.assertIn("dirty", body["detail"])
+        self.assertEqual(submitted, [])
+        self.assertEqual(git("status", "--porcelain").count(" M tracked.txt"), 1)
