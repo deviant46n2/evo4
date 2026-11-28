@@ -426,6 +426,13 @@ def create_app(config_path="config.toml", provider_name=None):
                     item["plan_id"] = plan_id
                     item["plan_status"] = plan["status"]
                     item["verification_summary"] = plan["verification_summary"]
+                    step_verifications = [step["verification_status"] for step in plan["steps"]]
+                    if step_verifications and all(value == "passed" for value in step_verifications):
+                        item["verification_state"] = "passed"
+                    elif "failed" in step_verifications:
+                        item["verification_state"] = "failed"
+                    else:
+                        item["verification_state"] = "not_run"
                     item["steps"] = [{
                         "step_id": step["id"], "position": step["position"],
                         "title": step["title"], "status": step["status"],
