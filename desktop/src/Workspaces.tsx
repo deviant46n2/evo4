@@ -59,7 +59,8 @@ type TaskWorkspaceOperation = {operation_id:string;task_id:string;parent_workspa
 type TaskWorkspaceOperationDetail = TaskWorkspaceOperation & {filesystem:{path_exists:boolean;path_is_directory:boolean;path_is_symlink:boolean};recovery_guidance:string|null};
 type TaskWorkspaceFileItem = {name:string;path:string;kind:"directory"|"file"|"symlink"|"other";size_bytes:number|null;modified_at_ns:number};
 type TaskWorkspaceFileListing = {operation_id:string;source_revision:string;path:string;items:TaskWorkspaceFileItem[];total:number;truncated:boolean;limit:number};
-type TaskWorkspaceFileContent = {operation_id:string;source_revision:string;path:string;size_bytes:number;content:string;truncated:boolean;max_bytes:number};
+type TaskWorkspaceFileContent = {operation_id:string;source_revision:string;path:string;size_bytes:number;sha256:string;content:string;truncated:boolean;max_bytes:number};
+type TaskWorkspaceFileChange = {change_id:string;operation_id:string;source_revision:string;path:string;before_sha256:string|null;after_sha256:string;size_bytes:number;created_at:string};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -243,6 +244,8 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [taskOperationError, setTaskOperationError] = useState("");
   const [taskFiles, setTaskFiles] = useState<TaskWorkspaceFileListing | null>(null);
   const [taskFileContent, setTaskFileContent] = useState<TaskWorkspaceFileContent | null>(null);
+  const [taskFileDraft, setTaskFileDraft] = useState("");
+  const [taskFileSaving, setTaskFileSaving] = useState(false);
   const [taskFilePath, setTaskFilePath] = useState("");
   const [taskFileBusy, setTaskFileBusy] = useState(false);
   const [taskFileError, setTaskFileError] = useState("");
@@ -384,7 +387,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     try {
       const params = new URLSearchParams({path, limit:"200"});
       const result = await api<TaskWorkspaceFileListing>("/task-workspaces/" + encodeURIComponent(operationId) + "/files?" + params.toString());
-      setTaskFiles(result); setTaskFilePath(path);
+      setTaskFiles(result); setTaskFilePath(path); setTaskFileDraft("");
     } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
     finally { setTaskFileBusy(false); }
   }
@@ -392,9 +395,27 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null);
     try {
       const params = new URLSearchParams({path, max_bytes:"262144"});
-      setTaskFileContent(await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString()));
+      const result = await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString());
+      setTaskFileContent(result); setTaskFileDraft(result.content);
     } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
     finally { setTaskFileBusy(false); }
+  }
+  async function saveTaskFile(operationId: string) {
+    if (!taskFileContent || taskFileContent.operation_id !== operationId || taskFileSaving) return;
+    if (!window.confirm("Apply the edited contents of " + taskFileContent.path + " to this isolated task workspace? This changes only the task worktree.")) return;
+    setTaskFileSaving(true); setTaskFileError("");
+    try {
+      const result = await api<TaskWorkspaceFileChange>(
+        "/task-workspaces/" + encodeURIComponent(operationId) + "/file",
+        json({path:taskFileContent.path,content:taskFileDraft,expected_sha256:taskFileContent.sha256,approved:true}),
+      );
+      const params = new URLSearchParams({path:result.path,max_bytes:"262144"});
+      const refreshed = await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString());
+      setTaskFileContent(refreshed); setTaskFileDraft(refreshed.content);
+      await loadTaskFiles(operationId, taskFilePath);
+      await loadTaskReview(operationId);
+    } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
+    finally { setTaskFileSaving(false); }
   }
   async function loadTaskReview(operationId: string) {
     const token = ++taskReviewGeneration.current;
@@ -568,7 +589,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
               <div className="inline-actions"><span className="policy-note">/{taskFilePath}</span>{taskFilePath&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),taskFilePath.split("/").slice(0,-1).join("/"))}>Parent directory</button>}<small>{taskFiles.total} entries{taskFiles.truncated?" · list truncated":""}</small></div>
               <div className="event-list">{taskFiles.items.map(item=><div className="event-card" key={item.path}><div className="event-head"><strong>{item.kind==="directory"?"Folder":item.kind==="file"?"File":item.kind==="symlink"?"Symlink":"Other"} · {item.name}</strong><small>{item.size_bytes===null?"":item.size_bytes.toLocaleString()+" bytes"}</small></div>{(item.kind==="directory"||item.kind==="file")&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>item.kind==="directory"?void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),item.path):void openTaskFile(String(detail.metadata.task_workspace_operation_id),item.path)}>{item.kind==="directory"?"Open folder":"Read text file"}</button>}</div>)}{taskFiles.items.length===0&&<div className="empty-state">This directory is empty.</div>}</div>
             </>}
-            {taskFileContent?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<div className="event-card"><div className="event-head"><strong>{taskFileContent.path}</strong><small>{taskFileContent.size_bytes.toLocaleString()} bytes</small></div><pre>{taskFileContent.content}</pre></div>}
+            {taskFileContent?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<div className="event-card"><div className="event-head"><strong>{taskFileContent.path}</strong><small>{taskFileContent.size_bytes.toLocaleString()} bytes · SHA-256 {taskFileContent.sha256.slice(0,12)}</small></div><textarea aria-label={"Edit "+taskFileContent.path} value={taskFileDraft} onChange={event=>setTaskFileDraft(event.target.value)} rows={16} spellCheck={false}/><div className="inline-actions"><span className="policy-note">{taskFileDraft===taskFileContent.content?"No unsaved edits":"Unsaved edits · compare-and-swap protected"}</span><button className="quiet-button" disabled={taskFileSaving||taskFileDraft===taskFileContent.content} onClick={()=>void saveTaskFile(String(detail.metadata.task_workspace_operation_id))}>{taskFileSaving?"Applying…":"Apply edited file"}</button></div></div>}
           </section>}
           </section>}
           {detail.pending_approval && <div className="approval-card"><div className="approval-title">Approval required · {detail.pending_approval.tool_name}</div><pre>{JSON.stringify(detail.pending_approval.arguments, null, 2)}</pre><div className="inline-actions"><button className="quiet-button danger" onClick={() => void decide(false)}>Deny</button><button onClick={() => void decide(true)}>Approve action</button></div></div>}
