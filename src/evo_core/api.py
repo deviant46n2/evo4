@@ -1191,6 +1191,11 @@ def create_app(config_path="config.toml", provider_name=None):
 
         parent_workspace_id = workspace_id
         task_workspace_info = None
+        # Admission must pass on the parent before provisioning can create a
+        # detached worktree. The task runtime is checked again after binding.
+        parent_invocation = _record_workspace_invocation(runtime, "plan_execution")
+        _require_workspace_dispatch(runtime)
+        invocation = parent_invocation
         if isolate_workspace:
             task_id = str(uuid4())
             task_workspace_info = _create_task_execution_workspace(parent_workspace_id, task_id)
@@ -1202,8 +1207,8 @@ def create_app(config_path="config.toml", provider_name=None):
             if task_project_id != plan_project_id:
                 raise HTTPException(status_code=409, detail="Task workspace project does not match the approved plan")
             effective_allowed_commands = runtime.effective_allowed_commands
-        invocation = _record_workspace_invocation(runtime, "plan_execution")
-        _require_workspace_dispatch(runtime)
+            invocation = _record_workspace_invocation(runtime, "plan_execution")
+            _require_workspace_dispatch(runtime)
         run_metadata = {
             "invocation_id": invocation["invocation_id"],
             "proposal_invocation_id": plan.get("proposal_invocation_id"),

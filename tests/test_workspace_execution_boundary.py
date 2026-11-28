@@ -627,6 +627,50 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
         self.assertEqual(self.store.list_agent_runs(limit=1000), [])
 
+    def test_isolated_plan_execution_disabled_gate_does_not_provision_task_workspace(self):
+        with self.app.state.lab_db.lock:
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved isolated plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved isolated plan",
+                    "summary": "Verify disabled dispatch prevents task workspace provisioning.",
+                    "steps": [{
+                        "title": "Step",
+                        "description": "Do work",
+                        "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        status, body = asgi_request(
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute?isolate_workspace=true"), {},
+        )
+        self.assertEqual(status, 503)
+        rows = self._workspace_snapshots()
+        self.assertEqual(len(rows), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "plan_execution")
+        self.assertEqual(record["snapshot"]["workspace_id"], self.workspace["workspace_id"])
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        with self.store.lock:
+            table = self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_workspaces'"
+            ).fetchone()
+            if table is not None:
+                count = self.store.db.execute("SELECT COUNT(*) FROM task_workspaces").fetchone()[0]
+                self.assertEqual(count, 0)
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
+        self.assertEqual(self.store.list_agent_runs(limit=1000), [])
+
     def test_workspace_chat_route_records_attempt_snapshot(self):
         conversation_id = self.app.state.assistant.new_conversation(
             project_id=self.project["project_id"],
