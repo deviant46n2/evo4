@@ -279,6 +279,9 @@ class TaskWorkspaceTests(unittest.TestCase):
         (task_path / "filtered.txt").write_text("baseline\n")
         self._git(task_path, "add", ".gitattributes", "filtered.txt")
         self._git(task_path, "commit", "-m", "add filter fixture")
+        # The fixture commit legitimately invokes the configured clean filter.
+        # Clear its marker so the assertion observes review-time execution only.
+        marker.unlink(missing_ok=True)
         (task_path / "filtered.txt").write_text("changed\n")
         review = get_task_workspace_review(self.store, result["operation_id"])
         self.assertIn("filtered.txt", review["patch"])
