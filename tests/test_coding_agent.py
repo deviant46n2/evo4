@@ -282,9 +282,11 @@ class CodingAgentTests(unittest.TestCase):
             provider=ToolProvider([
                 {"content":"","tool_calls":[call("run_command",{
                     "argv":["python","-m","unittest"], "timeout_seconds":45,
-                    "resource_limits":{"cpu_seconds":30}, "expected_artifacts":["coverage.xml"],
-                    "output_limit_bytes":4096,
-                    "environment_contract":{"inherit_safe_environment":False,"variables":{"MODE":"test"}},
+                    "execution_contract":{
+                        "resource_limits":{"cpu_seconds":30}, "expected_artifacts":["coverage.xml"],
+                        "output_limit_bytes":4096,
+                        "environment_contract":{"inherit_safe_environment":False,"variables":{"MODE":"test"}},
+                    },
                 })]},
                 {"content":"The check completed.","tool_calls":[]},
             ])

@@ -35,7 +35,7 @@ TOOL_SPECS = [
  {"type":"function","function":{"name":"read_file","description":"Read a UTF-8 text file beneath the configured project workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"search_text","description":"Search file contents for a literal text string beneath the workspace. Result includes whether matches or file scope were truncated.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"write_file","description":"Create or replace a text file. Requires explicit user approval.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"overwrite":{"type":"boolean","default":False}},"required":["path","content"],"additionalProperties":False}}},
- {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval of the complete execution specification.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120},"output_limit_bytes":{"type":"integer","minimum":1,"maximum":104857600},"environment_contract":{"type":"object","properties":{"inherit_safe_environment":{"type":"boolean"},"variables":{"type":"object","additionalProperties":{"type":"string"}}},"additionalProperties":False},"resource_limits":{"type":"object","properties":{"cpu_seconds":{"type":"integer","minimum":0},"memory_bytes":{"type":"integer","minimum":0},"open_files":{"type":"integer","minimum":0},"processes":{"type":"integer","minimum":0},"file_size_bytes":{"type":"integer","minimum":0}},"additionalProperties":False},"expected_artifacts":{"type":"array","items":{"type":"string"},"maxItems":100}},"required":["argv"],"additionalProperties":False}}}
+ {"type":"function","function":{"name":"run_command","description":"Run an allowlisted argv command. Optional execution_contract fields are validated and shown in the approval request.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120},"execution_contract":{"type":"object"}},"required":["argv"],"additionalProperties":False}}}
 ]
 
 def is_test_command(argv):
@@ -185,12 +185,18 @@ class CodingAgent:
             _validate_resource_limits,
         )
         timeout = min(max(int(args.get("timeout_seconds", 120)), 1), MAX_TIMEOUT_SECONDS)
-        output_limit = args.get("output_limit_bytes", OUTPUT_LIMIT)
+        contract = args.get("execution_contract") or {}
+        if not isinstance(contract, dict):
+            raise ValueError("execution_contract must be an object")
+        unknown = set(contract) - {"output_limit_bytes", "environment_contract", "resource_limits", "expected_artifacts"}
+        if unknown:
+            raise ValueError("unsupported execution_contract fields: " + ", ".join(sorted(unknown)))
+        output_limit = contract.get("output_limit_bytes", OUTPUT_LIMIT)
         if isinstance(output_limit, bool) or not isinstance(output_limit, int) or not 1 <= output_limit <= 100 * 1024 * 1024:
             raise ValueError("output_limit_bytes must be between 1 and 104857600")
-        environment_contract = _sanitize_environment_contract(args.get("environment_contract"))
-        resource_limits = _validate_resource_limits(args.get("resource_limits"))
-        expected_artifacts = _validate_expected_artifacts(args.get("expected_artifacts"))
+        environment_contract = _sanitize_environment_contract(contract.get("environment_contract"))
+        resource_limits = _validate_resource_limits(contract.get("resource_limits"))
+        expected_artifacts = _validate_expected_artifacts(contract.get("expected_artifacts"))
         text, digest = _canonical_execution_specification(
             list(args["argv"]), str(self.workspace.root), environment_contract,
             timeout, output_limit, resource_limits, expected_artifacts,
