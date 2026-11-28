@@ -55,6 +55,8 @@ type ProjectSummary = {project_id:string;name:string;status:string};
 type ConfigurationSummary = {configuration_id:string;name:string;status:string};
 type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_status:string};
 type TaskWorkspaceReview = {operation_id:string;status:string;stable:boolean;unstable:boolean;source_revision:string;current_head:string;changed_files:Array<{status:string;path:string}>;changed_file_count:number;changed_files_omitted:number;excluded_files:string[];excluded_files_omitted:number;unreadable_files:Array<{path:string;reason:string}>;unreadable_files_omitted:number;patch:string;patch_bytes:number;truncated:boolean;truncation_reason:string|null;max_files:number;max_bytes:number};
+type TaskWorkspaceOperation = {operation_id:string;task_id:string;parent_workspace_id:string;task_workspace_id:string|null;project_id:string;checkout_id:string|null;source_revision:string;destination_path:string;status:string;created_at:string;updated_at:string;error_recorded:boolean};
+type TaskWorkspaceOperationDetail = TaskWorkspaceOperation & {filesystem:{path_exists:boolean;path_is_directory:boolean;path_is_symlink:boolean};recovery_guidance:string|null};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -232,6 +234,10 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [taskReview, setTaskReview] = useState<TaskWorkspaceReview | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [taskReviewError, setTaskReviewError] = useState("");
+  const [taskOperations, setTaskOperations] = useState<TaskWorkspaceOperation[]>([]);
+  const [taskOperationDetail, setTaskOperationDetail] = useState<TaskWorkspaceOperationDetail | null>(null);
+  const [taskOperationBusy, setTaskOperationBusy] = useState(false);
+  const [taskOperationError, setTaskOperationError] = useState("");
   const taskReviewGeneration = useRef(0);
   const selectedRunRef = useRef<string | null>(selected);
   selectedRunRef.current = selected;
@@ -267,6 +273,19 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     try {
       const rows = await api<Run[]>("/agents?limit=100" + scopeSuffix());
       if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) setRuns(rows);
+      const taskParams = new URLSearchParams({limit:"100"});
+      if (projectId) taskParams.set("project_id", projectId);
+      try {
+        const taskRows = await api<{items:TaskWorkspaceOperation[]}>("/task-workspaces?" + taskParams.toString());
+        if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) {
+          setTaskOperations(taskRows.items);
+          setTaskOperationError("");
+        }
+      } catch (taskError) {
+        if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) {
+          setTaskOperationError(taskError instanceof Error ? taskError.message : String(taskError));
+        }
+      }
     } catch (e) {
       if (requestId === runsGeneration.current && scopeKeyRef.current === requestedScope) {
         setError(e instanceof Error ? e.message : String(e));
@@ -343,6 +362,15 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     const handle = window.setInterval(() => { void refresh(); void refreshPlans(); if (selected) void refreshDetail(selected); if (plan) void loadPlan(plan.id); }, 1800);
     return () => {window.clearInterval(handle);window.removeEventListener("evo-demo-data-changed",changed);};
   }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan?.id]);
+  async function inspectTaskOperation(operationId: string) {
+    setTaskOperationBusy(true); setTaskOperationError(""); setTaskOperationDetail(null);
+    try {
+      const result = await api<TaskWorkspaceOperationDetail>("/task-workspaces/" + encodeURIComponent(operationId));
+      setTaskOperationDetail(result);
+    } catch (e) {
+      setTaskOperationError(e instanceof Error ? e.message : String(e));
+    } finally { setTaskOperationBusy(false); }
+  }
   async function loadTaskReview(operationId: string) {
     const token = ++taskReviewGeneration.current;
     const requestedRunId = selectedRunRef.current;
@@ -444,6 +472,20 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     <DemoDataBanner/>
     <div className="workspace-heading"><div><div className="eyebrow">APPROVAL-GATED EXECUTION</div><h1>Agents</h1><p>Run Evo's existing coding agent, inspect its tool history, and approve every file write or command.</p></div><span className="workspace-count">{runs.length} runs</span></div>
     {error && <div className="workspace-error" role="alert">{error}</div>}
+    <section className="workspace-panel">
+      <div className="panel-toolbar"><div><h2>Isolated task workspaces</h2><p>Provisioning and recovery records are retained for inspection. Evo never removes these worktrees automatically.</p></div><button className="quiet-button" onClick={()=>void refresh()}>Refresh</button></div>
+      {taskOperationError&&<div className="workspace-error" role="alert">{taskOperationError}</div>}
+      <div className="record-list">{taskOperations.map(item=><article className="record-card" key={item.operation_id}>
+        <div className="record-top"><span className={"run-status "+item.status}>{item.status.replaceAll("_"," ")}</span><span>{item.task_id}</span><small>{new Date(item.updated_at).toLocaleString()}</small></div>
+        <small>Source revision {item.source_revision.slice(0,12)} · {item.error_recorded?"Error recorded":"No error recorded"}</small>
+        <div className="inline-actions"><button className="quiet-button" disabled={taskOperationBusy} onClick={()=>void inspectTaskOperation(item.operation_id)}>Inspect lifecycle</button></div>
+        {taskOperationDetail?.operation_id===item.operation_id&&<div className="policy-note">
+          <div>Destination: {taskOperationDetail.destination_path}</div>
+          <div>Filesystem: {taskOperationDetail.filesystem.path_is_symlink?"symlink":taskOperationDetail.filesystem.path_is_directory?"directory":taskOperationDetail.filesystem.path_exists?"present, not a directory":"missing"}</div>
+          {taskOperationDetail.recovery_guidance&&<p>{taskOperationDetail.recovery_guidance}</p>}
+        </div>}
+      </article>)}{taskOperations.length===0&&<div className="empty-state">No isolated task workspace operations recorded.</div>}</div>
+    </section>
     <section className="workspace-panel">
       <h2>Start a coding task</h2>
       <form className="agent-launch" onSubmit={start}>
