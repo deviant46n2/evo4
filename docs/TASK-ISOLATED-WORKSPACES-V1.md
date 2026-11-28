@@ -70,6 +70,9 @@ The test suite covers clean creation, detached revision pinning, source
 preservation, dirty and untracked source rejection, invalid revisions,
 duplicate task identity, and unsafe destination placement. Local test/build
 evidence is required before acceptance.
-## Review and execution evidence
+## Review
+
+The review summary distinguishes passed, failed, not run, not configured, not required, and mixed incomplete verification states. It reports a plan as passed only when every step has passed evidence; missing or mixed evidence is never promoted to success.
+ and execution evidence
 
 The read-only review endpoint also returns matching agent execution evidence. A run is associated with an operation only when its persisted task-workspace operation ID, project ID, task workspace ID, and pinned source revision agree with the operation record. For orchestrated plans, the plan must additionally point to that same run and workspace. Verification checks include their managed execution ID when one exists. Review resolves it to a persisted execution record only when the run, project, task workspace, pinned revision, working directory, and exact argv match; matching evidence includes the command-policy snapshot, timeout, timing, exit status, and limited approval provenance. Missing or mismatched records are left unlinked rather than guessed. Missing or mismatched provenance is omitted rather than guessed. Verification success remains evidence about the configured command only; it is not a general correctness guarantee. For each managed verification command, Evo records bounded SHA-256 fingerprints of regular files before and after execution. The fingerprint excludes `.git` internals and fails closed when it encounters symlinks, special files, concurrent filesystem changes, or configured file/byte/time limits. Review reports whether both snapshots were complete and identical. This establishes a limited workspace-state comparison, not hermetic execution: external dependencies and transient changes between snapshots are outside this guarantee.
