@@ -757,12 +757,7 @@ def get_task_workspace_review(
     name_status = _review_git( "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated, strip_output=False)
     if name_status_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
-    for path in name_status.split("\x00"):
-        if not path:
-            continue
-        # Each record is "STATUS\0path"; _git strips trailing newline only, NULs remain.
-        pass
-    # Parse pairs: status token then path
+    # Parse NUL-delimited pairs: status token then literal path.
     tokens = name_status.split("\x00")
     i = 0
     while i < len(tokens):
