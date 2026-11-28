@@ -448,6 +448,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setTaskReview(null);
     setTaskReviewError("");
     setReviewBusy(false);
+    setTaskOperations([]);
+    setTaskOperationDetail(null);
+    setTaskOperationError("");
     setPlan(null);
     setError("");
     void refresh();
