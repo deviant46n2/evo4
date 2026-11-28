@@ -15,18 +15,19 @@ from evo_core.workspaces import create_workspace
 DEFINITION = {"schema_version": 1, "components": {}}
 
 
-def request(app, path):
+def request(app, path, method="GET", payload=None):
     path_part, _, query = path.partition("?")
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "GET", "scheme": "http", "path": path_part,
+        "method": method, "scheme": "http", "path": path_part,
         "raw_path": path_part.encode(), "query_string": query.encode(),
         "root_path": "", "headers": [], "client": ("127.0.0.1", 12345),
         "server": ("127.0.0.1", 8765), "state": {},
     }
     messages = []
+    body_bytes = json.dumps(payload).encode() if payload is not None else b""
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        return {"type": "http.request", "body": body_bytes, "more_body": False}
     async def send(message):
         messages.append(message)
     asyncio.run(app(scope, receive, send))
@@ -101,6 +102,28 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("detail", body)
 
+
+
+    def test_apply_route_requires_approval_and_records_change(self):
+        import hashlib
+        operation_id = self.operation["operation_id"]
+        path = "/api/v1/task-workspaces/" + operation_id + "/file"
+        status, body = request(self.app, path, method="POST", payload={
+            "path": "new.txt", "content": "created by explicit approval",
+            "approved": False,
+        })
+        self.assertEqual(status, 409)
+        self.assertFalse((self.task_root / "new.txt").exists())
+        status, body = request(self.app, path, method="POST", payload={
+            "path": "new.txt", "content": "created by explicit approval",
+            "approved": True,
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual((self.task_root / "new.txt").read_text(), "created by explicit approval")
+        self.assertIsNone(body["before_sha256"])
+        status, history = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/changes")
+        self.assertEqual(status, 200)
+        self.assertEqual(history["items"][0]["change_id"], body["change_id"])
 
 if __name__ == "__main__":
     unittest.main()
