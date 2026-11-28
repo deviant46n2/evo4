@@ -96,9 +96,12 @@ class AgentOrchestrationTests(unittest.TestCase):
             "stable_snapshots": 1,
             "changed_or_incomplete_snapshots": 1,
             "unavailable_snapshots": 2,
+            "workspace_snapshot_state": "changed_or_incomplete",
             "command_coverage_state": "unmatched",
         })
-        self.assertEqual(orchestration.verification_evidence_summary([])["command_coverage_state"], "not_configured")
+        empty_summary = orchestration.verification_evidence_summary([])
+        self.assertEqual(empty_summary["command_coverage_state"], "not_configured")
+        self.assertEqual(empty_summary["workspace_snapshot_state"], "not_available")
         self.assertEqual(orchestration.verification_evidence_summary([{
             "verification_commands": [["pytest", "-q"]],
             "verification_checks": [],
@@ -107,10 +110,27 @@ class AgentOrchestrationTests(unittest.TestCase):
             "verification_commands": [["pytest", "-q"]],
             "verification_checks": [{"command": ["pytest", "-q"], "status": "failed"}],
         }])["command_coverage_state"], "failed")
-        self.assertEqual(orchestration.verification_evidence_summary([{
+        stable_summary = orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed", "exit_code": 0,
+                                     "workspace_snapshot_stable": True}],
+        }])
+        self.assertEqual(stable_summary["command_coverage_state"], "passed")
+        self.assertEqual(stable_summary["workspace_snapshot_state"], "stable")
+        unavailable_summary = orchestration.verification_evidence_summary([{
             "verification_commands": [["pytest", "-q"]],
             "verification_checks": [{"command": ["pytest", "-q"], "status": "passed", "exit_code": 0}],
-        }])["command_coverage_state"], "passed")
+        }])
+        self.assertEqual(unavailable_summary["workspace_snapshot_state"], "unavailable")
+        mixed_snapshot_summary = orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"], ["ruff", "check", "."]],
+            "verification_checks": [
+                {"command": ["pytest", "-q"], "status": "passed", "exit_code": 0,
+                 "workspace_snapshot_stable": True},
+                {"command": ["ruff", "check", "."], "status": "passed", "exit_code": 0},
+            ],
+        }])
+        self.assertEqual(mixed_snapshot_summary["workspace_snapshot_state"], "incomplete")
         invalid_pass = orchestration.verification_evidence_summary([{
             "verification_commands": [["pytest", "-q"]],
             "verification_checks": [{"command": ["pytest", "-q"], "status": "passed", "exit_code": 1}],
