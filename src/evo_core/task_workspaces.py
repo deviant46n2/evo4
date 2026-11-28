@@ -513,7 +513,9 @@ def list_task_workspace_operations(store, *, project_id=None, status=None, limit
     ):
         raise TaskWorkspaceValidationError("project_id must be a non-empty identifier")
     allowed_statuses = {"provisioning", "completed", "recovery_required", "failed"}
-    if status is not None and status not in allowed_statuses:
+    if status is not None and (
+        not isinstance(status, str) or status not in allowed_statuses
+    ):
         raise TaskWorkspaceValidationError("unsupported task workspace status")
     _ensure_table(store)
     clauses, values = [], []
