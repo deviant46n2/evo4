@@ -5,6 +5,7 @@ never edits the registered source checkout and never removes a worktree as
 implicit error recovery: incomplete provisioning remains recorded for review.
 """
 import os
+import signal
 import re
 import subprocess
 import uuid
@@ -143,6 +144,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                 errors="replace",
                 shell=False,
                 env=env,
+                start_new_session=True,
             )
             stdout_chunks = []
             stderr_chunks = []
@@ -163,9 +165,12 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                                 total[0] += keep
                             exceeded["value"] = True
                             try:
-                                proc.kill()
+                                os.killpg(proc.pid, signal.SIGKILL)
                             except (OSError, ProcessLookupError):
-                                pass
+                                try:
+                                    proc.kill()
+                                except (OSError, ProcessLookupError):
+                                    pass
                             break
                         chunks.append(chunk)
                         total[0] += len(chunk)
@@ -181,18 +186,27 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
                 exceeded["value"] = True
             t1.join(timeout=timeout + 1)
             t2.join(timeout=timeout + 1)
             if t1.is_alive() or t2.is_alive():
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
                 t1.join(timeout=1)
                 t2.join(timeout=1)
             try:
                 proc.wait(timeout=1)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    proc.kill()
                 try:
                     proc.wait(timeout=1)
                 except subprocess.TimeoutExpired:
@@ -202,7 +216,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             stdout = "".join(stdout_chunks)
             stderr = "".join(stderr_chunks)
             returncode = proc.returncode
-            was_truncated = exceeded["value"] or (len(stdout) + len(stderr) >= max_output_bytes)
+            was_truncated = exceeded["value"]
         if truncated is not None and was_truncated:
             truncated.append(True)
     except (OSError, subprocess.TimeoutExpired) as exc:
