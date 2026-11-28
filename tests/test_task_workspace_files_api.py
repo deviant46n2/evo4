@@ -8,7 +8,7 @@ from pathlib import Path
 from evo_core.ai_configurations import create_configuration
 from evo_core.api import create_app
 from evo_core.project_checkouts import register_checkout, register_project
-from evo_core.task_workspaces import create_task_workspace, get_task_workspace_operation_status
+from evo_core.task_workspaces import create_task_workspace, get_task_workspace_operation_status, get_task_workspace_fingerprint
 from evo_core.workspaces import create_workspace
 
 
@@ -95,6 +95,28 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(result["content"], "API text")
         self.assertEqual(result["source_revision"], self.operation["source_revision"])
 
+    def test_workspace_fingerprint_tracks_file_content_and_ignores_git_metadata(self):
+        operation_id = self.operation["operation_id"]
+        before = get_task_workspace_fingerprint(self.app.state.store, operation_id)
+        self.assertTrue(before["complete"])
+        self.assertEqual(len(before["fingerprint"]), 64)
+        (self.task_root / "fingerprint.txt").write_text("first state")
+        after = get_task_workspace_fingerprint(self.app.state.store, operation_id)
+        self.assertTrue(after["complete"])
+        self.assertNotEqual(before["fingerprint"], after["fingerprint"])
+        (self.task_root / "fingerprint.txt").write_text("second state")
+        changed = get_task_workspace_fingerprint(self.app.state.store, operation_id)
+        self.assertNotEqual(after["fingerprint"], changed["fingerprint"])
+
+    def test_workspace_fingerprint_fails_closed_on_symlinks(self):
+        operation_id = self.operation["operation_id"]
+        target = self.root / "outside-target.txt"
+        target.write_text("outside")
+        (self.task_root / "outside-link").symlink_to(target)
+        result = get_task_workspace_fingerprint(self.app.state.store, operation_id)
+        self.assertFalse(result["complete"])
+        self.assertIsNone(result["fingerprint"])
+
     def test_invalid_file_paths_are_rejected(self):
         status, body = request(
             self.app,
@@ -139,6 +161,9 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                 self.app.state.lab_db.connection, plan["id"], step_id,
                 ["python", "-m", "unittest"], "passed", 0, "OK", "",
                 execution_id="execution-123",
+                workspace_fingerprint_before="a" * 64,
+                workspace_fingerprint_after="a" * 64,
+                workspace_snapshot_stable=True,
             )
 
         status, review = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/review")
@@ -151,6 +176,9 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         check = evidence["steps"][0]["verification_checks"][0]
         self.assertEqual(check["execution_id"], "execution-123")
         self.assertEqual(check["status"], "passed")
+        self.assertEqual(check["workspace_fingerprint_before"], "a" * 64)
+        self.assertEqual(check["workspace_fingerprint_after"], "a" * 64)
+        self.assertTrue(check["workspace_snapshot_stable"])
 
     def test_review_does_not_join_runs_with_mismatched_task_provenance(self):
         operation_id = self.operation["operation_id"]
