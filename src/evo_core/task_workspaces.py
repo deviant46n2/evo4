@@ -145,7 +145,22 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
     if discover_helpers:
         git_marker = Path(root) / ".git"
         try:
-            st = git_marker.stat()
+            if git_marker.is_dir():
+                git_dir = git_marker
+            else:
+                marker_text = git_marker.read_text(encoding="utf-8").strip()
+                git_dir = Path(marker_text.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (Path(root) / git_dir).resolve()
+            common_file = git_dir / "commondir"
+            common_dir = git_dir
+            if common_file.exists():
+                common_text = common_file.read_text(encoding="utf-8").strip()
+                common_dir = Path(common_text)
+                if not common_dir.is_absolute():
+                    common_dir = (git_dir / common_dir).resolve()
+            config_path = common_dir / "config"
+            st = config_path.stat()
             cache_key = (root, st.st_mtime_ns, st.st_size, st.st_ino)
         except OSError:
             cache_key = (root, None)
@@ -642,6 +657,26 @@ def get_task_workspace_review(
     changed = []  # list of (status, path, old_path)
     excluded = []
     unreadable = []
+    metadata_count = 0
+    changed_omitted = 0
+    excluded_omitted = 0
+    unreadable_omitted = 0
+
+    def record_excluded(path):
+        nonlocal metadata_count, excluded_omitted
+        if metadata_count < max_files:
+            record_excluded(path)
+            metadata_count += 1
+        else:
+            excluded_omitted += 1
+
+    def record_unreadable(path, reason):
+        nonlocal metadata_count, unreadable_omitted
+        if metadata_count < max_files:
+            unreadable.append({"path": path, "reason": reason})
+            metadata_count += 1
+        else:
+            unreadable_omitted += 1
     patch_parts = []
     total_bytes = 0
     truncated = bool(diff_before_truncated)
@@ -684,7 +719,7 @@ def get_task_workspace_review(
         i += 1
         rel = _safe_relative_path(path)
         if rel is None:
-            unreadable.append({"path": path, "reason": "unsafe_path"})
+            record_unreadable(path, "unsafe_path")
             continue
         if _is_excluded(rel):
             excluded.append(path)
@@ -698,14 +733,16 @@ def get_task_workspace_review(
                 symlink = True
                 break
         if symlink or candidate.is_symlink():
-            unreadable.append({"path": path, "reason": "symlink"})
+            record_unreadable(path, "symlink")
             continue
-        if len(changed) >= max_files:
+        if metadata_count >= max_files:
+            changed_omitted += 1
             truncated = True
             if truncation_reason is None:
                 truncation_reason = "file_limit"
             continue
         changed.append((token, str(rel), None))
+        metadata_count += 1
 
     # Untracked files.
     untracked_truncated = []
@@ -735,11 +772,13 @@ def get_task_workspace_review(
         if not candidate.is_file():
             continue
         if len(changed) >= max_files:
+            changed_omitted += 1
             truncated = True
             if truncation_reason is None:
                 truncation_reason = "file_limit"
             continue
         changed.append(("?", str(rel), None))
+        metadata_count += 1
 
     # One literal-pathspec-scoped diff avoids per-file process overhead and pathspec magic.
     tracked_paths = [path for status, path, _ in changed if status != "?"]
@@ -783,7 +822,7 @@ def get_task_workspace_review(
         try:
             fd, st_before = _open_regular_file_at(root, str(rel))
         except OSError:
-            unreadable.append({"path": path, "reason": "unsafe_or_unreadable"})
+            record_unreadable(path, "unsafe_or_unreadable")
             continue
         try:
             while read_total < per_file_cap:
@@ -800,17 +839,17 @@ def get_task_workspace_review(
                 file_truncated = bool(os.read(fd, 1))
             st_after = os.fstat(fd)
             if _stat_signature(st_before) != _stat_signature(st_after):
-                unreadable.append({"path": path, "reason": "changed_during_read"})
+                record_unreadable(path, "changed_during_read")
                 unstable = True
                 continue
         except OSError:
-            unreadable.append({"path": path, "reason": "unreadable"})
+            record_unreadable(path, "unreadable")
             continue
         finally:
             os.close(fd)
         data = b"".join(chunks)
         if binary:
-            unreadable.append({"path": path, "reason": "binary"})
+            record_unreadable(path, "binary")
             continue
         text = data.decode("utf-8", errors="replace")
         quoted_path = _quote_patch_path(path)
@@ -867,10 +906,11 @@ def get_task_workspace_review(
         "current_head": head_after,
         "changed_files": [{"status": s, "path": p} for s, p, _ in changed],
         "changed_file_count": len(changed),
-        "excluded_files": sorted(set(excluded))[:max_files],
-        "excluded_files_omitted": max(0, len(set(excluded)) - max_files),
-        "unreadable_files": unreadable[:max_files],
-        "unreadable_files_omitted": max(0, len(unreadable) - max_files),
+        "excluded_files": sorted(set(excluded)),
+        "excluded_files_omitted": excluded_omitted,
+        "unreadable_files": unreadable,
+        "unreadable_files_omitted": unreadable_omitted,
+        "changed_files_omitted": changed_omitted,
         "patch": "".join(patch_parts),
         "patch_bytes": total_bytes,
         "truncated": truncated,
