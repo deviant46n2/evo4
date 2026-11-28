@@ -25,7 +25,7 @@ from evo_core.task_workspaces import (
 DEFINITION = {"schema_version": 1, "components": {}}
 
 
-SHIM = '#!/usr/bin/env python3\nimport os, sys, subprocess, time\nargs = sys.argv[1:]\nif "config" in args:\n    sys.exit(0)\nmode = os.environ.get("SHIM_MODE", "overflow")\nchild_pid_file = os.environ.get("SHIM_CHILD_PID_FILE")\nparent_pid_file = os.environ.get("SHIM_PARENT_PID_FILE")\nready_file = os.environ.get("SHIM_READY_FILE")\nready_file = os.environ.get("SHIM_READY_FILE")\nchild = subprocess.Popen(\n    [sys.executable, "-c", "import time; time.sleep(60)"],\n    stdout=sys.stdout, stderr=sys.stderr,\n)\nif parent_pid_file:\n    with open(parent_pid_file, "w") as handle:\n        handle.write(str(os.getpid()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif child_pid_file:\n    with open(child_pid_file, "w") as handle:\n        handle.write(str(child.pid))\n        handle.flush()\n        os.fsync(handle.fileno())\nif ready_file:\n    with open(ready_file, "w") as handle:\n        handle.write("ready")\n        handle.flush()\n        os.fsync(handle.fileno())\nif mode == "overflow":\n    sys.stdout.write("a" * 60)\n    sys.stderr.write("b" * 60)\n    sys.stdout.flush()\n    sys.stderr.flush()\nelif mode == "exact":\n    count = int(os.environ.get("SHIM_BYTES", "100"))\n    sys.stdout.write("a" * count)\n    sys.stdout.flush()\n    time.sleep(0.2)\nelif mode == "timeout":\n    time.sleep(60)\nsys.exit(0)\n'
+SHIM = '#!/usr/bin/env python3\nimport os, sys, subprocess, time\nargs = sys.argv[1:]\nif "config" in args:\n    sys.exit(0)\nmode = os.environ.get("SHIM_MODE", "overflow")\nchild_pid_file = os.environ.get("SHIM_CHILD_PID_FILE")\nparent_pid_file = os.environ.get("SHIM_PARENT_PID_FILE")\nready_file = os.environ.get("SHIM_READY_FILE")\nchild = subprocess.Popen(\n    [sys.executable, "-c", "import time; time.sleep(60)"],\n    stdout=sys.stdout, stderr=sys.stderr,\n)\nif parent_pid_file:\n    with open(parent_pid_file, "w") as handle:\n        handle.write(str(os.getpid()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif child_pid_file:\n    with open(child_pid_file, "w") as handle:\n        handle.write(str(child.pid))\n        handle.flush()\n        os.fsync(handle.fileno())\nif ready_file:\n    with open(ready_file, "w") as handle:\n        handle.write("ready")\n        handle.flush()\n        os.fsync(handle.fileno())\nif mode == "overflow":\n    sys.stdout.write("a" * 60)\n    sys.stderr.write("b" * 60)\n    sys.stdout.flush()\n    sys.stderr.flush()\nelif mode == "exact":\n    count = int(os.environ.get("SHIM_BYTES", "100"))\n    sys.stdout.write("a" * count)\n    sys.stdout.flush()\n    time.sleep(0.2)\nelif mode == "timeout":\n    time.sleep(60)\nsys.exit(0)\n'
 
 class TaskWorkspaceTests(unittest.TestCase):
     def setUp(self):
@@ -293,21 +293,35 @@ class TaskWorkspaceTests(unittest.TestCase):
         shim = d / "git"
         shim.write_text(SHIM)
         shim.chmod(0o755)
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "overflow",
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_READY_FILE": str(ready_file),
         }
         before_threads = set(threading.enumerate())
         truncated = []
-        with patch.dict(os.environ, env, clear=False):
-            try:
-                out = _git(Path("/tmp"), "status", max_output_bytes=100, truncated=truncated, timeout=5)
-            except Exception:
-                out = ""
+        result_box = {}
+        def worker():
+            with patch.dict(os.environ, env, clear=False):
+                try:
+                    result_box["out"] = _git(d, "status", max_output_bytes=100, truncated=truncated, timeout=5)
+                except Exception as exc:
+                    result_box["exc"] = exc
+        t = threading.Thread(target=worker)
+        t.start()
+        for _ in range(50):
+            if ready_file.exists():
+                break
+            time.sleep(0.1)
+        self.assertTrue(ready_file.exists())
+        t.join(timeout=10)
+        out = result_box.get("out", "")
         time.sleep(0.2)
         self.assertTrue(truncated)
         if out:
@@ -340,18 +354,35 @@ class TaskWorkspaceTests(unittest.TestCase):
         shim = d / "git"
         shim.write_text(SHIM)
         shim.chmod(0o755)
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "exact",
             "SHIM_BYTES": "100",
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_READY_FILE": str(ready_file),
         }
         truncated = []
-        with patch.dict(os.environ, env, clear=False):
-            out = _git(Path("/tmp"), "status", max_output_bytes=100, truncated=truncated, timeout=5)
+        result_box = {}
+        def worker():
+            with patch.dict(os.environ, env, clear=False):
+                try:
+                    result_box["out"] = _git(d, "status", max_output_bytes=100, truncated=truncated, timeout=5)
+                except Exception as exc:
+                    result_box["exc"] = exc
+        t = threading.Thread(target=worker)
+        t.start()
+        for _ in range(50):
+            if ready_file.exists():
+                break
+            time.sleep(0.1)
+        self.assertTrue(ready_file.exists())
+        t.join(timeout=10)
+        out = result_box.get("out", "")
         self.assertEqual(len(out), 100)
         self.assertFalse(truncated)
         self.assertTrue(child_pid_file.exists())
@@ -371,19 +402,35 @@ class TaskWorkspaceTests(unittest.TestCase):
         shim = d / "git"
         shim.write_text(SHIM)
         shim.chmod(0o755)
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "timeout",
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_READY_FILE": str(ready_file),
         }
         before_threads = set(threading.enumerate())
         truncated = []
-        with patch.dict(os.environ, env, clear=False):
-            with self.assertRaises(TaskWorkspaceProvisioningError):
-                _git(Path("/tmp"), "status", timeout=0.1, max_output_bytes=1000, truncated=truncated)
+        result_box = {}
+        def worker():
+            with patch.dict(os.environ, env, clear=False):
+                try:
+                    result_box["out"] = _git(d, "status", timeout=0.1, max_output_bytes=1000, truncated=truncated)
+                except Exception as exc:
+                    result_box["exc"] = exc
+        t = threading.Thread(target=worker)
+        t.start()
+        for _ in range(50):
+            if ready_file.exists():
+                break
+            time.sleep(0.1)
+        self.assertTrue(ready_file.exists())
+        t.join(timeout=5)
+        self.assertIsInstance(result_box.get("exc"), TaskWorkspaceProvisioningError)
         time.sleep(0.2)
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
@@ -402,6 +449,35 @@ class TaskWorkspaceTests(unittest.TestCase):
         after_threads = set(threading.enumerate())
         new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
         self.assertEqual(new_reader_threads, [])
+
+    def test_review_large_untracked_is_truncated_and_unstable(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-large", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "big.txt").write_text("x" * 10000)
+        review = get_task_workspace_review(self.store, result["operation_id"], max_bytes=1024)
+        self.assertTrue(review["truncated"])
+        self.assertFalse(review["stable"])
+        self.assertEqual(review["truncation_reason"], "output_limit")
+
+    def test_review_output_overflow_is_truncated(self):
+        import tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.name", "T"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@e.com"], check=True, capture_output=True)
+        (d / "big.txt").write_text("x" * 100000)
+        subprocess.run(["git", "-C", str(d), "add", "big.txt"], check=True, capture_output=True)
+        from evo_core.task_workspaces import _git
+        truncated = []
+        out = _git(d, "diff", "--cached", max_output_bytes=100, truncated=truncated)
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(out), 100)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

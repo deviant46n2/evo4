@@ -139,9 +139,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                text=False,
                 shell=False,
                 env=env,
                 start_new_session=True,
@@ -154,8 +152,12 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             timed_out = {"value": False}
 
             def _reader(stream, chunks):
+                fd = stream.fileno()
                 while True:
-                    chunk = stream.read(8192)
+                    try:
+                        chunk = os.read(fd, 8192)
+                    except OSError:
+                        break
                     if not chunk:
                         break
                     with budget_lock:
@@ -187,18 +189,67 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    proc.kill()
                 timed_out["value"] = True
+            # Sweep orphaned descendants that inherited the pipes.
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                try:
+                    pid = int(entry)
+                    with open(f"/proc/{pid}/stat", "r") as handle:
+                        stat = handle.read()
+                    if ")" not in stat:
+                        continue
+                    pgrp = int(stat.rsplit(")", 1)[-1].split()[2])
+                    if pgrp == proc.pid and pid != os.getpid():
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except (OSError, ProcessLookupError):
+                            pass
+                except (OSError, ValueError):
+                    continue
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                proc.kill()
+            except (OSError, ProcessLookupError):
+                pass
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
             t1.join(timeout=timeout + 1)
             t2.join(timeout=timeout + 1)
             if t1.is_alive() or t2.is_alive():
+                # Kill the process group if possible; also sweep /proc for
+                # orphaned descendants that inherited the pipes.
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except (OSError, ProcessLookupError):
+                    pass
+                try:
                     proc.kill()
+                except (OSError, ProcessLookupError):
+                    pass
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        pid = int(entry)
+                        with open(f"/proc/{pid}/stat", "r") as handle:
+                            stat = handle.read()
+                        if ")" not in stat:
+                            continue
+                        pgrp = int(stat.rsplit(")", 1)[-1].split()[2])
+                        if pgrp == proc.pid and pid != os.getpid():
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except (OSError, ProcessLookupError):
+                                pass
+                    except (OSError, ValueError):
+                        continue
                 t1.join(timeout=1)
                 t2.join(timeout=1)
             try:
@@ -214,8 +265,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                     pass
             if t1.is_alive() or t2.is_alive():
                 raise TaskWorkspaceProvisioningError("git output collection did not terminate")
-            stdout = "".join(stdout_chunks)
-            stderr = "".join(stderr_chunks)
+            stdout = b"".join(stdout_chunks).decode("utf-8", errors="replace")
+            stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
             returncode = proc.returncode
             was_truncated = output_exceeded["value"]
             if timed_out["value"]:
