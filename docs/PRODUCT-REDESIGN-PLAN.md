@@ -1,6 +1,6 @@
 # Evo4 Product Redesign Plan
 
-Status: **Planning only.** The redesign plan remains a planning/specification document. Project Provisioning v1 was a specifically authorized and accepted implementation milestone. The stabilization freeze was lifted for that milestone. Broader redesign implementation still requires explicit user authorization.
+Status: **Authorized and scheduled.** The user has authorized implementation of the broader redesign. Per `ROADMAP.md`, it is the next product priority immediately after Phase 4 acceptance and before Phase 5 is considered user-facing complete. The current Phase 4 task-launch usability gap is being addressed as part of Phase 4 closure; the broader chat-first redesign follows as a dedicated milestone.
 
 This document records the target product experience and UX requirements for Evo4. It is not a development roadmap; implementation order, dependencies, milestone scope, and acceptance gates are governed exclusively by `ROADMAP.md`.
 
@@ -112,7 +112,7 @@ Application areas should remain windows into backend capabilities rather than se
 
 The phase sequence in Sections 10–12 is retained as a historical product-planning reference describing how UX requirements were originally grouped. It is not an active implementation sequence and must not override `ROADMAP.md`. The unified roadmap is the only authority for development priorities, sequencing, dependencies, implementation milestones, phase status, and acceptance gates. Where this document's phase labels or dependencies conflict with the unified roadmap, `ROADMAP.md` takes precedence. The inventory below is a capability/gap reference, not authorization to implement any listed item.
 
-Incremental usability improvements may accompany validated platform work when authorized and useful. A wholesale visual redesign is not a prerequisite to all further feature development.
+The wholesale redesign is now explicitly scheduled by `ROADMAP.md` as the next product milestone after Phase 4 acceptance. It is not optional polish. Phase ordering and acceptance remain governed by `ROADMAP.md`.
 
 ## Existing Capability vs. Redesign Gap Inventory
 
@@ -204,4 +204,4 @@ The former product-only phase outline is retired to avoid a competing phase hier
 
 The redesign is complete when the chat-first experience, project lifecycle, agent activity, memory experience, configuration visualization, and reliability requirements are implemented, integrated, tested, and independently accepted, while preserving Evo's platform identity and existing safety boundaries.
 
-Project Provisioning v1 has been implemented on this branch under explicit user authorization. Broader redesign implementation still requires user authorization; the stabilization freeze for that authorized milestone is lifted.
+Project Provisioning v1 has been implemented on this branch under explicit user authorization. The user has now also authorized the broader redesign; implementation is scheduled according to `ROADMAP.md`.
