@@ -473,6 +473,17 @@ def verification_evidence_summary(steps):
             else:
                 summary["unavailable_snapshots"] += 1
         summary["unrecorded_commands"] += len(remaining)
+    if summary["recorded_checks"] == 0:
+        summary["workspace_snapshot_state"] = "not_available"
+    elif summary["changed_or_incomplete_snapshots"]:
+        summary["workspace_snapshot_state"] = "changed_or_incomplete"
+    elif summary["unavailable_snapshots"] and summary["stable_snapshots"]:
+        summary["workspace_snapshot_state"] = "incomplete"
+    elif summary["unavailable_snapshots"]:
+        summary["workspace_snapshot_state"] = "unavailable"
+    else:
+        summary["workspace_snapshot_state"] = "stable"
+
     if summary["configured_commands"] == 0:
         summary["command_coverage_state"] = "not_configured"
     elif summary["unmatched_checks"]:
