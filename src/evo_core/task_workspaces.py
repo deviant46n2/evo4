@@ -143,9 +143,9 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
     root = str(Path(path).resolve())
     overrides = []
     if discover_helpers:
-        config_path = Path(root) / ".git" / "config"
+        git_marker = Path(root) / ".git"
         try:
-            st = config_path.stat()
+            st = git_marker.stat()
             cache_key = (root, st.st_mtime_ns, st.st_size, st.st_ino)
         except OSError:
             cache_key = (root, None)
@@ -157,11 +157,17 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
                 r"^diff\..*\.(command|textconv)$",
             ):
                 discovery_truncated = []
-                discovery = _git(
-                    root, "config", "--local", "--name-only", "--get-regexp", pattern,
-                    timeout=min(timeout, 10), max_output_bytes=65536,
-                    truncated=discovery_truncated, env=safe_env, discover_helpers=False,
-                )
+                try:
+                    discovery = _git(
+                        root, "config", "--local", "--name-only", "--get-regexp", pattern,
+                        timeout=min(timeout, 10), max_output_bytes=65536,
+                        truncated=discovery_truncated, env=safe_env, discover_helpers=False,
+                    )
+                except TaskWorkspaceProvisioningError as exc:
+                    if getattr(exc, "exit_code", None) == 1:
+                        discovery = ""
+                    else:
+                        raise
                 if discovery_truncated:
                     raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
                 helper_keys.extend(line for line in discovery.splitlines() if line)
