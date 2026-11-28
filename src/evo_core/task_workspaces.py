@@ -635,8 +635,14 @@ def _open_regular_file_at(root, relative_path):
     parts = Path(relative_path).parts
     if not parts or any(part in ("", ".", "..") for part in parts):
         raise OSError("unsafe relative path")
+    root_before = os.stat(str(root), follow_symlinks=False)
+    if not stat.S_ISDIR(root_before.st_mode):
+        raise OSError("task workspace root is not a directory")
     directory_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
+        root_after = os.fstat(directory_fd)
+        if (root_before.st_dev, root_before.st_ino) != (root_after.st_dev, root_after.st_ino):
+            raise OSError("task workspace root changed before traversal")
         for part in parts[:-1]:
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
             os.close(directory_fd)

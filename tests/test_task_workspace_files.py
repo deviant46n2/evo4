@@ -79,6 +79,55 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         )
         self.assertEqual(nested["items"][0]["path"], "src/main.py")
 
+    def test_listing_rejects_root_replacement_between_stat_and_open(self):
+        import os
+        from unittest.mock import patch
+
+        original = self.task_root
+        displaced = self.root / "displaced-task-root"
+        replacement = self.root / "replacement-task-root"
+        real_open = os.open
+        replaced = {"done": False}
+
+        def replace_before_open(path, flags, *args, **kwargs):
+            if str(path) == str(original) and not replaced["done"]:
+                original.rename(displaced)
+                replacement.mkdir()
+                (replacement / "outside.txt").write_text("not the bound workspace")
+                replacement.rename(original)
+                replaced["done"] = True
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("evo_core.task_workspace_files.os.open", side_effect=replace_before_open):
+            with self.assertRaises(ValueError):
+                list_task_workspace_files(self.store, self.operation["operation_id"])
+        self.assertTrue(replaced["done"])
+
+    def test_file_read_rejects_root_replacement_between_stat_and_open(self):
+        import os
+        from unittest.mock import patch
+
+        (self.task_root / "secret.txt").write_text("bound workspace")
+        original = self.task_root
+        displaced = self.root / "displaced-task-root"
+        replacement = self.root / "replacement-task-root"
+        replacement.mkdir()
+        (replacement / "secret.txt").write_text("replacement workspace")
+        real_open = os.open
+        replaced = {"done": False}
+
+        def replace_before_open(path, flags, *args, **kwargs):
+            if str(path) == str(original) and not replaced["done"]:
+                original.rename(displaced)
+                replacement.rename(original)
+                replaced["done"] = True
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open):
+            with self.assertRaises(ValueError):
+                read_task_workspace_file(self.store, self.operation["operation_id"], "secret.txt")
+        self.assertTrue(replaced["done"])
+
     def test_directory_symlinks_are_not_traversed(self):
         outside = self.root / "outside"
         outside.mkdir()

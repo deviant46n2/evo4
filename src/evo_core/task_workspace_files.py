@@ -69,8 +69,14 @@ def _open_directory_at(root, relative_path):
     required = ("O_NOFOLLOW", "O_DIRECTORY")
     if any(not hasattr(os, flag) for flag in required) or os.open not in os.supports_dir_fd:
         raise OSError("safe descriptor-relative directory access is unavailable")
+    root_before = os.stat(str(root), follow_symlinks=False)
+    if not stat.S_ISDIR(root_before.st_mode):
+        raise OSError("task workspace root is not a directory")
     fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
+        root_after = os.fstat(fd)
+        if (root_before.st_dev, root_before.st_ino) != (root_after.st_dev, root_after.st_ino):
+            raise OSError("task workspace root changed before traversal")
         for part in relative_path.parts:
             if part == ".":
                 continue
