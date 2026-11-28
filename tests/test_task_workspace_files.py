@@ -203,7 +203,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             apply_task_workspace_file(self.store, self.operation["operation_id"], "large.txt", "x" * (1024 * 1024 + 1), approved=True)
         with self.assertRaises(ValueError):
-            apply_task_workspace_file(self.store, self.operation["operation_id"], "binary.txt", "a\\x00b", approved=True)
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "binary.txt", "a\x00b", approved=True)
 
 if __name__ == "__main__":
     unittest.main()
