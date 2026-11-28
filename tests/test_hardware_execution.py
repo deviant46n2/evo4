@@ -108,6 +108,28 @@ class ManagedExecutionTests(unittest.TestCase):
         result = get_execution(self.db, record["id"])
         self.assertLessEqual(len(result["stdout"].encode("utf-8")), 20000)
 
+    def test_environment_contract_rejects_sensitive_values(self):
+        job = self.reserve("env")
+        with self.assertRaisesRegex(ValueError, "sensitive"):
+            register_execution(self.db, job["id"], [sys.executable, "-c", "print(1)"],
+                               self.allowed, tempfile.gettempdir(),
+                               environment={"API_KEY": "secret"})
+
+    def test_expected_artifacts_are_collected(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "out.txt").write_text("artifact", encoding="utf-8")
+        job = self.reserve("artifact")
+        record = register_execution(
+            self.db, job["id"], [sys.executable, "-c", "print('ok')"],
+            self.allowed, str(root), expected_artifacts=["out.txt", "missing.txt"],
+        )
+        run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "completed")
+        artifacts = {item["path"]: item for item in result["artifacts"]}
+        self.assertEqual(artifacts["out.txt"]["status"], "collected")
+        self.assertEqual(artifacts["missing.txt"]["status"], "missing")
+
     def test_duplicate_execution_and_unapproved_command_are_rejected(self):
         job = self.reserve("duplicate")
         with self.assertRaisesRegex(ValueError, "not permitted"):

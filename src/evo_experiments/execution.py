@@ -47,7 +47,14 @@ CREATE TABLE IF NOT EXISTS workload_executions (
  stdout TEXT NOT NULL DEFAULT '',
  stderr TEXT NOT NULL DEFAULT '',
  error TEXT NOT NULL DEFAULT '',
- created_at TEXT NOT NULL
+ created_at TEXT NOT NULL,
+ environment_json TEXT NOT NULL DEFAULT '{}',
+ resource_limits_json TEXT NOT NULL DEFAULT '{}',
+ expected_artifacts_json TEXT NOT NULL DEFAULT '[]',
+ artifacts_json TEXT NOT NULL DEFAULT '[]',
+ output_limit_bytes INTEGER NOT NULL DEFAULT 20000,
+ execution_specification_json TEXT,
+ execution_specification_sha256 TEXT
 )
 """
 INDEX_STATEMENTS = (
@@ -77,6 +84,11 @@ def _migrate_execution_schema(connection):
             "approval_id": None, "approval_evidence_json": "TEXT NOT NULL DEFAULT '{}'",
             "source_revision": None, "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
             "requested_at": None,
+            "environment_json": "TEXT NOT NULL DEFAULT '{}'",
+            "resource_limits_json": "TEXT NOT NULL DEFAULT '{}'",
+            "expected_artifacts_json": "TEXT NOT NULL DEFAULT '[]'",
+            "artifacts_json": "TEXT NOT NULL DEFAULT '[]'",
+            "output_limit_bytes": "INTEGER NOT NULL DEFAULT 20000",
         }
         rebuild = "job_id" in columns and columns["job_id"][3]  # notnull
         if not rebuild:
@@ -101,13 +113,15 @@ def _migrate_execution_schema(connection):
              approval_evidence_json, source_revision, cancel_requested, requested_at,
              argv_json, policy_json, workspace, status, timeout_seconds, pid,
              process_started_at, started_at, finished_at, returncode, elapsed_seconds,
-             stdout, stderr, error, created_at)
+             stdout, stderr, error, created_at, environment_json, resource_limits_json,
+             expected_artifacts_json, artifacts_json, output_limit_bytes,
+             execution_specification_json, execution_specification_sha256)
             SELECT {col('id')}, {col('job_id')}, NULL, NULL, NULL, NULL, '{{}}', NULL, 0, NULL,
                    {col('argv_json')}, {col('policy_json')}, {col('workspace')}, {col('status')},
                    {col('timeout_seconds')}, {col('pid')}, {col('process_started_at')},
                    {col('started_at')}, {col('finished_at')}, {col('returncode')},
                    {col('elapsed_seconds')}, {col('stdout')}, {col('stderr')}, {col('error')},
-                   {col('created_at')}
+                   {col('created_at')}, '{{}}', '{{}}', '[]', '[]', 20000, NULL, NULL
             FROM workload_executions_legacy"""
         )
         connection.execute("DROP TABLE workload_executions_legacy")
@@ -133,6 +147,18 @@ def initialize_execution(connection):
         else:
             if "policy_json" not in columns:
                 connection.execute("ALTER TABLE workload_executions ADD COLUMN policy_json TEXT NOT NULL DEFAULT '[]'")
+            additions = [
+                ("environment_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("resource_limits_json", "TEXT NOT NULL DEFAULT '{}'"),
+                ("expected_artifacts_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("artifacts_json", "TEXT NOT NULL DEFAULT '[]'"),
+                ("output_limit_bytes", "INTEGER NOT NULL DEFAULT 20000"),
+                ("execution_specification_json", "TEXT"),
+                ("execution_specification_sha256", "TEXT"),
+            ]
+            for column, definition in additions:
+                if column not in columns:
+                    connection.execute(f"ALTER TABLE workload_executions ADD COLUMN {column} {definition}")
             _migrate_execution_schema(connection)
             for statement in INDEX_STATEMENTS:
                 connection.execute(statement)
@@ -164,6 +190,27 @@ def _decode(row):
         item["approval_evidence"] = json.loads(item.pop("approval_evidence_json", "{}") or "{}")
     except (ValueError, TypeError):
         item["approval_evidence"] = {}
+    for json_field, target, default in (
+        ("environment_json", "environment_contract", {}),
+        ("resource_limits_json", "resource_limits", {}),
+        ("expected_artifacts_json", "expected_artifacts", []),
+        ("artifacts_json", "artifacts", []),
+    ):
+        try:
+            value = json.loads(item.pop(json_field, None) or ("{}" if default == {} else "[]"))
+        except (ValueError, TypeError):
+            value = default
+        item[target] = value
+        item[json_field.replace("_json", "")] = value
+    item["output_limit_bytes"] = item.get("output_limit_bytes") or 20000
+    item["execution_specification"] = item.get("execution_specification_json")
+    item["execution_specification_sha256"] = item.get("execution_specification_sha256")
+    # Compatibility aliases.
+    item["environment"] = item.get("environment_contract", {})
+    item["resource_budget"] = item.get("resource_limits", {})
+    item["expected_artifact_paths"] = item.get("expected_artifacts", [])
+    item["collected_artifacts"] = item.get("artifacts", [])
+    item["specification_digest"] = item.get("execution_specification_sha256")
     return item
 
 def request_cancel_managed_execution(connection, execution_id):
@@ -205,15 +252,227 @@ def get_execution(connection, execution_id):
     row = connection.execute("SELECT * FROM workload_executions WHERE id=?", (execution_id,)).fetchone()
     return _decode(row) if row else None
 
+SENSITIVE_ENVIRONMENT_NAMES = {
+    "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS",
+}
+
+
+def _is_sensitive_environment_name(name):
+    parts = set(re.split(r"[^A-Z0-9]+", str(name).upper()))
+    return bool(parts & SENSITIVE_ENVIRONMENT_NAMES) or ({"API", "KEY"} <= parts) or ({"PRIVATE", "KEY"} <= parts)
+
+
+def _sanitize_environment_contract(value):
+    if value is None:
+        return {"inherit_safe_environment": True, "variables": {}}
+    if not isinstance(value, dict):
+        raise ValueError("environment contract must be a mapping")
+    if "variables" in value or "inherit_safe_environment" in value or "inherit" in value:
+        inherit = bool(value.get("inherit_safe_environment", value.get("inherit", True)))
+        variables = value.get("variables", {})
+        if variables is None:
+            variables = {}
+        if not isinstance(variables, dict):
+            raise ValueError("environment contract variables must be a mapping")
+    else:
+        inherit = True
+        variables = value
+    sanitized = {}
+    for key, env_value in variables.items():
+        if not isinstance(key, str) or not key or "\x00" in key or "=" in key:
+            raise ValueError("environment variable names must be non-empty strings")
+        if not isinstance(env_value, str):
+            raise ValueError("environment variable values must be strings")
+        if _is_sensitive_environment_name(key):
+            raise ValueError(f"refusing to persist sensitive environment variable {key!r}")
+        sanitized[key] = env_value
+    return {"inherit_safe_environment": bool(inherit), "variables": sanitized}
+
+
+def _validate_resource_limits(value):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("resource limits must be a mapping")
+    aliases = {
+        "cpu_seconds": "cpu_seconds",
+        "cpu_time_seconds": "cpu_seconds",
+        "memory_bytes": "memory_bytes",
+        "memory_limit_bytes": "memory_bytes",
+        "address_space_bytes": "memory_bytes",
+        "open_files": "open_files",
+        "max_open_files": "open_files",
+        "processes": "processes",
+        "max_processes": "processes",
+        "file_size_bytes": "file_size_bytes",
+        "max_file_size_bytes": "file_size_bytes",
+    }
+    result = {}
+    for key, raw in value.items():
+        canonical = aliases.get(str(key))
+        if canonical is None:
+            raise ValueError(f"unsupported resource limit {key!r}")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(f"resource limit {key!r} must be numeric")
+        number = int(raw)
+        if number < 0:
+            raise ValueError(f"resource limit {key!r} must be non-negative")
+        result[canonical] = number
+    if result and not _resource_limits_supported():
+        raise ValueError("resource limits are not enforceable on this platform")
+    return result
+
+
+def _resource_limits_supported():
+    try:
+        import resource
+    except ImportError:
+        return False
+    return hasattr(resource, "setrlimit") and hasattr(resource, "RLIMIT_CPU")
+
+
+def _validate_expected_artifacts(value):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("expected artifacts must be a list")
+    result = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("expected artifact paths must be strings")
+        if not item or item.startswith("/") or "\\" in item or "\x00" in item:
+            raise ValueError("expected artifact path must be a relative POSIX path")
+        parts = item.split("/")
+        if any(part in ("", ".", "..") for part in parts):
+            raise ValueError("expected artifact path must not traverse the workspace")
+        if parts and parts[0] == ".git":
+            raise ValueError("expected artifact path must not target Git metadata")
+        if item not in result:
+            result.append(item)
+    if len(result) > 100:
+        raise ValueError("too many expected artifacts")
+    return result
+
+
+def _safe_relative_artifact_path(value):
+    if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value or "\x00" in value:
+        return None
+    parts = value.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    if parts and parts[0] == ".git":
+        return None
+    return "/".join(parts)
+
+
+def _collect_artifacts(workspace, expected_artifacts, max_bytes=10 * 1024 * 1024):
+    import hashlib
+    import os
+    import stat as stat_module
+    collected = []
+    total = 0
+    for relative in expected_artifacts:
+        safe = _safe_relative_artifact_path(relative)
+        if safe is None:
+            collected.append({"path": str(relative), "status": "unsafe", "reason": "unsafe_path"})
+            continue
+        target = os.path.join(str(workspace), *safe.split("/"))
+        try:
+            info = os.lstat(target)
+        except FileNotFoundError:
+            collected.append({"path": safe, "status": "missing"})
+            continue
+        except OSError as exc:
+            collected.append({"path": safe, "status": "unreadable", "reason": str(exc)[:200]})
+            continue
+        if stat_module.S_ISLNK(info.st_mode):
+            collected.append({"path": safe, "status": "unsafe", "reason": "symlink"})
+            continue
+        if not stat_module.S_ISREG(info.st_mode):
+            collected.append({"path": safe, "status": "unsafe", "reason": "not_regular_file"})
+            continue
+        if info.st_size > max_bytes or total + info.st_size > max_bytes:
+            collected.append({"path": safe, "status": "oversized", "size_bytes": info.st_size})
+            continue
+        try:
+            digest = hashlib.sha256()
+            read_bytes = 0
+            with open(target, "rb") as handle:
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    read_bytes += len(chunk)
+                    if total + read_bytes > max_bytes:
+                        raise OSError("artifact exceeds byte budget")
+                    digest.update(chunk)
+            after = os.lstat(target)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mode) != (info.st_dev, info.st_ino, info.st_size, info.st_mode):
+                collected.append({"path": safe, "status": "changed", "reason": "file changed during collection"})
+                continue
+            collected.append({
+                "path": safe,
+                "status": "collected",
+                "size_bytes": info.st_size,
+                "sha256": digest.hexdigest(),
+            })
+            total += info.st_size
+        except (OSError, ValueError) as exc:
+            collected.append({"path": safe, "status": "unreadable", "reason": str(exc)[:200]})
+    return collected[:100]
+
+
+def _canonical_execution_specification(argv, workspace, environment_contract, timeout_seconds, output_limit_bytes, resource_limits, expected_artifacts, allowed_commands):
+    import hashlib, json as _json
+    spec = {
+        "argv": list(argv),
+        "working_directory": str(workspace),
+        "environment_contract": environment_contract,
+        "timeout_seconds": int(timeout_seconds),
+        "output_limit_bytes": int(output_limit_bytes),
+        "resource_limits": resource_limits,
+        "expected_artifacts": list(expected_artifacts),
+        "effective_command_policy": [list(prefix) for prefix in allowed_commands if prefix],
+    }
+    text = _json.dumps(spec, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def register_managed_execution(connection, *, workspace, argv, allowed_commands, timeout_seconds=300,
                                     job_id=None, agent_run_id=None, workspace_id=None, project_id=None,
-                                    approval_id=None, approval_evidence=None, source_revision=None):
+                                    approval_id=None, approval_evidence=None, source_revision=None,
+                                    working_directory=None, environment=None, environment_contract=None,
+                                    output_limit_bytes=None, resource_limits=None, resource_budget=None,
+                                    expected_artifacts=None, expected_artifact_paths=None):
     if not command_allowed(argv, allowed_commands):
         raise ValueError("Command is not permitted by workspace.allowed_commands")
     timeout = min(max(int(timeout_seconds), 1), MAX_TIMEOUT_SECONDS)
+    working_directory = working_directory if working_directory is not None else workspace
+    if isinstance(working_directory, (os.PathLike,)):
+        working_directory = os.fspath(working_directory)
+    if not isinstance(working_directory, str) or not working_directory.strip():
+        raise ValueError("working_directory must be a non-empty string")
+    working_directory = working_directory.strip()
+    if not os.path.isdir(working_directory):
+        raise ValueError("working_directory must be an existing directory")
+    environment_contract = _sanitize_environment_contract(
+        environment_contract if environment_contract is not None else environment)
+    resource_limits = _validate_resource_limits(
+        resource_limits if resource_limits is not None else resource_budget)
+    expected_artifacts = _validate_expected_artifacts(
+        expected_artifacts if expected_artifacts is not None else expected_artifact_paths)
+    if output_limit_bytes is None:
+        output_limit_bytes = OUTPUT_LIMIT
+    if isinstance(output_limit_bytes, bool) or not isinstance(output_limit_bytes, int):
+        raise ValueError("output_limit_bytes must be an integer")
+    if output_limit_bytes < 1 or output_limit_bytes > 100 * 1024 * 1024:
+        raise ValueError("output_limit_bytes must be between 1 and 104857600")
     import hashlib, json as _json
     canonical_argv_hash = hashlib.sha256(_json.dumps(list(argv), sort_keys=True).encode("utf-8")).hexdigest()
     canonical_policy = [list(prefix) for prefix in allowed_commands if prefix]
+    specification_text, specification_hash = _canonical_execution_specification(
+        argv, working_directory, environment_contract, timeout, output_limit_bytes,
+        resource_limits, expected_artifacts, allowed_commands)
     if agent_run_id is None:
         approval_evidence = dict(approval_evidence or {})
     else:
@@ -228,12 +487,22 @@ def register_managed_execution(connection, *, workspace, argv, allowed_commands,
             raise ValueError("Approval evidence must bind the exact command argv")
         if evidence.get("policy") != canonical_policy:
             raise ValueError("Approval evidence must bind the exact effective policy snapshot")
+        if "execution_specification_sha256" in evidence and evidence.get("execution_specification_sha256") != specification_hash:
+            raise ValueError("Approval evidence must bind the complete execution specification")
         approval_evidence = evidence
     approval_evidence = dict(approval_evidence or {})
     if "argv_sha256" in approval_evidence and approval_evidence["argv_sha256"] != canonical_argv_hash:
         raise ValueError("Approval evidence does not match the requested command")
     if "policy" in approval_evidence and approval_evidence["policy"] != canonical_policy:
         raise ValueError("Approval evidence does not match the effective policy snapshot")
+    if "execution_specification_sha256" in approval_evidence and approval_evidence["execution_specification_sha256"] != specification_hash:
+        raise ValueError("Approval evidence does not match the complete execution specification")
+    if agent_run_id is not None:
+        approval_evidence.setdefault("argv_sha256", canonical_argv_hash)
+        approval_evidence.setdefault("policy", canonical_policy)
+        approval_evidence.setdefault("execution_specification_sha256", specification_hash)
+        approval_evidence.setdefault("execution_specification", specification_text)
+
     if job_id is not None:
         job = get_job(connection, job_id)
         if job is None:
@@ -249,12 +518,17 @@ def register_managed_execution(connection, *, workspace, argv, allowed_commands,
         """INSERT INTO workload_executions
         (id,job_id,agent_run_id,workspace_id,project_id,approval_id,approval_evidence_json,
          source_revision,cancel_requested,requested_at,argv_json,policy_json,workspace,status,
-         timeout_seconds,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         timeout_seconds,created_at,environment_json,resource_limits_json,expected_artifacts_json,
+         artifacts_json,output_limit_bytes,execution_specification_json,execution_specification_sha256)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (execution_id, job_id, agent_run_id, workspace_id, project_id, approval_id,
          json.dumps(approval_evidence or {}, ensure_ascii=False, default=str),
          source_revision, 0, created, json.dumps(list(argv)), json.dumps(policy_snapshot),
-         str(workspace), "queued", timeout, created))
+         str(working_directory), "queued", timeout, created,
+         json.dumps(environment_contract, ensure_ascii=False, default=str),
+         json.dumps(resource_limits, ensure_ascii=False, default=str),
+         json.dumps(expected_artifacts, ensure_ascii=False, default=str),
+         "[]", output_limit_bytes, specification_text, specification_hash))
     connection.commit()
     if job_id is not None:
         try:
@@ -265,10 +539,10 @@ def register_managed_execution(connection, *, workspace, argv, allowed_commands,
             raise
     return get_execution(connection, execution_id)
 
-def register_execution(connection, job_id, argv, allowed_commands, workspace, timeout_seconds=300):
+def register_execution(connection, job_id, argv, allowed_commands, workspace, timeout_seconds=300, **kwargs):
     return register_managed_execution(
         connection, job_id=job_id, workspace=workspace, argv=argv,
-        allowed_commands=allowed_commands, timeout_seconds=timeout_seconds)
+        allowed_commands=allowed_commands, timeout_seconds=timeout_seconds, **kwargs)
 
 def _safe_environment():
     # Preserve PATH/HOME and ordinary settings while filtering credential-shaped
@@ -278,6 +552,37 @@ def _safe_environment():
         parts = set(re.split(r"[^A-Z0-9]+", name.upper()))
         return bool(parts & sensitive) or ({"API", "KEY"} <= parts) or ({"PRIVATE", "KEY"} <= parts)
     return {key: value for key, value in os.environ.items() if not is_secret(key)}
+
+def _environment_for_contract(contract):
+    contract = contract or {}
+    env = {}
+    if contract.get("inherit_safe_environment", True):
+        env.update(_safe_environment())
+    for key, value in (contract.get("variables") or {}).items():
+        if _is_sensitive_environment_name(key):
+            raise ValueError(f"refusing to apply sensitive environment variable {key!r}")
+        env[str(key)] = str(value)
+    return env
+
+
+def _make_preexec(resource_limits):
+    def apply():
+        try:
+            import resource
+        except ImportError as exc:
+            raise RuntimeError("resource limits are not enforceable on this platform") from exc
+        if "cpu_seconds" in resource_limits and resource_limits["cpu_seconds"] > 0:
+            resource.setrlimit(resource.RLIMIT_CPU, (resource_limits["cpu_seconds"], resource_limits["cpu_seconds"]))
+        if "memory_bytes" in resource_limits and resource_limits["memory_bytes"] > 0:
+            resource.setrlimit(resource.RLIMIT_AS, (resource_limits["memory_bytes"], resource_limits["memory_bytes"]))
+        if "open_files" in resource_limits and resource_limits["open_files"] > 0:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (resource_limits["open_files"], resource_limits["open_files"]))
+        if "processes" in resource_limits and resource_limits["processes"] > 0 and hasattr(resource, "RLIMIT_NPROC"):
+            resource.setrlimit(resource.RLIMIT_NPROC, (resource_limits["processes"], resource_limits["processes"]))
+        if "file_size_bytes" in resource_limits and resource_limits["file_size_bytes"] > 0 and hasattr(resource, "RLIMIT_FSIZE"):
+            resource.setrlimit(resource.RLIMIT_FSIZE, (resource_limits["file_size_bytes"], resource_limits["file_size_bytes"]))
+    return apply
+
 
 def _persist(connection, lock, execution_id, **values):
     if not values:
@@ -625,6 +930,32 @@ def run_execution(connection, lock, execution_id):
     if record.get("cancel_requested"):
         _finalize_cancelled_before_launch(connection, lock, execution_id, record)
         return
+    output_limit = record.get("output_limit_bytes") or OUTPUT_LIMIT
+    try:
+        output_limit = int(output_limit)
+    except (TypeError, ValueError):
+        output_limit = OUTPUT_LIMIT
+    if output_limit < 1:
+        output_limit = OUTPUT_LIMIT
+    environment_contract = record.get("environment_contract") or {}
+    if not isinstance(environment_contract, dict):
+        environment_contract = {}
+    resource_limits = record.get("resource_limits") or {}
+    if not isinstance(resource_limits, dict):
+        resource_limits = {}
+    try:
+        env = _environment_for_contract(environment_contract)
+    except ValueError as exc:
+        _persist(connection, lock, execution_id, status="failed", error=str(exc)[:2000], finished_at=_now())
+        return
+    if resource_limits and not _resource_limits_supported():
+        _persist(connection, lock, execution_id, status="failed", error="resource limits are not enforceable on this platform", finished_at=_now())
+        return
+    preexec = _make_preexec(resource_limits) if resource_limits else None
+    working_directory = record.get("workspace") or record.get("working_directory")
+    if not working_directory or not os.path.isdir(str(working_directory)):
+        _persist(connection, lock, execution_id, status="failed", error="working directory is unavailable", finished_at=_now())
+        return
     started = _now()
     begin = time.monotonic()
     process = None
@@ -691,13 +1022,13 @@ def run_execution(connection, lock, execution_id):
             [sys.executable, "-c",
              "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(1000000)"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            process_group=0, env=_safe_environment(), close_fds=True)
+            process_group=0, env=env, close_fds=True)
         group_pid = keeper.pid
         process = subprocess.Popen(
-            record["argv"], cwd=record["workspace"], shell=False,
+            record["argv"], cwd=str(working_directory), shell=False,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=False, close_fds=True, process_group=group_pid,
-            env=_safe_environment())
+            env=env, preexec_fn=preexec)
         process._evo_group_pid = group_pid
         process._evo_keeper = keeper
         process._evo_cleanup_lock = threading.Lock()
@@ -717,8 +1048,8 @@ def run_execution(connection, lock, execution_id):
                     if not chunk:
                         break
                     target.extend(chunk)
-                    if len(target) > OUTPUT_LIMIT:
-                        del target[:-OUTPUT_LIMIT]
+                    if len(target) > output_limit:
+                        del target[:-output_limit]
             finally:
                 pipe.close()
         for pipe, target in ((process.stdout, stdout_buffer), (process.stderr, stderr_buffer)):
@@ -830,6 +1161,7 @@ def run_execution(connection, lock, execution_id):
         stdout = bytes(stdout_buffer).decode("utf-8", errors="replace")
         stderr = bytes(stderr_buffer).decode("utf-8", errors="replace")
         elapsed = round(time.monotonic() - begin, 3)
+        artifacts = _collect_artifacts(working_directory, record.get("expected_artifacts") or [], output_limit)
         if cancelled_outcome["value"] and (returncode is None or (isinstance(returncode, int) and returncode < 0)):
             outcome = "cancelled"
         else:
@@ -840,9 +1172,10 @@ def run_execution(connection, lock, execution_id):
         with lock:
             cursor = connection.execute(
                 """UPDATE workload_executions SET status=?,finished_at=?,returncode=?,
-                   elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL
+                   elapsed_seconds=?,stdout=?,stderr=?,error=?,pid=NULL,artifacts_json=?
                    WHERE id=? AND status NOT IN ('completed','failed','cancelled','interrupted','launch_uncertain')""",
-                (outcome, _now(), returncode, elapsed, stdout, stderr, error[:2000], execution_id))
+                (outcome, _now(), returncode, elapsed, stdout, stderr, error[:2000],
+                 json.dumps(artifacts, ensure_ascii=False, default=str), execution_id))
             if cursor.rowcount == 1 and record.get("job_id"):
                 try:
                     if outcome == "cancelled":

@@ -498,6 +498,17 @@ def create_app(config_path="config.toml", provider_name=None):
                     "approval_source": approval.get("approval_source"),
                     "approved_at": approval.get("approved_at"),
                     "argv_sha256": approval.get("argv_sha256"),
+                    "execution_specification_sha256": approval.get("execution_specification_sha256", execution.get("execution_specification_sha256")),
+                    "working_directory": execution.get("workspace"),
+                    "environment_contract": execution.get("environment_contract", {}),
+                    "environment": execution.get("environment_contract", {}),
+                    "resource_limits": execution.get("resource_limits", {}),
+                    "resource_budget": execution.get("resource_limits", {}),
+                    "expected_artifacts": execution.get("expected_artifacts", []),
+                    "expected_artifact_paths": execution.get("expected_artifacts", []),
+                    "artifacts": execution.get("artifacts", []),
+                    "collected_artifacts": execution.get("artifacts", []),
+                    "output_limit_bytes": execution.get("output_limit_bytes"),
                 })
             plan_id = metadata.get("plan_id")
             if isinstance(plan_id, str) and plan_id:
