@@ -30,6 +30,8 @@ from .runtime_invocation_snapshots import (
 from .coding_agent import CodingAgent
 from .task_workspaces import (
     create_task_workspace,
+    get_task_workspace_operation_status,
+    list_task_workspace_operations,
     get_task_workspace_review,
     TaskWorkspaceConflictError,
     TaskWorkspaceProvisioningError,
@@ -291,6 +293,33 @@ def create_app(config_path="config.toml", provider_name=None):
                     "status": exc.status,
                 },
             ) from exc
+
+    @app.get("/api/v1/task-workspaces")
+    def task_workspace_operations(project_id: str | None = None,
+                                  status: str | None = None,
+                                  limit: int = 100):
+        try:
+            items = list_task_workspace_operations(
+                store, project_id=project_id, status=status, limit=limit,
+            )
+            return {"items": items, "total": len(items)}
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace listing failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
+    @app.get("/api/v1/task-workspaces/{operation_id}")
+    def task_workspace_operation(operation_id: str):
+        try:
+            return get_task_workspace_operation_status(store, operation_id)
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace inspection failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
 
     @app.get("/api/v1/task-workspaces/{operation_id}/review")
     def task_workspace_review(operation_id: str):
