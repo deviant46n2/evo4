@@ -6,6 +6,9 @@ implicit error recovery: incomplete provisioning remains recorded for review.
 """
 import os
 import signal
+import hashlib
+import stat
+import time
 import re
 import subprocess
 import uuid
@@ -1027,6 +1030,99 @@ def get_task_workspace_review(
     if serialized_size > max_bytes + 4 * 1024 * 1024:
         raise TaskWorkspaceProvisioningError("review response exceeded its serialized size budget")
     return response
+
+
+
+
+def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_bytes=512 * 1024 * 1024, timeout_seconds=30):
+    """Hash a bounded, read-only snapshot of every regular workspace file.
+
+    Git metadata is excluded. Symlinks, special files, races, and budget
+    exhaustion make the snapshot incomplete rather than silently omitting data.
+    """
+    if isinstance(max_files, bool) or not isinstance(max_files, int) or not 1 <= max_files <= 100000:
+        raise TaskWorkspaceValidationError("max_files must be between 1 and 100000")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1024 <= max_bytes <= 2 * 1024 * 1024 * 1024:
+        raise TaskWorkspaceValidationError("max_bytes must be between 1024 and 2 GiB")
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 1 <= timeout_seconds <= 120:
+        raise TaskWorkspaceValidationError("timeout_seconds must be between 1 and 120")
+    operation = get_task_workspace_operation(store, operation_id)
+    if operation["status"] != "completed":
+        raise TaskWorkspaceValidationError("task workspace operation is not completed")
+    binding = resolve_executable_workspace(store, operation["task_workspace_id"])
+    if binding["checkout_id"] != operation["checkout_id"] or str(binding.path) != str(operation["destination_path"]):
+        raise TaskWorkspaceValidationError("task workspace binding does not match its operation")
+    root = Path(binding.path)
+    deadline = time.monotonic() + timeout_seconds
+    digest = hashlib.sha256()
+    files = 0
+    total_bytes = 0
+
+    def add_record(value):
+        digest.update(value.encode("utf-8", errors="surrogateescape"))
+        digest.update(bytes([0]))
+
+    def visit(directory, relative):
+        nonlocal files, total_bytes
+        if time.monotonic() > deadline:
+            raise TimeoutError("snapshot deadline exceeded")
+        before_dir = os.stat(directory, follow_symlinks=False)
+        if not stat.S_ISDIR(before_dir.st_mode):
+            raise OSError("workspace directory changed type")
+        with os.scandir(directory) as iterator:
+            entries = sorted(iterator, key=lambda entry: entry.name)
+        for entry in entries:
+            if entry.name == ".git":
+                continue
+            rel = (relative / entry.name) if relative else Path(entry.name)
+            info = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                add_record("D:" + rel.as_posix() + ":" + str(stat.S_IMODE(info.st_mode)))
+                visit(Path(entry.path), rel)
+            elif stat.S_ISREG(info.st_mode):
+                files += 1
+                if files > max_files or info.st_size > max_bytes - total_bytes:
+                    raise OverflowError("snapshot file or byte budget exceeded")
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                fd = os.open(entry.path, flags)
+                try:
+                    opened = os.fstat(fd)
+                    if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise OSError("workspace file changed before hashing")
+                    file_hash = hashlib.sha256()
+                    read_bytes = 0
+                    while True:
+                        if time.monotonic() > deadline:
+                            raise TimeoutError("snapshot deadline exceeded")
+                        chunk = os.read(fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        read_bytes += len(chunk)
+                        if read_bytes > max_bytes - total_bytes:
+                            raise OverflowError("snapshot byte budget exceeded")
+                        file_hash.update(chunk)
+                    after = os.fstat(fd)
+                    signature = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
+                    if signature(opened) != signature(after) or read_bytes != after.st_size:
+                        raise OSError("workspace file changed while hashing")
+                finally:
+                    os.close(fd)
+                total_bytes += read_bytes
+                add_record("F:" + rel.as_posix() + ":" + str(stat.S_IMODE(after.st_mode)) + ":" + str(read_bytes) + ":" + file_hash.hexdigest())
+            else:
+                raise OSError("workspace contains a symlink or unsupported filesystem entry")
+        after_dir = os.stat(directory, follow_symlinks=False)
+        signature = lambda item: (item.st_dev, item.st_ino, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
+        if signature(before_dir) != signature(after_dir):
+            raise OSError("workspace directory changed while hashing")
+
+    try:
+        visit(root, Path())
+    except (OSError, OverflowError, TimeoutError) as exc:
+        return {"fingerprint": None, "complete": False, "file_count": files,
+                "total_bytes": total_bytes, "reason": str(exc)[:240]}
+    return {"fingerprint": digest.hexdigest(), "complete": True, "file_count": files,
+            "total_bytes": total_bytes, "reason": None}
 
 
 
