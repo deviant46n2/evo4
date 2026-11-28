@@ -157,10 +157,26 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
             run_id = self.app.state.store.start_agent_run("orchestrated", run_metadata)
             orchestration.attach_run(self.app.state.lab_db.connection, plan["id"], run_id)
             step_id = plan["steps"][0]["id"]
+            execution_id = "execution-123"
+            self.app.state.lab_db.connection.execute(
+                """INSERT INTO workload_executions
+                   (id,agent_run_id,workspace_id,project_id,approval_evidence_json,
+                    source_revision,cancel_requested,requested_at,argv_json,policy_json,
+                    workspace,status,timeout_seconds,started_at,finished_at,returncode,
+                    elapsed_seconds,stdout,stderr,error,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (execution_id, run_id, task_workspace_id, project_id, "{}",
+                 self.operation["source_revision"], 0, "2026-11-28T12:00:00+00:00",
+                 json.dumps(["python", "-m", "unittest"]), json.dumps([["python"]]),
+                 str(self.task_root), "completed", 120, "2026-11-28T12:00:00+00:00",
+                 "2026-11-28T12:00:02+00:00", 0, 2.0, "OK", "", "",
+                 "2026-11-28T12:00:00+00:00"),
+            )
+            self.app.state.lab_db.connection.commit()
             orchestration.record_verification(
                 self.app.state.lab_db.connection, plan["id"], step_id,
                 ["python", "-m", "unittest"], "passed", 0, "OK", "",
-                execution_id="execution-123",
+                execution_id=execution_id,
                 workspace_fingerprint_before="a" * 64,
                 workspace_fingerprint_after="a" * 64,
                 workspace_snapshot_stable=True,
@@ -175,6 +191,14 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(evidence["verification_summary"]["passed"], 1)
         check = evidence["steps"][0]["verification_checks"][0]
         self.assertEqual(check["execution_id"], "execution-123")
+        managed = check["managed_execution"]
+        self.assertEqual(managed["id"], "execution-123")
+        self.assertEqual(managed["argv"], ["python", "-m", "unittest"])
+        self.assertEqual(managed["effective_command_policy"], [["python"]])
+        self.assertEqual(managed["working_directory"], str(self.task_root))
+        self.assertEqual(managed["source_revision"], self.operation["source_revision"])
+        self.assertEqual(managed["timeout_seconds"], 120)
+        self.assertEqual(managed["returncode"], 0)
         self.assertEqual(check["status"], "passed")
         self.assertEqual(check["workspace_fingerprint_before"], "a" * 64)
         self.assertEqual(check["workspace_fingerprint_after"], "a" * 64)
