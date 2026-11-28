@@ -37,6 +37,7 @@ from .task_workspaces import (
     TaskWorkspaceProvisioningError,
     TaskWorkspaceValidationError,
 )
+from .task_workspace_files import list_task_workspace_files, read_task_workspace_file
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
 from .config import load_config
@@ -319,6 +320,28 @@ def create_app(config_path="config.toml", provider_name=None):
         except Exception as exc:
             import logging
             logging.getLogger("evo.api").exception("task workspace inspection failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
+    @app.get("/api/v1/task-workspaces/{operation_id}/files")
+    def task_workspace_files(operation_id: str, path: str = "", limit: int = 200):
+        try:
+            return list_task_workspace_files(store, operation_id, path=path, limit=limit)
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace file listing failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
+    @app.get("/api/v1/task-workspaces/{operation_id}/file")
+    def task_workspace_file(operation_id: str, path: str, max_bytes: int = 262144):
+        try:
+            return read_task_workspace_file(store, operation_id, path, max_bytes=max_bytes)
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace file read failed")
             raise HTTPException(status_code=500, detail="internal error") from exc
 
     @app.get("/api/v1/task-workspaces/{operation_id}/review")
