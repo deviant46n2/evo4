@@ -46,6 +46,12 @@ configuration revision and project policy. The response includes the task
 `workspace_id` and `task_workspace_operation_id`; run metadata also records the
 parent workspace, task identity, operation, and pinned source revision.
 
+Before each coding-agent tool action, Evo verifies that the operation record is
+still completed and that its task workspace ID, project, pinned source revision,
+and canonical destination all match the agent's bound workspace. A missing,
+changed, or mismatched operation fails closed before file or command actions;
+the operation ID alone cannot redirect an agent into another task worktree.
+
 The destination parent is the configured `workspace.root`, which must already
 exist and must not overlap any registered checkout. The parent Git checkout
 must be clean. Isolation is currently explicit opt-in for API compatibility;
