@@ -84,6 +84,36 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
             raise AssertionError(result.stderr)
         return result.stdout.strip()
 
+    def test_coding_agent_rejects_mismatched_task_workspace_operation(self):
+        from evo_core.coding_agent import CodingAgent, WorkspaceBindingInvalidatedError
+        from evo_core.task_workspaces import create_task_workspace
+
+        other = create_task_workspace(
+            self.app.state.store,
+            self.operation["parent_workspace_id"],
+            "api-task-other-agent-binding",
+            self.root / "task-worktrees",
+        )
+        other_workspace_id = other["workspace"]["workspace_id"]
+        other_root = Path(other["canonical_path"])
+        agent = CodingAgent(
+            self.app.state.assistant,
+            other_root,
+            task_workspace_operation_id=self.operation["operation_id"],
+        )
+        agent._workspace_id = other_workspace_id
+        agent._project_id = self.operation["project_id"]
+        agent._source_revision = self.operation["source_revision"]
+
+        with self.assertRaises(WorkspaceBindingInvalidatedError):
+            agent._execute("write_file", {
+                "path": "must-not-escape.txt",
+                "content": "wrong task workspace",
+            })
+
+        self.assertFalse((self.task_root / "must-not-escape.txt").exists())
+        self.assertFalse((other_root / "must-not-escape.txt").exists())
+
     def test_file_listing_and_read_routes(self):
         (self.task_root / "note.txt").write_text("API text")
         operation_id = self.operation["operation_id"]

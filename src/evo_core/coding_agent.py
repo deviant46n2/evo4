@@ -137,8 +137,36 @@ class CodingAgent:
                 "Workspace binding changed during execution; refusing further workspace actions"
             )
 
+    def _assert_task_workspace_operation_binding(self):
+        """Ensure task-scoped writes and commands target their owning workspace."""
+        if not self.task_workspace_operation_id:
+            return
+        from .task_workspaces import get_task_workspace_operation
+
+        try:
+            operation = get_task_workspace_operation(
+                self.assistant.store, self.task_workspace_operation_id
+            )
+            workspace_path = str(Path(self.workspace.root).resolve(strict=True))
+        except Exception as exc:
+            raise WorkspaceBindingInvalidatedError(
+                "Task workspace operation is no longer available; refusing further actions"
+            ) from exc
+
+        if (
+            operation.get("status") != "completed"
+            or operation.get("task_workspace_id") != getattr(self, "_workspace_id", None)
+            or operation.get("project_id") != getattr(self, "_project_id", None)
+            or operation.get("source_revision") != getattr(self, "_source_revision", None)
+            or operation.get("destination_path") != workspace_path
+        ):
+            raise WorkspaceBindingInvalidatedError(
+                "Task workspace operation does not match the agent's bound workspace; refusing further actions"
+            )
+
     def _execute(self, name, args, test_approval=None):
         self.assert_workspace_binding()
+        self._assert_task_workspace_operation_binding()
         if name=="inspect_project":
             return self.workspace.project_overview()
         if name=="list_files":
