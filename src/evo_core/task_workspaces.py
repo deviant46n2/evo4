@@ -269,7 +269,10 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         out_thread.start()
         err_thread.start()
         try:
-            remaining = operation_deadline - __import__("time").monotonic()\n            if remaining <= 0:\n                raise subprocess.TimeoutExpired(command, timeout)\n            proc.wait(timeout=remaining)
+            remaining = operation_deadline - __import__("time").monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            proc.wait(timeout=remaining)
         except subprocess.TimeoutExpired as exc:
             _cleanup_process_group(proc)
             out_thread.join(timeout=2)
