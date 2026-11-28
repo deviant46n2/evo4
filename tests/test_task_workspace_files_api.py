@@ -125,6 +125,23 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(result["content"], "API text")
         self.assertEqual(result["source_revision"], self.operation["source_revision"])
 
+    def test_file_listing_api_exposes_scan_truncation_provenance(self):
+        from unittest.mock import patch
+
+        for name in ("a.txt", "b.txt", "c.txt", "d.txt"):
+            (self.task_root / name).write_text(name)
+        operation_id = self.operation["operation_id"]
+        with patch("evo_core.task_workspace_files.MAX_DIRECTORY_SCAN_ENTRIES", 2):
+            status, listing = request(
+                self.app, "/api/v1/task-workspaces/" + operation_id + "/files?limit=1",
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(listing["scan_limit"], 2)
+        self.assertTrue(listing["scan_truncated"])
+        self.assertFalse(listing["total_exact"])
+        self.assertTrue(listing["truncated"])
+        self.assertEqual(len(listing["items"]), 1)
+
     def test_workspace_fingerprint_tracks_file_content_and_ignores_git_metadata(self):
         operation_id = self.operation["operation_id"]
         before = get_task_workspace_fingerprint(self.app.state.store, operation_id)
