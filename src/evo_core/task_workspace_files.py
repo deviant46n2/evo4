@@ -276,10 +276,10 @@ def _reconcile_pending_file_changes(store, operation, root):
         current = _current_file_sha256(root, row["path"])
         if current == row["after_sha256"]:
             status, error_code = "applied", None
-        elif current == row["before_sha256"]:
-            status, error_code = "failed", "interrupted_before_apply"
         elif current is None and row["before_sha256"] is None:
             status, error_code = "failed", "interrupted_before_create"
+        elif current == row["before_sha256"]:
+            status, error_code = "failed", "interrupted_before_apply"
         else:
             status, error_code = "indeterminate", "state_changed_after_interruption"
         with store.lock:
