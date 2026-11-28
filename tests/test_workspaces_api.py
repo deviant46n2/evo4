@@ -379,6 +379,58 @@ class WorkspaceApiTests(unittest.TestCase):
         ).stdout
         self.assertEqual(source_status, "")
 
+    def test_task_workspace_lifecycle_list_and_detail_api(self):
+        import subprocess
+        from evo_core.task_workspaces import create_task_workspace
+
+        project, checkout, directory, configuration, revision = self._make_fixtures()
+        subprocess.run(["git", "-C", str(directory), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "config", "user.name", "Evo Test"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "config", "user.email", "evo-test@example.invalid"], check=True, capture_output=True)
+        (directory / "README.md").write_text("baseline\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(directory), "add", "README.md"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(directory), "commit", "-m", "baseline"], check=True, capture_output=True)
+        parent = create_workspace(
+            self.store, "Parent", project["project_id"],
+            configuration["configuration_id"], revision["revision_id"],
+            checkout_id=checkout["checkout_id"],
+        )
+        task = create_task_workspace(
+            self.store, parent["workspace_id"], "lifecycle-api", self.root,
+        )
+
+        status, body = asgi_request(
+            self.app, "GET",
+            f"/api/v1/task-workspaces?project_id={project['project_id']}&status=completed&limit=10",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(body["items"][0]["operation_id"], task["operation_id"])
+
+        status, detail = asgi_request(
+            self.app, "GET", f"/api/v1/task-workspaces/{task['operation_id']}",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["status"], "completed")
+        self.assertTrue(detail["filesystem"]["path_exists"])
+        self.assertTrue(detail["filesystem"]["path_is_directory"])
+        self.assertIsNone(detail["recovery_guidance"])
+        self.assertTrue(Path(task["canonical_path"]).is_dir())
+
+    def test_task_workspace_lifecycle_api_validation_and_missing_record(self):
+        status, body = asgi_request(
+            self.app, "GET", "/api/v1/task-workspaces?status=unknown",
+        )
+        self.assertEqual(status, 422)
+        status, body = asgi_request(
+            self.app, "GET", "/api/v1/task-workspaces?limit=501",
+        )
+        self.assertEqual(status, 422)
+        status, body = asgi_request(
+            self.app, "GET", "/api/v1/task-workspaces/missing-operation",
+        )
+        self.assertEqual(status, 404)
+
     def test_task_workspace_review_api_error_mapping_is_safe(self):
         from unittest.mock import patch
         from evo_core.task_workspaces import TaskWorkspaceProvisioningError
