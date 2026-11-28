@@ -118,11 +118,13 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
             "approved": True,
         })
         self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "applied")
         self.assertEqual((self.task_root / "new.txt").read_text(), "created by explicit approval")
         self.assertIsNone(body["before_sha256"])
         status, history = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/changes")
         self.assertEqual(status, 200)
         self.assertEqual(history["items"][0]["change_id"], body["change_id"])
+        self.assertEqual(history["items"][0]["status"], "applied")
         self.assertEqual(history["total"], 1)
         self.assertFalse(history["truncated"])
 
