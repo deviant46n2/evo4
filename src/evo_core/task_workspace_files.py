@@ -51,10 +51,13 @@ def _task_root(store, operation_id):
 def _relative_directory(value):
     if value in (None, ""):
         return PurePosixPath(".")
-    if not isinstance(value, str) or "\x00" in value or "\\" in value:
+    if not isinstance(value, str) or "\x00" in value or "\\" in value or value.startswith("/"):
         raise TaskWorkspaceValidationError("path must be a relative POSIX path")
+    raw_parts = value.split("/")
+    if any(part in ("", ".", "..") for part in raw_parts):
+        raise TaskWorkspaceValidationError("path must stay within the task workspace")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+    if path.is_absolute():
         raise TaskWorkspaceValidationError("path must stay within the task workspace")
     return path
 
