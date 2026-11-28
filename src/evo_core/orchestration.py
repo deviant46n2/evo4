@@ -435,6 +435,7 @@ def verification_evidence_summary(steps):
         "unrecorded_commands": 0,
         "unmatched_checks": 0,
         "passed_checks": 0,
+        "invalid_checks": 0,
         "failed_checks": 0,
         "denied_checks": 0,
         "error_checks": 0,
@@ -460,7 +461,9 @@ def verification_evidence_summary(steps):
             else:
                 summary["unmatched_checks"] += 1
             status = check.get("status")
-            if status in {"passed", "failed", "denied", "error", "timed_out"}:
+            if status == "passed" and check.get("exit_code") != 0:
+                summary["invalid_checks"] += 1
+            elif status in {"passed", "failed", "denied", "error", "timed_out"}:
                 summary[status + "_checks"] += 1
             snapshot = check.get("workspace_snapshot_stable")
             if snapshot is True or snapshot == 1:
@@ -474,7 +477,7 @@ def verification_evidence_summary(steps):
         summary["command_coverage_state"] = "not_configured"
     elif summary["unmatched_checks"]:
         summary["command_coverage_state"] = "unmatched"
-    elif summary["failed_checks"] or summary["denied_checks"] or summary["error_checks"] or summary["timed_out_checks"]:
+    elif summary["invalid_checks"] or summary["failed_checks"] or summary["denied_checks"] or summary["error_checks"] or summary["timed_out_checks"]:
         summary["command_coverage_state"] = "failed"
     elif summary["unrecorded_commands"]:
         summary["command_coverage_state"] = "incomplete"
