@@ -186,10 +186,10 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         "-c", "core.attributesFile=/dev/null",
         "-c", "credential.helper=",
         *overrides,
-        *args,
     ]
     if args and args[0] == "diff":
         command.extend(["--no-ext-diff", "--no-textconv"])
+    command.extend(args)
     limit = _DEFAULT_GIT_OUTPUT_BYTES if max_output_bytes is None else max_output_bytes
     proc = None
     stdout_chunks, stderr_chunks = [], []
@@ -595,7 +595,7 @@ def get_task_workspace_review(
     max_bytes=DEFAULT_REVIEW_MAX_BYTES,
 ):
     """Return a bounded, read-only review artifact for a completed task workspace."""
-    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1 or max_files > 10000:
+    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1 or max_files > 1000:
         raise TaskWorkspaceValidationError("max_files must be a positive integer")
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1024 or max_bytes > 64 * 1024 * 1024:
         raise TaskWorkspaceValidationError("max_bytes must be at least 1024")
@@ -618,14 +618,23 @@ def get_task_workspace_review(
     max_files = max(1, int(max_files))
     max_bytes = max(1024, int(max_bytes))
 
+    review_deadline = __import__("time").monotonic() + 120.0
+
+    def _review_git(*git_args, **kwargs):
+        remaining = review_deadline - __import__("time").monotonic()
+        if remaining <= 0:
+            raise TaskWorkspaceProvisioningError("task workspace review deadline exceeded")
+        kwargs["timeout"] = min(kwargs.get("timeout", 30), remaining)
+        return _review_git( *git_args, **kwargs)
+
     head_before_truncated = []
-    head_before = _git(root, "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated)
+    head_before = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated)
     status_before_truncated = []
-    status_before = _git(root, "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_before_truncated)
+    status_before = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_before_truncated)
     diff_before_truncated = []
-    diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
+    diff_before = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
     untracked_before_truncated = []
-    untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
+    untracked_before = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
     if head_before_truncated or status_before_truncated or diff_before_truncated or untracked_before_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     untracked_before_sig = _untracked_signature(root, [p for p in untracked_before.split("\x00") if p])
@@ -653,7 +662,7 @@ def get_task_workspace_review(
 
     # Tracked changes relative to the immutable baseline (NUL-delimited).
     name_status_truncated = []
-    name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated)
+    name_status = _review_git( "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated)
     if name_status_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     for path in name_status.split("\x00"):
@@ -700,7 +709,7 @@ def get_task_workspace_review(
 
     # Untracked files.
     untracked_truncated = []
-    untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated)
+    untracked_output = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated)
     if untracked_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     untracked_paths = [p for p in untracked_output.split("\x00") if p]
@@ -732,23 +741,22 @@ def get_task_workspace_review(
             continue
         changed.append(("?", str(rel), None))
 
-    # Build patch from individually approved tracked paths.
-    if not truncated:
-        for status, path, old_path in [c for c in changed if c[0] != "?"]:
-            if truncated and truncation_reason == "output_limit":
-                break
-            file_diff_truncated = []
-            file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated)
-            if file_diff_truncated:
-                truncated = True
-                if truncation_reason is None:
-                    truncation_reason = "output_limit"
-            if file_diff:
-                if not add_text(file_diff + "\n"):
-                    truncated = True
-                    if truncation_reason is None:
-                        truncation_reason = "output_limit"
-                    break
+    # One literal-pathspec-scoped diff avoids per-file process overhead and pathspec magic.
+    tracked_paths = [path for status, path, _ in changed if status != "?"]
+    if tracked_paths and not truncated:
+        file_diff_truncated = []
+        file_diff = _review_git(
+            "diff", baseline, "--", *tracked_paths,
+            max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated,
+        )
+        if file_diff_truncated:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "output_limit"
+        if file_diff and not add_text(file_diff):
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "output_limit"
 
     # Include readable untracked file contents.
     for status, path, _ in changed:
@@ -823,13 +831,13 @@ def get_task_workspace_review(
             break
 
     head_after_truncated = []
-    head_after = _git(root, "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_after_truncated)
+    head_after = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_after_truncated)
     status_after_truncated = []
-    status_after = _git(root, "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_after_truncated)
+    status_after = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_after_truncated)
     diff_after_truncated = []
-    diff_after = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated)
+    diff_after = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated)
     untracked_after_truncated = []
-    untracked_after = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated)
+    untracked_after = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated)
     untracked_after_sig = _untracked_signature(root, [p for p in untracked_after.split("\x00") if p.strip()])
     metadata_truncated = bool(head_after_truncated or status_after_truncated or diff_after_truncated or untracked_after_truncated)
     if metadata_truncated:
