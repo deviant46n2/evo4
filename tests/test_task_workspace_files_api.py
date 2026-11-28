@@ -8,7 +8,7 @@ from pathlib import Path
 from evo_core.ai_configurations import create_configuration
 from evo_core.api import create_app
 from evo_core.project_checkouts import register_checkout, register_project
-from evo_core.task_workspaces import create_task_workspace
+from evo_core.task_workspaces import create_task_workspace, get_task_workspace_operation_status
 from evo_core.workspaces import create_workspace
 
 
@@ -66,8 +66,9 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                                   cfg["revision"]["revision_id"], checkout_id=checkout["checkout_id"])
         destination = self.root / "task-worktrees"
         destination.mkdir()
-        self.operation = create_task_workspace(store, parent["workspace_id"], "api-task", destination)
-        self.task_root = Path(self.operation["canonical_path"])
+        created_operation = create_task_workspace(store, parent["workspace_id"], "api-task", destination)
+        self.operation = get_task_workspace_operation_status(store, created_operation["operation_id"])
+        self.task_root = Path(self.operation["destination_path"])
 
     def tearDown(self):
         self.app.state.chat_executor.shutdown(wait=True, cancel_futures=False)
