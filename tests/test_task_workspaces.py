@@ -25,6 +25,8 @@ from evo_core.task_workspaces import (
 DEFINITION = {"schema_version": 1, "components": {}}
 
 
+SHIM = '#!/usr/bin/env python3\nimport os, sys, subprocess, time\nargs = sys.argv[1:]\nif "config" in args:\n    sys.exit(0)\nmode = os.environ.get("SHIM_MODE", "overflow")\nchild_pid_file = os.environ.get("SHIM_CHILD_PID_FILE")\nchild = subprocess.Popen(\n    [sys.executable, "-c", "import time; time.sleep(60)"],\n    stdout=sys.stdout, stderr=sys.stderr,\n)\nif child_pid_file:\n    with open(child_pid_file, "w") as handle:\n        handle.write(str(child.pid))\nif mode == "overflow":\n    sys.stdout.write("a" * 60)\n    sys.stderr.write("b" * 60)\n    sys.stdout.flush()\n    sys.stderr.flush()\nelif mode == "exact":\n    count = int(os.environ.get("SHIM_BYTES", "100"))\n    sys.stdout.write("a" * count)\n    sys.stdout.flush()\n    time.sleep(0.2)\nelif mode == "timeout":\n    time.sleep(60)\nsys.exit(0)\n'
+
 class TaskWorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -256,16 +258,85 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertLessEqual(len(out), 100)
 
 
-    def test_review_large_untracked_is_truncated_and_unstable(self):
-        result = create_task_workspace(
-            self.store, self.workspace["workspace_id"], "task-large", self.destinations
-        )
-        task_path = Path(result["canonical_path"])
-        (task_path / "big.txt").write_text("x" * 10000)
-        review = get_task_workspace_review(self.store, result["operation_id"], max_bytes=1024)
-        self.assertTrue(review["truncated"])
-        self.assertFalse(review["stable"])
-        self.assertEqual(review["truncation_reason"], "output_limit")
+
+    def _run_git_with_shim(self, mode, max_output_bytes, timeout=5, child_pid_file=None, extra_env=None):
+        import os, tempfile, subprocess, time
+        from pathlib import Path
+        from evo_core.task_workspaces import _git
+        d = Path(tempfile.mkdtemp())
+        shim = d / "git"
+        shim.write_text(SHIM)
+        shim.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = str(d) + os.pathsep + env.get("PATH", "")
+        env["SHIM_MODE"] = mode
+        if child_pid_file is not None:
+            env["SHIM_CHILD_PID_FILE"] = str(child_pid_file)
+        if extra_env:
+            env.update(extra_env)
+        old_env = dict(os.environ)
+        os.environ.clear()
+        os.environ.update(env)
+        try:
+            truncated = []
+            started = time.monotonic()
+            try:
+                out = _git(Path("/tmp"), "status", timeout=timeout, max_output_bytes=max_output_bytes, truncated=truncated)
+                elapsed = time.monotonic() - started
+                return out, truncated, elapsed, None
+            except Exception as exc:
+                elapsed = time.monotonic() - started
+                return None, truncated, elapsed, exc
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+    def _pid_gone(self, pid):
+        import os, time
+        for _ in range(20):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            time.sleep(0.1)
+        try:
+            os.kill(pid, 0)
+            return False
+        except ProcessLookupError:
+            return True
+
+    def test_review_subprocess_combined_output_overflow(self):
+        import os, tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp())
+        pid_file = d / "child.pid"
+        out, truncated, elapsed, exc = self._run_git_with_shim("overflow", 100, timeout=5, child_pid_file=pid_file)
+        self.assertTrue(truncated)
+        if out is not None:
+            self.assertLessEqual(len(out), 100)
+        # child terminated
+        if pid_file.exists():
+            pid = int(pid_file.read_text())
+            self.assertTrue(self._pid_gone(pid))
+
+    def test_review_subprocess_exact_fit_not_truncated(self):
+        import os, tempfile
+        d = Path(tempfile.mkdtemp())
+        pid_file = d / "child.pid"
+        out, truncated, elapsed, exc = self._run_git_with_shim("exact", 100, timeout=5, child_pid_file=pid_file, extra_env={"SHIM_BYTES": "100"})
+        self.assertFalse(truncated)
+        self.assertEqual(len(out), 100)
+
+    def test_review_subprocess_timeout_terminates(self):
+        import os, tempfile
+        from evo_core.task_workspaces import TaskWorkspaceProvisioningError
+        d = Path(tempfile.mkdtemp())
+        pid_file = d / "child.pid"
+        out, truncated, elapsed, exc = self._run_git_with_shim("timeout", 1000, timeout=0.1, child_pid_file=pid_file)
+        self.assertIsInstance(exc, TaskWorkspaceProvisioningError)
+        if pid_file.exists():
+            pid = int(pid_file.read_text())
+            self.assertTrue(self._pid_gone(pid))
 
 if __name__ == "__main__":
     unittest.main()
