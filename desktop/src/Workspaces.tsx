@@ -61,6 +61,7 @@ type TaskWorkspaceFileItem = {name:string;path:string;kind:"directory"|"file"|"s
 type TaskWorkspaceFileListing = {operation_id:string;source_revision:string;path:string;items:TaskWorkspaceFileItem[];total:number;truncated:boolean;limit:number};
 type TaskWorkspaceFileContent = {operation_id:string;source_revision:string;path:string;size_bytes:number;sha256:string;content:string;truncated:boolean;max_bytes:number};
 type TaskWorkspaceFileChange = {change_id:string;operation_id:string;source_revision:string;path:string;before_sha256:string|null;after_sha256:string;size_bytes:number;created_at:string};
+type TaskWorkspaceFileChanges = {operation_id:string;source_revision:string;items:TaskWorkspaceFileChange[];total:number;truncated:boolean;limit:number};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -245,6 +246,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [taskFiles, setTaskFiles] = useState<TaskWorkspaceFileListing | null>(null);
   const [taskFileContent, setTaskFileContent] = useState<TaskWorkspaceFileContent | null>(null);
   const [taskFileDraft, setTaskFileDraft] = useState("");
+  const [taskFileChanges, setTaskFileChanges] = useState<TaskWorkspaceFileChanges | null>(null);
+  const taskFileGeneration = useRef(0);
+  const taskFileChangesGeneration = useRef(0);
   const [newTaskFilePath, setNewTaskFilePath] = useState("");
   const [taskFileSaving, setTaskFileSaving] = useState(false);
   const [taskFilePath, setTaskFilePath] = useState("");
@@ -384,22 +388,37 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     } finally { setTaskOperationBusy(false); }
   }
   async function loadTaskFiles(operationId: string, path = "") {
+    const token = ++taskFileGeneration.current;
     setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null); setTaskFileDraft("");
     try {
       const params = new URLSearchParams({path, limit:"200"});
       const result = await api<TaskWorkspaceFileListing>("/task-workspaces/" + encodeURIComponent(operationId) + "/files?" + params.toString());
+      if (token !== taskFileGeneration.current) return;
       setTaskFiles(result); setTaskFilePath(path); setTaskFileDraft("");
-    } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
-    finally { setTaskFileBusy(false); }
+    } catch (e) {
+      if (token === taskFileGeneration.current) setTaskFileError(e instanceof Error ? e.message : String(e));
+    } finally { if (token === taskFileGeneration.current) setTaskFileBusy(false); }
   }
   async function openTaskFile(operationId: string, path: string) {
+    const token = ++taskFileGeneration.current;
     setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null);
     try {
       const params = new URLSearchParams({path, max_bytes:"262144"});
       const result = await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString());
+      if (token !== taskFileGeneration.current) return;
       setTaskFileContent(result); setTaskFileDraft(result.content);
-    } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
-    finally { setTaskFileBusy(false); }
+    } catch (e) {
+      if (token === taskFileGeneration.current) setTaskFileError(e instanceof Error ? e.message : String(e));
+    } finally { if (token === taskFileGeneration.current) setTaskFileBusy(false); }
+  }
+  async function loadTaskChanges(operationId: string) {
+    const token = ++taskFileChangesGeneration.current;
+    try {
+      const result = await api<TaskWorkspaceFileChanges>("/task-workspaces/" + encodeURIComponent(operationId) + "/changes?limit=100");
+      if (token === taskFileChangesGeneration.current) setTaskFileChanges(result);
+    } catch (e) {
+      if (token === taskFileChangesGeneration.current) setTaskFileError(e instanceof Error ? e.message : String(e));
+    }
   }
   async function createTaskFile(operationId: string) {
     const path = newTaskFilePath.trim();
@@ -414,6 +433,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
       setNewTaskFilePath("");
       await loadTaskFiles(operationId, taskFilePath);
       await openTaskFile(operationId, result.path);
+      await loadTaskChanges(operationId);
     } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
     finally { setTaskFileSaving(false); }
   }
@@ -428,6 +448,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
       );
       await loadTaskFiles(operationId, taskFilePath);
       await openTaskFile(operationId, result.path);
+      await loadTaskChanges(operationId);
       await loadTaskReview(operationId);
     } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
     finally { setTaskFileSaving(false); }
@@ -598,13 +619,24 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
           {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Read-only snapshot of changes in this task’s isolated worktree.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)?"Refresh review":"Review changes"}</button></div>{taskReviewError&&<p className="workspace-error" role="alert">{taskReviewError}</p>}{taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<><div className="policy-note">Pinned source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_file_count} changed files · {taskReview.patch_bytes.toLocaleString()} / {taskReview.max_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable snapshot":taskReview.truncated?"Incomplete snapshot":"Snapshot changed during review"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"output limit"}</span>}</div>{taskReview.changed_files_omitted>0&&<p className="policy-note">{taskReview.changed_files_omitted} changed file entries omitted by the {taskReview.max_files}-file metadata limit.</p>}{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}{taskReview.excluded_files_omitted>0?` · ${taskReview.excluded_files_omitted} more omitted`:""}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}{taskReview.unreadable_files_omitted>0?` · ${taskReview.unreadable_files_omitted} more omitted`:""}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}{taskReview.changed_files.length===0&&<div className="empty-state">No reviewable changed files were found.</div>}</div><details><summary>View patch ({taskReview.patch_bytes.toLocaleString()} bytes)</summary><pre>{taskReview.patch||"No patch content."}</pre></details></>}
           {detail.metadata.task_workspace_operation_id&&<section className="workspace-panel">
-            <div className="panel-toolbar"><div><h3>Browse task files</h3><p>Read-only text inspection. Each response includes the pinned source revision.</p></div><button className="quiet-button" disabled={taskFileBusy} onClick={()=>void loadTaskFiles(String(detail.metadata.task_workspace_operation_id))}>{taskFileBusy?"Loading…":"Open file browser"}</button></div>
+            <div className="panel-toolbar"><div><h3>Browse task files</h3><p>Read-only text inspection. Each response includes the pinned source revision.</p></div><button className="quiet-button" disabled={taskFileBusy} onClick={()=>{void loadTaskFiles(String(detail.metadata.task_workspace_operation_id));void loadTaskChanges(String(detail.metadata.task_workspace_operation_id));}}>{taskFileBusy?"Loading…":"Open file browser"}</button></div>
             {taskFileError&&<p className="workspace-error" role="alert">{taskFileError}</p>}
             {taskFiles?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<>
               <div className="inline-actions"><span className="policy-note">/{taskFilePath}</span>{taskFilePath&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),taskFilePath.split("/").slice(0,-1).join("/"))}>Parent directory</button>}<small>{taskFiles.total} entries{taskFiles.truncated?" · list truncated":""}</small></div>
               <div className="inline-actions"><input aria-label="New relative file path" placeholder="New file path (for example src/module.py)" value={newTaskFilePath} onChange={event=>setNewTaskFilePath(event.target.value)} /><button className="quiet-button" disabled={taskFileSaving||!newTaskFilePath.trim()} onClick={()=>void createTaskFile(String(detail.metadata.task_workspace_operation_id))}>Create file</button></div>
               <div className="event-list">{taskFiles.items.map(item=><div className="event-card" key={item.path}><div className="event-head"><strong>{item.kind==="directory"?"Folder":item.kind==="file"?"File":item.kind==="symlink"?"Symlink":"Other"} · {item.name}</strong><small>{item.size_bytes===null?"":item.size_bytes.toLocaleString()+" bytes"}</small></div>{(item.kind==="directory"||item.kind==="file")&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>item.kind==="directory"?void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),item.path):void openTaskFile(String(detail.metadata.task_workspace_operation_id),item.path)}>{item.kind==="directory"?"Open folder":"Read text file"}</button>}</div>)}{taskFiles.items.length===0&&<div className="empty-state">This directory is empty.</div>}</div>
             </>}
+              <section className="workspace-panel">
+                <div className="panel-toolbar"><div><h4>File change history</h4><p>Recorded successful edits in this isolated task workspace.</p></div><button className="quiet-button" disabled={taskFileSaving} onClick={()=>void loadTaskChanges(String(detail.metadata.task_workspace_operation_id))}>Refresh history</button></div>
+                {taskFileChanges?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<>
+                  <small>{taskFileChanges.total} recorded changes{taskFileChanges.truncated?" · showing latest "+taskFileChanges.limit:""}</small>
+                  <div className="event-list">{taskFileChanges.items.map(change=><article className="event-card" key={change.change_id}>
+                    <div className="event-head"><strong>{change.path}</strong><small>{new Date(change.created_at).toLocaleString()}</small></div>
+                    <small>{change.before_sha256?"Updated existing file":"Created new file"} · {change.size_bytes.toLocaleString()} bytes</small>
+                    <small>After SHA-256 {change.after_sha256}</small>
+                  </article>)}{taskFileChanges.items.length===0&&<div className="empty-state">No file changes recorded yet.</div>}</div>
+                </>}
+              </section>
             {taskFileContent?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<div className="event-card"><div className="event-head"><strong>{taskFileContent.path}</strong><small>{taskFileContent.size_bytes.toLocaleString()} bytes · SHA-256 {taskFileContent.sha256.slice(0,12)}</small></div><textarea aria-label={"Edit "+taskFileContent.path} value={taskFileDraft} onChange={event=>setTaskFileDraft(event.target.value)} rows={16} spellCheck={false}/><div className="inline-actions"><span className="policy-note">{taskFileDraft===taskFileContent.content?"No unsaved edits":"Unsaved edits · compare-and-swap protected"}</span><button className="quiet-button" disabled={taskFileSaving||taskFileDraft===taskFileContent.content} onClick={()=>void saveTaskFile(String(detail.metadata.task_workspace_operation_id))}>{taskFileSaving?"Applying…":"Apply edited file"}</button></div></div>}
           </section>}
           </section>}
