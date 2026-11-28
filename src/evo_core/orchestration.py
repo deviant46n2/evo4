@@ -232,6 +232,7 @@ def get_plan(connection, plan_id):
         "not_configured": sum(1 for s in steps if s["verification_status"] == "not_configured"),
         "not_required": sum(1 for s in steps if s["verification_status"] == "not_required"),
     }
+    result["verification_evidence_summary"] = verification_evidence_summary(steps)
     result["events"] = [{
         "id": item["id"], "step_id": item["step_id"], "type": item["event_type"],
         "payload": json.loads(item["payload_json"] or "{}"), "created_at": item["created_at"]
