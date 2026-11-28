@@ -255,5 +255,17 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertTrue(truncated)
         self.assertLessEqual(len(out), 100)
 
+
+    def test_review_large_untracked_is_truncated_and_unstable(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-large", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "big.txt").write_text("x" * 10000)
+        review = get_task_workspace_review(self.store, result["operation_id"], max_bytes=1024)
+        self.assertTrue(review["truncated"])
+        self.assertFalse(review["stable"])
+        self.assertEqual(review["truncation_reason"], "output_limit")
+
 if __name__ == "__main__":
     unittest.main()
