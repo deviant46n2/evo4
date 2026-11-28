@@ -75,6 +75,29 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         )
         self.assertEqual(nested["items"][0]["path"], "src/main.py")
 
+    def test_directory_symlinks_are_not_traversed(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+        (self.task_root / "linked-dir").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            list_task_workspace_files(
+                self.store, self.operation["operation_id"], path="linked-dir",
+            )
+        listing = list_task_workspace_files(self.store, self.operation["operation_id"])
+        entry = next(item for item in listing["items"] if item["name"] == "linked-dir")
+        self.assertEqual(entry["kind"], "symlink")
+
+    def test_listing_limit_is_bounded_and_reports_truncation(self):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (self.task_root / name).write_text(name)
+        result = list_task_workspace_files(
+            self.store, self.operation["operation_id"], limit=2,
+        )
+        self.assertEqual(len(result["items"]), 2)
+        self.assertGreater(result["total"], 2)
+        self.assertTrue(result["truncated"])
+
     def test_reads_utf8_file_with_size_and_revision_metadata(self):
         (self.task_root / "notes.txt").write_text("Evo workspace ✓\n", encoding="utf-8")
         result = read_task_workspace_file(
