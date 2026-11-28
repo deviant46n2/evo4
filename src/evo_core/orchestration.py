@@ -230,6 +230,7 @@ def get_plan(connection, plan_id):
         "failed": sum(1 for s in steps if s["verification_status"] == "failed"),
         "not_run": sum(1 for s in steps if s["verification_status"] == "not_run"),
         "not_configured": sum(1 for s in steps if s["verification_status"] == "not_configured"),
+        "not_required": sum(1 for s in steps if s["verification_status"] == "not_required"),
     }
     result["events"] = [{
         "id": item["id"], "step_id": item["step_id"], "type": item["event_type"],
@@ -424,6 +425,25 @@ def step_verification_status(step):
     if remaining:
         return "not_run"
     return "passed"
+
+def plan_verification_state(steps):
+    """Summarize step verification without treating missing evidence as success."""
+    statuses = [step.get("verification_status") or step_verification_status(step)
+                for step in steps]
+    if not statuses:
+        return "not_configured"
+    if "failed" in statuses:
+        return "failed"
+    if all(status == "passed" for status in statuses):
+        return "passed"
+    if "not_run" in statuses:
+        return "not_run"
+    if all(status == "not_required" for status in statuses):
+        return "not_required"
+    if all(status == "not_configured" for status in statuses):
+        return "not_configured"
+    return "incomplete"
+
 
 def finish_plan(connection, plan_id, outcome, error=""):
     if outcome not in {"completed", "failed", "cancelled", "interrupted"}:
