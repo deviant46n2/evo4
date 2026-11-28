@@ -51,7 +51,9 @@ def initialize(connection):
       execution_id TEXT,
       workspace_fingerprint_before TEXT,
       workspace_fingerprint_after TEXT,
-      workspace_snapshot_stable INTEGER
+      workspace_snapshot_stable INTEGER,
+      stdout_truncated INTEGER NOT NULL DEFAULT 0,
+      stderr_truncated INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_plan_step_verifications ON agent_plan_step_verifications(plan_id,step_id,id);
     """)
@@ -77,6 +79,8 @@ def initialize(connection):
         ("workspace_fingerprint_before", "TEXT"),
         ("workspace_fingerprint_after", "TEXT"),
         ("workspace_snapshot_stable", "INTEGER"),
+        ("stdout_truncated", "INTEGER NOT NULL DEFAULT 0"),
+        ("stderr_truncated", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if column not in verification_columns:
             connection.execute(f"ALTER TABLE agent_plan_step_verifications ADD COLUMN {column} {definition}")
@@ -215,7 +219,7 @@ def get_plan(connection, plan_id):
         "SELECT * FROM agent_plan_steps WHERE plan_id=? ORDER BY position", (plan_id,)).fetchall()]
     for step in steps:
         step["verification_checks"] = [dict(v) for v in connection.execute(
-            "SELECT id,command_json,status,exit_code,stdout,stderr,created_at,execution_id,workspace_fingerprint_before,workspace_fingerprint_after,workspace_snapshot_stable FROM agent_plan_step_verifications WHERE step_id=? ORDER BY id",
+            "SELECT id,command_json,status,exit_code,stdout,stderr,created_at,execution_id,workspace_fingerprint_before,workspace_fingerprint_after,workspace_snapshot_stable,stdout_truncated,stderr_truncated FROM agent_plan_step_verifications WHERE step_id=? ORDER BY id",
             (step["id"],)).fetchall()]
         for check in step["verification_checks"]:
             try:
@@ -392,12 +396,14 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
         connection.execute(
             """INSERT INTO agent_plan_step_verifications
                (plan_id,step_id,position,command_json,status,exit_code,stdout,stderr,created_at,
-                execution_id,workspace_fingerprint_before,workspace_fingerprint_after,workspace_snapshot_stable)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                execution_id,workspace_fingerprint_before,workspace_fingerprint_after,workspace_snapshot_stable,
+                stdout_truncated,stderr_truncated)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (plan_id, step_id, step["position"], json.dumps(list(command)), status,
              exit_code, str(stdout)[-8192:], str(stderr)[-8192:], stamp, execution_id,
              workspace_fingerprint_before, workspace_fingerprint_after,
-             None if workspace_snapshot_stable is None else int(workspace_snapshot_stable)))
+             None if workspace_snapshot_stable is None else int(workspace_snapshot_stable),
+             int(len(str(stdout)) > 8192), int(len(str(stderr)) > 8192)))
     return True
 
 def step_verification_status(step):
