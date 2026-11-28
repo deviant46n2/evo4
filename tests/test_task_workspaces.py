@@ -266,7 +266,7 @@ class TaskWorkspaceTests(unittest.TestCase):
             self.store, self.workspace["workspace_id"], "task-binary-nul", self.destinations
         )
         task_path = Path(result["canonical_path"])
-        (task_path / "binary-nul.dat").write_bytes(b"header\\x00payload")
+        (task_path / "binary-nul.dat").write_bytes(b"header\x00payload")
         review = get_task_workspace_review(self.store, result["operation_id"])
         unreadable = {item["path"]: item["reason"] for item in review["unreadable_files"]}
         self.assertEqual(unreadable.get("binary-nul.dat"), "binary")
@@ -293,7 +293,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         )
         task_path = Path(result["canonical_path"])
         filename = "   "
-        (task_path / filename).write_text("valid filename\\n")
+        (task_path / filename).write_text("valid filename\n")
         review = get_task_workspace_review(self.store, result["operation_id"])
         self.assertIn(filename, {item["path"] for item in review["changed_files"]})
         self.assertTrue(review["stable"])
