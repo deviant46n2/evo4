@@ -1062,29 +1062,36 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
         digest.update(value.encode("utf-8", errors="surrogateescape"))
         digest.update(bytes([0]))
 
-    def visit(directory, relative):
+    def visit(directory_fd, relative):
         nonlocal files, total_bytes
         if time.monotonic() > deadline:
             raise TimeoutError("snapshot deadline exceeded")
-        before_dir = os.stat(directory, follow_symlinks=False)
+        before_dir = os.fstat(directory_fd)
         if not stat.S_ISDIR(before_dir.st_mode):
             raise OSError("workspace directory changed type")
-        with os.scandir(directory) as iterator:
+        with os.scandir(directory_fd) as iterator:
             entries = sorted(iterator, key=lambda entry: entry.name)
         for entry in entries:
-            if entry.name == ".git":
+            if not relative.parts and entry.name == ".git":
                 continue
             rel = (relative / entry.name) if relative else Path(entry.name)
             info = entry.stat(follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
                 add_record("D:" + rel.as_posix() + ":" + str(stat.S_IMODE(info.st_mode)))
-                visit(Path(entry.path), rel)
+                child_fd = os.open(
+                    entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=directory_fd,
+                )
+                try:
+                    visit(child_fd, rel)
+                finally:
+                    os.close(child_fd)
             elif stat.S_ISREG(info.st_mode):
                 files += 1
                 if files > max_files or info.st_size > max_bytes - total_bytes:
                     raise OverflowError("snapshot file or byte budget exceeded")
-                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-                fd = os.open(entry.path, flags)
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                fd = os.open(entry.name, flags, dir_fd=directory_fd)
                 try:
                     opened = os.fstat(fd)
                     if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
@@ -1111,16 +1118,21 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
                 add_record("F:" + rel.as_posix() + ":" + str(stat.S_IMODE(after.st_mode)) + ":" + str(read_bytes) + ":" + file_hash.hexdigest())
             else:
                 raise OSError("workspace contains a symlink or unsupported filesystem entry")
-        after_dir = os.stat(directory, follow_symlinks=False)
+        after_dir = os.fstat(directory_fd)
         signature = lambda item: (item.st_dev, item.st_ino, item.st_mtime_ns, item.st_ctime_ns, item.st_mode)
         if signature(before_dir) != signature(after_dir):
             raise OSError("workspace directory changed while hashing")
 
+    root_fd = None
     try:
-        visit(root, Path())
+        root_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        visit(root_fd, Path())
     except (OSError, OverflowError, TimeoutError) as exc:
         return {"fingerprint": None, "complete": False, "file_count": files,
                 "total_bytes": total_bytes, "reason": str(exc)[:240]}
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     return {"fingerprint": digest.hexdigest(), "complete": True, "file_count": files,
             "total_bytes": total_bytes, "reason": None}
 
