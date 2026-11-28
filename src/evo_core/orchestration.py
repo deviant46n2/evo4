@@ -395,7 +395,7 @@ def record_verification(connection, plan_id, step_id, command, status, exit_code
                 execution_id,workspace_fingerprint_before,workspace_fingerprint_after,workspace_snapshot_stable)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (plan_id, step_id, step["position"], json.dumps(list(command)), status,
-             exit_code, str(stdout)[:4000], str(stderr)[:4000], stamp, execution_id,
+             exit_code, str(stdout)[-8192:], str(stderr)[-8192:], stamp, execution_id,
              workspace_fingerprint_before, workspace_fingerprint_after,
              None if workspace_snapshot_stable is None else int(workspace_snapshot_stable)))
     return True
