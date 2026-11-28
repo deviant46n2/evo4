@@ -21,7 +21,7 @@ def request(app, path, method="GET", payload=None):
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": method, "scheme": "http", "path": path_part,
         "raw_path": path_part.encode(), "query_string": query.encode(),
-        "root_path": "", "headers": [], "client": ("127.0.0.1", 12345),
+        "root_path": "", "headers": ([(b"content-type", b"application/json")] if payload is not None else []), "client": ("127.0.0.1", 12345),
         "server": ("127.0.0.1", 8765), "state": {},
     }
     messages = []
@@ -105,7 +105,6 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
 
 
     def test_apply_route_requires_approval_and_records_change(self):
-        import hashlib
         operation_id = self.operation["operation_id"]
         path = "/api/v1/task-workspaces/" + operation_id + "/file"
         status, body = request(self.app, path, method="POST", payload={
