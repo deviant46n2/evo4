@@ -321,6 +321,21 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertGreaterEqual(review["excluded_files_omitted"], 1)
         self.assertTrue(review["truncated"])
 
+    def test_review_untracked_patch_preserves_mode_newline_and_quotes_path(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-patch-fidelity", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        filename = "odd\\nname.sh"
+        candidate = task_path / filename
+        candidate.write_bytes(b"#!/bin/sh")
+        candidate.chmod(0o755)
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertIn('new file mode 100755', review["patch"])
+        self.assertIn(r"odd\\nname.sh", review["patch"])
+        self.assertIn(r"\\ No newline at end of file", review["patch"])
+        self.assertNotIn("odd\nname.sh", review["patch"])
+
     def test_review_preserves_whitespace_only_untracked_filename(self):
         result = create_task_workspace(
             self.store, self.workspace["workspace_id"], "task-whitespace-name", self.destinations
