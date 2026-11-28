@@ -27,6 +27,24 @@ class AgentOrchestrationTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def test_plan_summary_counts_not_required_steps(self):
+        plan = orchestration.create_plan(self.db, "No checks required", "/workspace", {
+            "title": "No checks required", "summary": "A plan with explicit non-required checks.",
+            "steps": [{
+                "title": "Inspect", "description": "Inspect.",
+                "expected_outcome": "Reviewed.", "verification": "Not applicable.",
+            }],
+        })
+        step_id = plan["steps"][0]["id"]
+        orchestration.finish_step if False else None
+        self.db.execute(
+            "UPDATE agent_plan_steps SET verification_status='not_required' WHERE id=?",
+            (step_id,),
+        )
+        summary = orchestration.get_plan(self.db, plan["id"])["verification_summary"]
+        self.assertEqual(summary["not_required"], 1)
+        self.assertEqual(summary["not_configured"], 0)
+
     def test_plan_verification_state_preserves_incomplete_and_not_required_distinctions(self):
         state = orchestration.plan_verification_state
         self.assertEqual(state([]), "not_configured")
