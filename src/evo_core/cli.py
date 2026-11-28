@@ -17,6 +17,17 @@ def build_parser():
     config_parent.add_argument("--provider",help="Named provider profile from [providers.*] in the TOML config")
     doctor=sub.add_parser("doctor",parents=[config_parent],help="Check the configured model endpoint")
     sub.add_parser("serve",parents=[config_parent],help="Start the loopback desktop API server")
+    task_workspaces=sub.add_parser("task-workspaces",parents=[config_parent],
+        help="Inspect isolated task workspace operations without modifying their worktrees")
+    tws=task_workspaces.add_subparsers(dest="task_workspace_command",required=True)
+    twl=tws.add_parser("list",help="List recorded task workspace operations")
+    twl.add_argument("--project-id")
+    twl.add_argument("--status",choices=["provisioning","completed","recovery_required","failed"])
+    twl.add_argument("--limit",type=int,default=50)
+    tws_show=tws.add_parser("show",help="Inspect an operation and its filesystem recovery state")
+    tws_show.add_argument("operation_id")
+    tws_review=tws.add_parser("review",help="Print the bounded read-only review artifact for a completed task")
+    tws_review.add_argument("operation_id")
     doctor.add_argument("--test-tools",action="store_true",help="Run a harmless function-calling capability probe")
     for name,help_text in (("chat","Privileged local-only interactive conversation (not Registry-scoped)"),
                            ("code","Privileged local-only coding session (not Registry-scoped)")):
@@ -143,6 +154,24 @@ def _interactive(args,config):
     finally:
         assistant.close()
 
+def _task_workspace_command(store, args):
+    """Return read-only task-workspace diagnostics or review evidence."""
+    from .task_workspaces import (
+        get_task_workspace_operation_status,
+        get_task_workspace_review,
+        list_task_workspace_operations,
+    )
+    if args.task_workspace_command == "list":
+        return {"operations": list_task_workspace_operations(
+            store, project_id=args.project_id, status=args.status, limit=args.limit,
+        )}
+    if args.task_workspace_command == "show":
+        return get_task_workspace_operation_status(store, args.operation_id)
+    if args.task_workspace_command == "review":
+        return get_task_workspace_review(store, args.operation_id)
+    raise ValueError("Unsupported task workspace command")
+
+
 def main():
     args=build_parser().parse_args()
     if args.command=="memory" and args.memory_command=="evaluate":
@@ -200,6 +229,13 @@ def main():
     try:
         if args.command=="backup":
             print(f"Backup written to {store.backup(args.destination)}")
+        elif args.command=="task-workspaces":
+            try:
+                result = _task_workspace_command(store, args)
+            except (ValueError, OSError) as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                raise SystemExit(2) from exc
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         elif args.command=="memory":
             if args.memory_command=="add":
                 mid=store.add_memory(args.content,args.category,args.tag,args.source,args.confidence)
