@@ -33,6 +33,7 @@ from .task_workspaces import (
     get_task_workspace_operation_status,
     list_task_workspace_operations,
     get_task_workspace_review,
+    get_task_workspace_fingerprint,
     TaskWorkspaceConflictError,
     TaskWorkspaceProvisioningError,
     TaskWorkspaceValidationError,
@@ -442,6 +443,9 @@ def create_app(config_path="config.toml", provider_name=None):
                             "status": check["status"], "exit_code": check["exit_code"],
                             "created_at": check["created_at"],
                             "execution_id": check.get("execution_id"),
+                            "workspace_fingerprint_before": check.get("workspace_fingerprint_before"),
+                            "workspace_fingerprint_after": check.get("workspace_fingerprint_after"),
+                            "workspace_snapshot_stable": (None if check.get("workspace_snapshot_stable") is None else bool(check.get("workspace_snapshot_stable"))),
                             "stdout": check["stdout"], "stderr": check["stderr"],
                         } for check in step.get("verification_checks", [])],
                     } for step in plan["steps"]]
@@ -1719,13 +1723,31 @@ def create_app(config_path="config.toml", provider_name=None):
                                         source_revision=run_metadata.get("task_workspace_source_revision"),
                                     )
                                 execution_id = execution["id"]
+                                operation_id = run_metadata.get("task_workspace_operation_id")
+                                try:
+                                    snapshot_before = get_task_workspace_fingerprint(store, operation_id)
+                                except Exception as snapshot_error:
+                                    snapshot_before = {"fingerprint": None, "complete": False,
+                                                       "reason": type(snapshot_error).__name__}
                                 result = run_execution(lab_db.connection, lab_db.lock, execution_id)
+                                try:
+                                    snapshot_after = get_task_workspace_fingerprint(store, operation_id)
+                                except Exception as snapshot_error:
+                                    snapshot_after = {"fingerprint": None, "complete": False,
+                                                      "reason": type(snapshot_error).__name__}
+                                snapshot_stable = (
+                                    snapshot_before["complete"] and snapshot_after["complete"]
+                                    and snapshot_before["fingerprint"] == snapshot_after["fingerprint"]
+                                )
                                 status = "passed" if result.get("returncode") == 0 else "failed"
                                 with lab_db.lock:
                                     orchestration.record_verification(
                                         lab_db.connection, plan_id, step["id"], command, status,
                                         result.get("returncode"), result.get("stdout", ""), result.get("stderr", ""),
-                                        execution_id=execution_id)
+                                        execution_id=execution_id,
+                                        workspace_fingerprint_before=snapshot_before["fingerprint"],
+                                        workspace_fingerprint_after=snapshot_after["fingerprint"],
+                                        workspace_snapshot_stable=snapshot_stable)
                                 if status != "passed":
                                     verification_status = "failed"
                             except Exception as exc:
