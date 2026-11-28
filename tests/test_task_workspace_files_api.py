@@ -188,6 +188,15 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         evidence = review["execution_evidence"][0]
         self.assertEqual(evidence["run_id"], run_id)
         self.assertEqual(evidence["plan_id"], plan["id"])
+        self.assertEqual(len(evidence["managed_executions"]), 1)
+        run_execution = evidence["managed_executions"][0]
+        self.assertEqual(run_execution["id"], "execution-123")
+        self.assertEqual(run_execution["argv"], ["python", "-m", "unittest"])
+        self.assertEqual(run_execution["effective_command_policy"], [["python"]])
+        self.assertEqual(run_execution["working_directory"], str(self.task_root))
+        self.assertEqual(run_execution["source_revision"], self.operation["source_revision"])
+        self.assertEqual(run_execution["stdout"], "OK")
+        self.assertEqual(run_execution["returncode"], 0)
         self.assertEqual(evidence["verification_summary"]["passed"], 1)
         self.assertEqual(evidence["verification_evidence_summary"]["command_coverage_state"], "passed")
         self.assertEqual(evidence["verification_evidence_summary"]["configured_commands"], 1)
@@ -221,6 +230,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         mismatched_check = mismatched_review["execution_evidence"][0]["steps"][0]["verification_checks"][0]
         self.assertEqual(mismatched_check["execution_id"], "execution-123")
         self.assertIsNone(mismatched_check["managed_execution"])
+        self.assertEqual(mismatched_review["execution_evidence"][0]["managed_executions"], [])
 
     def test_review_does_not_join_runs_with_mismatched_task_provenance(self):
         operation_id = self.operation["operation_id"]

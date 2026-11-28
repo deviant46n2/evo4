@@ -393,7 +393,7 @@ def create_app(config_path="config.toml", provider_name=None):
                    ORDER BY started_at DESC LIMIT 20""",
                 (operation["operation_id"],),
             ).fetchall()
-        from evo_experiments.execution import get_execution
+        from evo_experiments.execution import get_execution, managed_executions_for_parent
 
         def matching_managed_execution(execution_id, command, run_id):
             if not isinstance(execution_id, str) or not execution_id:
@@ -448,8 +448,44 @@ def create_app(config_path="config.toml", provider_name=None):
                 "verification_state": metadata.get("verification_state", "not_available"),
                 "successful_file_writes": metadata.get("successful_file_writes"),
                 "plan_id": None, "plan_status": None, "verification_summary": None,
+                "managed_executions": [],
                 "steps": [],
             }
+            # Include only executions whose complete persisted provenance matches
+            # this task workspace and the owning agent run. Output is already
+            # bounded by the managed execution worker's per-stream limit.
+            with lab_db.lock:
+                executions = managed_executions_for_parent(lab_db.connection, row["id"])
+            for execution in executions:
+                if (
+                    execution.get("agent_run_id") != row["id"]
+                    or execution.get("workspace_id") != operation.get("task_workspace_id")
+                    or execution.get("project_id") != operation.get("project_id")
+                    or execution.get("source_revision") != operation.get("source_revision")
+                    or execution.get("workspace") != operation.get("destination_path")
+                ):
+                    continue
+                approval = execution.get("approval_evidence") or {}
+                item["managed_executions"].append({
+                    "id": execution["id"],
+                    "status": execution.get("status"),
+                    "argv": execution.get("argv", []),
+                    "effective_command_policy": execution.get("allowed_commands", []),
+                    "working_directory": execution.get("workspace"),
+                    "source_revision": execution.get("source_revision"),
+                    "timeout_seconds": execution.get("timeout_seconds"),
+                    "requested_at": execution.get("requested_at"),
+                    "started_at": execution.get("started_at"),
+                    "finished_at": execution.get("finished_at"),
+                    "returncode": execution.get("returncode"),
+                    "elapsed_seconds": execution.get("elapsed_seconds"),
+                    "stdout": execution.get("stdout", ""),
+                    "stderr": execution.get("stderr", ""),
+                    "error": execution.get("error", ""),
+                    "approval_source": approval.get("approval_source"),
+                    "approved_at": approval.get("approved_at"),
+                    "argv_sha256": approval.get("argv_sha256"),
+                })
             plan_id = metadata.get("plan_id")
             if isinstance(plan_id, str) and plan_id:
                 with lab_db.lock:
