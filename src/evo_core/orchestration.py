@@ -426,6 +426,52 @@ def step_verification_status(step):
         return "not_run"
     return "passed"
 
+def verification_evidence_summary(steps):
+    """Count configured verification commands and the evidence actually recorded."""
+    summary = {
+        "configured_commands": 0,
+        "recorded_checks": 0,
+        "unrecorded_commands": 0,
+        "unmatched_checks": 0,
+        "passed_checks": 0,
+        "failed_checks": 0,
+        "denied_checks": 0,
+        "error_checks": 0,
+        "timed_out_checks": 0,
+        "stable_snapshots": 0,
+        "changed_or_incomplete_snapshots": 0,
+        "unavailable_snapshots": 0,
+    }
+    for step in steps:
+        commands = [list(command) for command in (step.get("verification_commands") or [])]
+        checks = step.get("verification_checks") or []
+        summary["configured_commands"] += len(commands)
+        summary["recorded_checks"] += len(checks)
+        remaining = list(commands)
+        for check in checks:
+            command = check.get("command") or []
+            try:
+                command = list(command)
+            except TypeError:
+                command = []
+            if command in remaining:
+                remaining.remove(command)
+            else:
+                summary["unmatched_checks"] += 1
+            status = check.get("status")
+            if status in {"passed", "failed", "denied", "error", "timed_out"}:
+                summary[status + "_checks"] += 1
+            snapshot = check.get("workspace_snapshot_stable")
+            if snapshot is True or snapshot == 1:
+                summary["stable_snapshots"] += 1
+            elif snapshot is False or snapshot == 0:
+                summary["changed_or_incomplete_snapshots"] += 1
+            else:
+                summary["unavailable_snapshots"] += 1
+        summary["unrecorded_commands"] += len(remaining)
+    return summary
+
+
 def plan_verification_state(steps):
     """Summarize step verification without treating missing evidence as success."""
     statuses = [step.get("verification_status") or step_verification_status(step)
