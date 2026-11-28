@@ -272,6 +272,17 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertEqual(unreadable.get("binary-nul.dat"), "binary")
         self.assertNotIn("payload", review["patch"])
 
+    def test_review_rejects_invalid_utf8_untracked_content(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-invalid-utf8", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "invalid-utf8.dat").write_bytes(b"valid-prefix\\xffinvalid")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        unreadable = {item["path"]: item["reason"] for item in review["unreadable_files"]}
+        self.assertEqual(unreadable.get("invalid-utf8.dat"), "invalid_utf8")
+        self.assertNotIn("valid-prefix", review["patch"])
+
     def test_review_metadata_limit_includes_excluded_files(self):
         result = create_task_workspace(
             self.store, self.workspace["workspace_id"], "task-metadata-limit", self.destinations
