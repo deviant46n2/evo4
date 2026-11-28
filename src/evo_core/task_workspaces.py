@@ -498,23 +498,23 @@ def _quote_patch_path(path_text):
     needs_quotes = False
     for char in path_text:
         code = ord(char)
-        if char == "\\\\":
-            escaped.append("\\\\\\\\")
+        if char == "\\":
+            escaped.append("\\\\")
             needs_quotes = True
         elif char == '"':
-            escaped.append('\\\\"')
+            escaped.append('\\"')
             needs_quotes = True
-        elif char == "\\t":
-            escaped.append("\\\\t")
+        elif char == "\t":
+            escaped.append("\\t")
             needs_quotes = True
-        elif char == "\\n":
-            escaped.append("\\\\n")
+        elif char == "\n":
+            escaped.append("\\n")
             needs_quotes = True
-        elif char == "\\r":
-            escaped.append("\\\\r")
+        elif char == "\r":
+            escaped.append("\\r")
             needs_quotes = True
         elif code < 32 or code >= 127:
-            escaped.append(f"\\\\{code:03o}")
+            escaped.append(f"\\{code:03o}")
             needs_quotes = True
         else:
             escaped.append(char)
@@ -805,9 +805,12 @@ def get_task_workspace_review(
             unreadable.append({"path": path, "reason": "binary"})
             continue
         text = data.decode("utf-8", errors="replace")
-        entry = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
+        quoted_path = _quote_patch_path(path)
+        entry = f"diff --git a/{quoted_path} b/{quoted_path}\nnew file mode {100755 if (st_before.st_mode & 0o111) else 100644}\n--- /dev/null\n+++ b/{quoted_path}\n"
         content_lines = text.splitlines()
         entry += "".join(f"+{line}\n" for line in content_lines)
+        if text and not text.endswith(("\n", "\r")):
+            entry += "\\ No newline at end of file\n"
         if file_truncated:
             entry += "\n[truncated]\n"
             truncated = True
@@ -856,8 +859,10 @@ def get_task_workspace_review(
         "current_head": head_after,
         "changed_files": [{"status": s, "path": p} for s, p, _ in changed],
         "changed_file_count": len(changed),
-        "excluded_files": sorted(set(excluded)),
-        "unreadable_files": unreadable,
+        "excluded_files": sorted(set(excluded))[:max_files],
+        "excluded_files_omitted": max(0, len(set(excluded)) - max_files),
+        "unreadable_files": unreadable[:max_files],
+        "unreadable_files_omitted": max(0, len(unreadable) - max_files),
         "patch": "".join(patch_parts),
         "patch_bytes": total_bytes,
         "truncated": truncated,
