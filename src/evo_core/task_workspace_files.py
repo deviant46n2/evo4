@@ -229,6 +229,69 @@ def _ensure_file_change_table(store):
         store.db.commit()
 
 
+def _current_file_sha256(root, relative_path):
+    """Read a bounded regular file without following links for journal recovery."""
+    try:
+        fd, before = _open_regular_file_at(root, relative_path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unsafe"
+    try:
+        if before.st_size > MAX_READ_BYTES:
+            return "unsafe"
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            digest.update(chunk)
+        after = os.fstat(fd)
+        signature_before = (
+            before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+            before.st_ctime_ns, before.st_mode, before.st_nlink,
+        )
+        signature_after = (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+            after.st_ctime_ns, after.st_mode, after.st_nlink,
+        )
+        if signature_before != signature_after:
+            return "unsafe"
+        return digest.hexdigest()
+    finally:
+        os.close(fd)
+
+
+def _reconcile_pending_file_changes(store, operation, root):
+    """Resolve interrupted write intents from the current file state when possible."""
+    with store.lock:
+        pending = store.db.execute(
+            """SELECT change_id, path, before_sha256, after_sha256
+               FROM task_workspace_file_changes
+               WHERE operation_id=? AND status='pending'
+               ORDER BY created_at, change_id LIMIT 500""",
+            (operation["operation_id"],),
+        ).fetchall()
+    for row in pending:
+        current = _current_file_sha256(root, row["path"])
+        if current == row["after_sha256"]:
+            status, error_code = "applied", None
+        elif current == row["before_sha256"]:
+            status, error_code = "failed", "interrupted_before_apply"
+        elif current is None and row["before_sha256"] is None:
+            status, error_code = "failed", "interrupted_before_create"
+        else:
+            status, error_code = "indeterminate", "state_changed_after_interruption"
+        with store.lock:
+            store.db.execute(
+                """UPDATE task_workspace_file_changes
+                   SET status=?, error_code=?, finalized_at=?
+                   WHERE change_id=? AND status='pending'""",
+                (status, error_code, utc_now(), row["change_id"]),
+            )
+            store.db.commit()
+
+
 def apply_task_workspace_file(
     store, operation_id, path, content, *, expected_sha256=None, approved=False,
 ):
@@ -430,8 +493,9 @@ def apply_task_workspace_file(
 def list_task_workspace_file_changes(store, operation_id, *, limit=100):
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         raise TaskWorkspaceValidationError("limit must be an integer between 1 and 500")
-    operation, _root = _task_root(store, operation_id)
+    operation, root = _task_root(store, operation_id)
     _ensure_file_change_table(store)
+    _reconcile_pending_file_changes(store, operation, root)
     with store.lock:
         total = store.db.execute(
             "SELECT COUNT(*) FROM task_workspace_file_changes WHERE operation_id=?",
@@ -439,7 +503,7 @@ def list_task_workspace_file_changes(store, operation_id, *, limit=100):
         ).fetchone()[0]
         rows = store.db.execute(
             """SELECT change_id, operation_id, path, before_sha256, after_sha256,
-                      size_bytes, created_at
+                      size_bytes, created_at, status, error_code, finalized_at
                FROM task_workspace_file_changes
                WHERE operation_id=? ORDER BY created_at DESC, change_id DESC LIMIT ?""",
             (operation["operation_id"], limit),
