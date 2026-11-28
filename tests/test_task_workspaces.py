@@ -143,6 +143,14 @@ class TaskWorkspaceTests(unittest.TestCase):
                 source_revision="f" * 40,
             )
 
+
+    def test_uppercase_full_commit_id_is_accepted(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "uppercase-revision",
+            self.destinations, source_revision=self.revision.upper(),
+        )
+        self.assertEqual(result["source_revision"], self.revision)
+
     def test_duplicate_task_in_same_project_is_rejected(self):
         create_task_workspace(
             self.store, self.workspace["workspace_id"], "same-task", self.destinations

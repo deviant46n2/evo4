@@ -170,11 +170,20 @@ def _safe_parent(path):
     if not isinstance(path, (str, os.PathLike)) or not str(path).strip():
         raise TaskWorkspaceValidationError("destination_parent must be a non-empty path")
     try:
-        canonical = Path(path).expanduser().resolve(strict=True)
+        expanded = Path(path).expanduser()
+        lexical = Path(os.path.abspath(os.fspath(expanded)))
+        # Reject symlinks in every existing path component, not only the final
+        # directory. Resolving first and checking afterward would hide them.
+        cursor = Path(lexical.anchor)
+        for component in lexical.parts[1:]:
+            cursor = cursor / component
+            if cursor.is_symlink():
+                raise TaskWorkspaceValidationError(
+                    "destination_parent must not contain symlink components"
+                )
+        canonical = lexical.resolve(strict=True)
         if not canonical.is_dir() or canonical == Path("/") or canonical.parent == canonical:
             raise TaskWorkspaceValidationError("destination_parent must be a safe existing directory")
-        if Path(path).expanduser().is_symlink():
-            raise TaskWorkspaceValidationError("destination_parent must not be a symlink")
         return canonical
     except TaskWorkspaceValidationError:
         raise
