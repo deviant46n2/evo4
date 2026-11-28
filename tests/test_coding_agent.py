@@ -276,6 +276,47 @@ class CodingAgentTests(unittest.TestCase):
         self.assertFalse(is_test_command(["git","diff","--check"]))
         self.assertFalse(is_test_command(["npx","eslint","."]))
 
+    def test_run_command_approval_displays_and_binds_complete_execution_specification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/"project"; root.mkdir()
+            provider=ToolProvider([
+                {"content":"","tool_calls":[call("run_command",{
+                    "argv":["python","-m","unittest"], "timeout_seconds":45,
+                    "resource_limits":{"cpu_seconds":30}, "expected_artifacts":["coverage.xml"],
+                    "output_limit_bytes":4096,
+                    "environment_contract":{"inherit_safe_environment":False,"variables":{"MODE":"test"}},
+                })]},
+                {"content":"The check completed.","tool_calls":[]},
+            ])
+            assistant=self.make_assistant(tmp,provider)
+            cid=assistant.new_conversation()
+            agent=CodingAgent(assistant,root,allowed_commands=[["python","-m","unittest"]])
+            approvals=[]
+            def approve(name,args):
+                approvals.append((name,args))
+                return True
+            def complete_execution(db,lock,execution_id):
+                with lock:
+                    db.execute(
+                        "UPDATE workload_executions SET status='completed',returncode=0,stdout='OK',finished_at='2026-01-01T00:00:00Z' WHERE id=?",
+                        (execution_id,),
+                    )
+                    db.commit()
+            with patch("evo_experiments.execution.run_execution",side_effect=complete_execution):
+                result=agent.run(cid,"Run tests with the requested execution contract.",approve)
+            self.assertEqual(result["status"],"completed")
+            approved_args=approvals[0][1]
+            spec=approved_args["execution_specification"]
+            self.assertEqual(spec["resource_limits"],{"cpu_seconds":30})
+            self.assertEqual(spec["expected_artifacts"],["coverage.xml"])
+            self.assertEqual(spec["environment_contract"]["variables"],{"MODE":"test"})
+            from evo_experiments.execution import get_execution
+            execution_id=assistant.store.db.execute("SELECT id FROM workload_executions").fetchone()["id"]
+            record=get_execution(assistant.store.db,execution_id)
+            self.assertEqual(record["approval_evidence"]["execution_specification_sha256"],
+                             approved_args["execution_specification_sha256"])
+            assistant.close()
+
     def test_successful_post_edit_check_is_reported_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/"project"; root.mkdir()

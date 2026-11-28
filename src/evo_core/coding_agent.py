@@ -35,7 +35,7 @@ TOOL_SPECS = [
  {"type":"function","function":{"name":"read_file","description":"Read a UTF-8 text file beneath the configured project workspace.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"search_text","description":"Search file contents for a literal text string beneath the workspace. Result includes whether matches or file scope were truncated.","parameters":{"type":"object","properties":{"query":{"type":"string"},"path":{"type":"string","default":"."}},"required":["query"],"additionalProperties":False}}},
  {"type":"function","function":{"name":"write_file","description":"Create or replace a text file. Requires explicit user approval.","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"overwrite":{"type":"boolean","default":False}},"required":["path","content"],"additionalProperties":False}}},
- {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120}},"required":["argv"],"additionalProperties":False}}}
+ {"type":"function","function":{"name":"run_command","description":"Run an argv command that matches the user's explicit workspace command allowlist. Requires explicit user approval of the complete execution specification.","parameters":{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"minItems":1},"timeout_seconds":{"type":"integer","default":120},"output_limit_bytes":{"type":"integer","minimum":1,"maximum":104857600},"environment_contract":{"type":"object","properties":{"inherit_safe_environment":{"type":"boolean"},"variables":{"type":"object","additionalProperties":{"type":"string"}}},"additionalProperties":False},"resource_limits":{"type":"object","properties":{"cpu_seconds":{"type":"integer","minimum":0},"memory_bytes":{"type":"integer","minimum":0},"open_files":{"type":"integer","minimum":0},"processes":{"type":"integer","minimum":0},"file_size_bytes":{"type":"integer","minimum":0}},"additionalProperties":False},"expected_artifacts":{"type":"array","items":{"type":"string"},"maxItems":100}},"required":["argv"],"additionalProperties":False}}}
 ]
 
 def is_test_command(argv):
@@ -177,7 +177,33 @@ class CodingAgent:
                 "Task workspace operation does not match the agent's bound workspace; refusing further actions"
             )
 
-    def _execute(self, name, args, test_approval=None):
+    def _execution_specification(self, args):
+        import json
+        from evo_experiments.execution import (
+            MAX_TIMEOUT_SECONDS, OUTPUT_LIMIT, _canonical_execution_specification,
+            _sanitize_environment_contract, _validate_expected_artifacts,
+            _validate_resource_limits,
+        )
+        timeout = min(max(int(args.get("timeout_seconds", 120)), 1), MAX_TIMEOUT_SECONDS)
+        output_limit = args.get("output_limit_bytes", OUTPUT_LIMIT)
+        if isinstance(output_limit, bool) or not isinstance(output_limit, int) or not 1 <= output_limit <= 100 * 1024 * 1024:
+            raise ValueError("output_limit_bytes must be between 1 and 104857600")
+        environment_contract = _sanitize_environment_contract(args.get("environment_contract"))
+        resource_limits = _validate_resource_limits(args.get("resource_limits"))
+        expected_artifacts = _validate_expected_artifacts(args.get("expected_artifacts"))
+        text, digest = _canonical_execution_specification(
+            list(args["argv"]), str(self.workspace.root), environment_contract,
+            timeout, output_limit, resource_limits, expected_artifacts,
+            self.workspace.allowed_commands,
+        )
+        return {
+            "specification": json.loads(text), "sha256": digest,
+            "timeout_seconds": timeout, "output_limit_bytes": output_limit,
+            "environment_contract": environment_contract,
+            "resource_limits": resource_limits, "expected_artifacts": expected_artifacts,
+        }
+
+    def _execute(self, name, args, test_approval=None, execution_specification=None):
         self.assert_workspace_binding()
         self._assert_task_workspace_operation_binding()
         if name=="inspect_project":
@@ -214,7 +240,8 @@ class CodingAgent:
             with store.lock:
                 initialize_execution(store.db)
             argv = list(args["argv"])
-            timeout_seconds = args.get("timeout_seconds", 120)
+            execution_specification = execution_specification or self._execution_specification(args)
+            timeout_seconds = execution_specification["timeout_seconds"]
             approval_evidence = {
                 "approval": "approved",
                 "approval_source": "user_approval_callback",
@@ -223,6 +250,7 @@ class CodingAgent:
                     json.dumps(argv, sort_keys=True).encode("utf-8")
                 ).hexdigest(),
                 "policy": [list(prefix) for prefix in self.workspace.allowed_commands],
+                "execution_specification_sha256": execution_specification["sha256"],
             }
             with store.lock:
                 execution = register_managed_execution(
@@ -236,6 +264,10 @@ class CodingAgent:
                     project_id=getattr(self, "_project_id", None),
                     approval_evidence=approval_evidence,
                     source_revision=self._source_revision,
+                    environment_contract=execution_specification["environment_contract"],
+                    resource_limits=execution_specification["resource_limits"],
+                    expected_artifacts=execution_specification["expected_artifacts"],
+                    output_limit_bytes=execution_specification["output_limit_bytes"],
                 )
             # Do not hold the application store lock while the managed worker
             # supervises a process. The worker must be able to persist lifecycle
@@ -817,7 +849,16 @@ class CodingAgent:
                                 output = None
                                 status = None
 
-                            if status is None and not approval(name, args):
+                            execution_specification = None
+                            approval_arguments = args
+                            if status is None and name == "run_command":
+                                execution_specification = self._execution_specification(args)
+                                approval_arguments = {
+                                    **args,
+                                    "execution_specification": execution_specification["specification"],
+                                    "execution_specification_sha256": execution_specification["sha256"],
+                                }
+                            if status is None and not approval(name, approval_arguments):
                                 output = {
                                     "error": (
                                         "User denied this action; no changes "
@@ -844,7 +885,8 @@ class CodingAgent:
                                     )
 
                                 output = self._execute(
-                                    name, args, test_approval=test_approval
+                                    name, args, test_approval=test_approval,
+                                    execution_specification=execution_specification,
                                 )
                                 status = "completed"
                         else:
