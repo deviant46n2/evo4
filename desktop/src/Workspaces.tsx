@@ -54,6 +54,7 @@ type RegistryWorkspace = {workspace_id:string;name:string;status:string;project_
 type ProjectSummary = {project_id:string;name:string;status:string};
 type ConfigurationSummary = {configuration_id:string;name:string;status:string};
 type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_status:string};
+type TaskWorkspaceReview = {operation_id:string;status:string;stable:boolean;unstable:boolean;source_revision:string;current_head:string;changed_files:Array<{status:string;path:string}>;excluded_files:string[];unreadable_files:Array<{path:string;reason:string}>;patch:string;patch_bytes:number;truncated:boolean;truncation_reason:string|null};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -227,6 +228,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [request, setRequest] = useState("");
   const [workspaceId, setWorkspaceId] = useState("");
+  const [isolateWorkspace, setIsolateWorkspace] = useState(false);
+  const [taskReview, setTaskReview] = useState<TaskWorkspaceReview | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [registryWorkspaces, setRegistryWorkspaces] = useState<RegistryWorkspace[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [configurations, setConfigurations] = useState<ConfigurationSummary[]>([]);
@@ -335,13 +339,21 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     const handle = window.setInterval(() => { void refresh(); void refreshPlans(); if (selected) void refreshDetail(selected); if (plan) void loadPlan(plan.id); }, 1800);
     return () => {window.clearInterval(handle);window.removeEventListener("evo-demo-data-changed",changed);};
   }, [refresh, refreshDetail, refreshPlans, loadPlan, selected, plan?.id]);
+  async function loadTaskReview(operationId: string) {
+    setReviewBusy(true); setError("");
+    try {
+      const result = await api<TaskWorkspaceReview>("/task-workspaces/" + encodeURIComponent(operationId) + "/review");
+      setTaskReview(result);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setReviewBusy(false); }
+  }
   async function start(event: React.FormEvent) {
     event.preventDefault();
     if (!request.trim() || busy || !workspaceId) return;
     setBusy(true); setError("");
     try {
-      const result = await api<{run_id: string}>("/agents", json({ request: request.trim(), workspace_id: workspaceId }));
-      setRequest(""); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
+      const result = await api<{run_id: string;task_workspace_operation_id?:string}>("/agents", json({ request: request.trim(), workspace_id: workspaceId, isolate_workspace: isolateWorkspace }));
+      setRequest(""); setTaskReview(null); setSelected(result.run_id); await refresh(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -390,6 +402,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setPlans([]);
     setSelected(null);
     setDetail(null);
+    setTaskReview(null);
     setPlan(null);
     setError("");
     void refresh();
@@ -435,6 +448,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
           </select>
           <button disabled={busy || !request.trim() || !workspaceId}>{busy ? "Starting…" : "Start agent"}</button>
         </div>
+        <label className="policy-note" style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}><input type="checkbox" checked={isolateWorkspace} onChange={event=>setIsolateWorkspace(event.target.checked)}/> Create a separate, revision-pinned task workspace (requires a clean source checkout)</label>
         {executableWorkspaces.length === 0 && <p className="policy-note">No executable registered workspaces are available. Register a project, checkout, configuration, and workspace first.</p>}
       </form>
       <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request or tool action may finish or time out before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
@@ -458,6 +472,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
       </section>
       <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <div className="inline-actions"><span className={"run-status " + (detail.background_task?.status || detail.status)}>{detail.background_task?.status || detail.status}</span>{detail.background_task && ["queued","running","awaiting_approval","cancel_requested"].includes(detail.background_task.status) && <button className="quiet-button danger" onClick={()=>void cancelRun()}>Request cancellation</button>}</div>}</div>
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
+          {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Changes are isolated from the registered source checkout.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?"Refresh review":"Review changes"}</button></div>{taskReview&&<><div className="policy-note">Source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_files.length} changed files · {taskReview.patch_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable review":"Review may be incomplete"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"limit"}</span>}</div>{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}</div><pre>{taskReview.patch||"No reviewable patch content."}</pre></>}</section>}
           {detail.pending_approval && <div className="approval-card"><div className="approval-title">Approval required · {detail.pending_approval.tool_name}</div><pre>{JSON.stringify(detail.pending_approval.arguments, null, 2)}</pre><div className="inline-actions"><button className="quiet-button danger" onClick={() => void decide(false)}>Deny</button><button onClick={() => void decide(true)}>Approve action</button></div></div>}
           <section className="workspace-panel"><h3>Task lifecycle</h3><div className="event-list">{(detail.background_events || []).map(event => <article className="event-card" key={"task-" + event.id}><div className="event-head"><strong>{event.type.replaceAll("_", " ")}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div><pre>{JSON.stringify(event.payload, null, 2)}</pre></article>)}{!(detail.background_events || []).length && <div className="empty-state">No lifecycle events recorded.</div>}</div></section>
           <div className="event-list">{detail.events.map(event => <article className="event-card" key={event.id}><div className="event-head"><strong>{event.tool_name}</strong><span className={"run-status " + event.status}>{event.status}</span></div><pre>{JSON.stringify(event.input, null, 2)}</pre><p>{event.output}</p><small>{new Date(event.created_at).toLocaleString()}</small></article>)}{detail.events.length === 0 && <div className="empty-state">No tool activity recorded yet.</div>}</div>
