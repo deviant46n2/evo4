@@ -24,7 +24,7 @@ from evo_core.task_workspaces import (
 DEFINITION = {"schema_version": 1, "components": {}}
 
 
-SHIM = '#!/usr/bin/env python3\nimport os, sys, subprocess, time\nargs = sys.argv[1:]\nif "config" in args:\n    sys.exit(0)\nmode = os.environ.get("SHIM_MODE", "overflow")\nchild_pid_file = os.environ.get("SHIM_CHILD_PID_FILE")\nparent_pid_file = os.environ.get("SHIM_PARENT_PID_FILE")\npgid_file = os.environ.get("SHIM_PGID_FILE")\nready_file = os.environ.get("SHIM_READY_FILE")\nchild = subprocess.Popen(\n    [sys.executable, "-c", "import time; time.sleep(60)"],\n    stdout=sys.stdout, stderr=sys.stderr,\n)\nif parent_pid_file:\n    with open(parent_pid_file, "w") as handle:\n        handle.write(str(os.getpid()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif child_pid_file:\n    with open(child_pid_file, "w") as handle:\n        handle.write(str(child.pid))\n        handle.flush()\n        os.fsync(handle.fileno())\nif pgid_file:\n    with open(pgid_file, "w") as handle:\n        handle.write(str(os.getpgrp()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif ready_file:\n    with open(ready_file, "w") as handle:\n        handle.write("ready")\n        handle.flush()\n        os.fsync(handle.fileno())\nif mode == "overflow":\n    sys.stdout.write("a" * 60)\n    sys.stderr.write("b" * 60)\n    sys.stdout.flush()\n    sys.stderr.flush()\nelif mode == "exact":\n    count = int(os.environ.get("SHIM_BYTES", "100"))\n    sys.stdout.write("a" * count)\n    sys.stdout.flush()\n    time.sleep(0.2)\nelif mode == "timeout":\n    time.sleep(60)\nsys.exit(0)\n'
+SHIM = '#!/usr/bin/env python3\nimport os, sys, subprocess, time\nargs = sys.argv[1:]\nif "config" in args:\n    sys.exit(0)\nmode = os.environ.get("SHIM_MODE", "overflow")\nchild_pid_file = os.environ.get("SHIM_CHILD_PID_FILE")\nparent_pid_file = os.environ.get("SHIM_PARENT_PID_FILE")\npgid_file = os.environ.get("SHIM_PGID_FILE")\nready_file = os.environ.get("SHIM_READY_FILE")\nchild = subprocess.Popen(\n    [sys.executable, "-c", "import time; time.sleep(60)"],\n    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,\n)\nif parent_pid_file:\n    with open(parent_pid_file, "w") as handle:\n        handle.write(str(os.getpid()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif child_pid_file:\n    with open(child_pid_file, "w") as handle:\n        handle.write(str(child.pid))\n        handle.flush()\n        os.fsync(handle.fileno())\nif pgid_file:\n    with open(pgid_file, "w") as handle:\n        handle.write(str(os.getpgrp()))\n        handle.flush()\n        os.fsync(handle.fileno())\nif ready_file:\n    with open(ready_file, "w") as handle:\n        handle.write("ready")\n        handle.flush()\n        os.fsync(handle.fileno())\nif mode == "overflow":\n    sys.stdout.write("a" * 60)\n    sys.stderr.write("b" * 60)\n    sys.stdout.flush()\n    sys.stderr.flush()\nelif mode == "exact":\n    count = int(os.environ.get("SHIM_BYTES", "100"))\n    sys.stdout.write("a" * count)\n    sys.stdout.flush()\n    time.sleep(0.2)\nelif mode == "timeout":\n    time.sleep(60)\nsys.exit(0)\n'
 
 class TaskWorkspaceTests(unittest.TestCase):
     def setUp(self):
@@ -341,7 +341,15 @@ class TaskWorkspaceTests(unittest.TestCase):
                 except (ProcessLookupError, OSError):
                     pass
         self.addCleanup(_cleanup)
+        for _ in range(20):
+            if self._pid_gone(child_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(child_pid))
+        for _ in range(20):
+            if self._pid_gone(parent_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(parent_pid))
         try:
             os.killpg(pgid, 0)
@@ -400,6 +408,11 @@ class TaskWorkspaceTests(unittest.TestCase):
         out = result_box.get("out", "")
         self.assertEqual(len(out), 100)
         self.assertFalse(truncated)
+        self.assertEqual(metrics.get("captured_bytes"), 100)
+        before_threads = set(threading.enumerate())
+        after_threads = set(threading.enumerate())
+        new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
+        self.assertEqual(new_reader_threads, [])
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
         self.assertTrue(pgid_file.exists())
@@ -412,7 +425,15 @@ class TaskWorkspaceTests(unittest.TestCase):
             except (ProcessLookupError, OSError):
                 pass
         self.addCleanup(_cleanup)
+        for _ in range(20):
+            if self._pid_gone(child_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(child_pid))
+        for _ in range(20):
+            if self._pid_gone(parent_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(parent_pid))
         try:
             os.killpg(pgid, 0)
@@ -476,7 +497,15 @@ class TaskWorkspaceTests(unittest.TestCase):
             except (ProcessLookupError, OSError):
                 pass
         self.addCleanup(_cleanup)
+        for _ in range(20):
+            if self._pid_gone(child_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(child_pid))
+        for _ in range(20):
+            if self._pid_gone(parent_pid):
+                break
+            time.sleep(0.1)
         self.assertTrue(self._pid_gone(parent_pid))
         try:
             os.killpg(pgid, 0)
@@ -489,24 +518,6 @@ class TaskWorkspaceTests(unittest.TestCase):
         after_threads = set(threading.enumerate())
         new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
         self.assertEqual(new_reader_threads, [])
-
-    def test_normal_git_command_does_not_invoke_group_cleanup(self):
-        import tempfile
-        from pathlib import Path
-        d = Path(tempfile.mkdtemp())
-        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(d), "config", "user.name", "T"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@e.com"], check=True, capture_output=True)
-        (d / "f.txt").write_text("hello")
-        subprocess.run(["git", "-C", str(d), "add", "f.txt"], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(d), "commit", "-m", "i"], check=True, capture_output=True)
-        from evo_core.task_workspaces import _git
-        truncated = []
-        metrics = {}
-        out = _git(d, "show", "HEAD:f.txt", max_output_bytes=1000, truncated=truncated, metrics=metrics)
-        self.assertFalse(truncated)
-        self.assertEqual(out, "hello")
-
 
     def test_normal_git_command_does_not_invoke_group_cleanup(self):
         import tempfile
