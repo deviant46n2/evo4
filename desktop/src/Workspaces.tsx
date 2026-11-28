@@ -383,7 +383,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     } finally { setTaskOperationBusy(false); }
   }
   async function loadTaskFiles(operationId: string, path = "") {
-    setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null);
+    setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null); setTaskFileDraft("");
     try {
       const params = new URLSearchParams({path, limit:"200"});
       const result = await api<TaskWorkspaceFileListing>("/task-workspaces/" + encodeURIComponent(operationId) + "/files?" + params.toString());
@@ -409,10 +409,8 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
         "/task-workspaces/" + encodeURIComponent(operationId) + "/file",
         json({path:taskFileContent.path,content:taskFileDraft,expected_sha256:taskFileContent.sha256,approved:true}),
       );
-      const params = new URLSearchParams({path:result.path,max_bytes:"262144"});
-      const refreshed = await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString());
-      setTaskFileContent(refreshed); setTaskFileDraft(refreshed.content);
       await loadTaskFiles(operationId, taskFilePath);
+      await openTaskFile(operationId, result.path);
       await loadTaskReview(operationId);
     } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
     finally { setTaskFileSaving(false); }
