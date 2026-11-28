@@ -57,6 +57,9 @@ type CheckoutSummary = {checkout_id:string;canonical_path:string;availability_st
 type TaskWorkspaceReview = {operation_id:string;status:string;stable:boolean;unstable:boolean;source_revision:string;current_head:string;changed_files:Array<{status:string;path:string}>;changed_file_count:number;changed_files_omitted:number;excluded_files:string[];excluded_files_omitted:number;unreadable_files:Array<{path:string;reason:string}>;unreadable_files_omitted:number;patch:string;patch_bytes:number;truncated:boolean;truncation_reason:string|null;max_files:number;max_bytes:number};
 type TaskWorkspaceOperation = {operation_id:string;task_id:string;parent_workspace_id:string;task_workspace_id:string|null;project_id:string;checkout_id:string|null;source_revision:string;destination_path:string;status:string;created_at:string;updated_at:string;error_recorded:boolean};
 type TaskWorkspaceOperationDetail = TaskWorkspaceOperation & {filesystem:{path_exists:boolean;path_is_directory:boolean;path_is_symlink:boolean};recovery_guidance:string|null};
+type TaskWorkspaceFileItem = {name:string;path:string;kind:"directory"|"file"|"symlink"|"other";size_bytes:number|null;modified_at_ns:number};
+type TaskWorkspaceFileListing = {operation_id:string;source_revision:string;path:string;items:TaskWorkspaceFileItem[];total:number;truncated:boolean;limit:number};
+type TaskWorkspaceFileContent = {operation_id:string;source_revision:string;path:string;size_bytes:number;content:string;truncated:boolean;max_bytes:number};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
   const [items, setItems] = useState<Memory[]>([]);
@@ -238,6 +241,11 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
   const [taskOperationDetail, setTaskOperationDetail] = useState<TaskWorkspaceOperationDetail | null>(null);
   const [taskOperationBusy, setTaskOperationBusy] = useState(false);
   const [taskOperationError, setTaskOperationError] = useState("");
+  const [taskFiles, setTaskFiles] = useState<TaskWorkspaceFileListing | null>(null);
+  const [taskFileContent, setTaskFileContent] = useState<TaskWorkspaceFileContent | null>(null);
+  const [taskFilePath, setTaskFilePath] = useState("");
+  const [taskFileBusy, setTaskFileBusy] = useState(false);
+  const [taskFileError, setTaskFileError] = useState("");
   const taskReviewGeneration = useRef(0);
   const selectedRunRef = useRef<string | null>(selected);
   selectedRunRef.current = selected;
@@ -371,6 +379,23 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
       setTaskOperationError(e instanceof Error ? e.message : String(e));
     } finally { setTaskOperationBusy(false); }
   }
+  async function loadTaskFiles(operationId: string, path = "") {
+    setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null);
+    try {
+      const params = new URLSearchParams({path, limit:"200"});
+      const result = await api<TaskWorkspaceFileListing>("/task-workspaces/" + encodeURIComponent(operationId) + "/files?" + params.toString());
+      setTaskFiles(result); setTaskFilePath(path);
+    } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
+    finally { setTaskFileBusy(false); }
+  }
+  async function openTaskFile(operationId: string, path: string) {
+    setTaskFileBusy(true); setTaskFileError(""); setTaskFileContent(null);
+    try {
+      const params = new URLSearchParams({path, max_bytes:"262144"});
+      setTaskFileContent(await api<TaskWorkspaceFileContent>("/task-workspaces/" + encodeURIComponent(operationId) + "/file?" + params.toString()));
+    } catch (e) { setTaskFileError(e instanceof Error ? e.message : String(e)); }
+    finally { setTaskFileBusy(false); }
+  }
   async function loadTaskReview(operationId: string) {
     const token = ++taskReviewGeneration.current;
     const requestedRunId = selectedRunRef.current;
@@ -451,6 +476,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setTaskOperations([]);
     setTaskOperationDetail(null);
     setTaskOperationError("");
+    setTaskFiles(null); setTaskFileContent(null); setTaskFilePath(""); setTaskFileError("");
     setPlan(null);
     setError("");
     void refresh();
@@ -534,7 +560,17 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
       </section>
       <section className="workspace-panel run-detail-panel"><div className="panel-toolbar"><div><h2>Execution details</h2><p>{detail ? detail.id : "Select a run to inspect its activity"}</p></div>{detail && <div className="inline-actions"><span className={"run-status " + (detail.background_task?.status || detail.status)}>{detail.background_task?.status || detail.status}</span>{detail.background_task && ["queued","running","awaiting_approval","cancel_requested"].includes(detail.background_task.status) && <button className="quiet-button danger" onClick={()=>void cancelRun()}>Request cancellation</button>}</div>}</div>
         {detail ? <><div className="run-summary"><strong>{detail.metadata.request || detail.summary || "Coding task"}</strong><small>Workspace: {detail.metadata.workspace || "—"} · Model: {detail.metadata.model || "—"}</small>{detail.summary && <p>{detail.summary}</p>}</div>
-          {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Read-only snapshot of changes in this task’s isolated worktree.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)?"Refresh review":"Review changes"}</button></div>{taskReviewError&&<p className="workspace-error" role="alert">{taskReviewError}</p>}{taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<><div className="policy-note">Pinned source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_file_count} changed files · {taskReview.patch_bytes.toLocaleString()} / {taskReview.max_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable snapshot":taskReview.truncated?"Incomplete snapshot":"Snapshot changed during review"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"output limit"}</span>}</div>{taskReview.changed_files_omitted>0&&<p className="policy-note">{taskReview.changed_files_omitted} changed file entries omitted by the {taskReview.max_files}-file metadata limit.</p>}{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}{taskReview.excluded_files_omitted>0?` · ${taskReview.excluded_files_omitted} more omitted`:""}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}{taskReview.unreadable_files_omitted>0?` · ${taskReview.unreadable_files_omitted} more omitted`:""}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}{taskReview.changed_files.length===0&&<div className="empty-state">No reviewable changed files were found.</div>}</div><details><summary>View patch ({taskReview.patch_bytes.toLocaleString()} bytes)</summary><pre>{taskReview.patch||"No patch content."}</pre></details></>}</section>}
+          {detail.metadata.task_workspace_operation_id && <section className="workspace-panel"><div className="panel-toolbar"><div><h3>Task workspace review</h3><p>Read-only snapshot of changes in this task’s isolated worktree.</p></div><button className="quiet-button" disabled={reviewBusy} onClick={()=>void loadTaskReview(String(detail.metadata.task_workspace_operation_id))}>{reviewBusy?"Reviewing…":taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)?"Refresh review":"Review changes"}</button></div>{taskReviewError&&<p className="workspace-error" role="alert">{taskReviewError}</p>}{taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<><div className="policy-note">Pinned source {taskReview.source_revision.slice(0,12)} · Current HEAD {taskReview.current_head.slice(0,12)} · {taskReview.changed_file_count} changed files · {taskReview.patch_bytes.toLocaleString()} / {taskReview.max_bytes.toLocaleString()} patch bytes</div><div className="inline-actions"><span className={"run-status "+(taskReview.stable?"completed":"interrupted")}>{taskReview.stable?"Stable snapshot":taskReview.truncated?"Incomplete snapshot":"Snapshot changed during review"}</span>{taskReview.truncated&&<span className="run-status interrupted">Truncated: {taskReview.truncation_reason||"output limit"}</span>}</div>{taskReview.changed_files_omitted>0&&<p className="policy-note">{taskReview.changed_files_omitted} changed file entries omitted by the {taskReview.max_files}-file metadata limit.</p>}{taskReview.excluded_files.length>0&&<p className="policy-note">Excluded files: {taskReview.excluded_files.join(", ")}{taskReview.excluded_files_omitted>0?` · ${taskReview.excluded_files_omitted} more omitted`:""}</p>}{taskReview.unreadable_files.length>0&&<p className="policy-note">Unreadable files: {taskReview.unreadable_files.map(file=>`${file.path} (${file.reason})`).join(", ")}{taskReview.unreadable_files_omitted>0?` · ${taskReview.unreadable_files_omitted} more omitted`:""}</p>}<div className="event-list">{taskReview.changed_files.map(file=><div className="event-card" key={file.path}><strong>{file.status} · {file.path}</strong></div>)}{taskReview.changed_files.length===0&&<div className="empty-state">No reviewable changed files were found.</div>}</div><details><summary>View patch ({taskReview.patch_bytes.toLocaleString()} bytes)</summary><pre>{taskReview.patch||"No patch content."}</pre></details></>}
+          {taskReview?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<section className="workspace-panel">
+            <div className="panel-toolbar"><div><h3>Browse task files</h3><p>Read-only text inspection, pinned to {taskReview.source_revision.slice(0,12)}.</p></div><button className="quiet-button" disabled={taskFileBusy} onClick={()=>void loadTaskFiles(String(detail.metadata.task_workspace_operation_id))}>{taskFileBusy?"Loading…":"Open file browser"}</button></div>
+            {taskFileError&&<p className="workspace-error" role="alert">{taskFileError}</p>}
+            {taskFiles?.operation_id===String(detail.metadata.task_workspace_operation_id)&&<>
+              <div className="inline-actions"><span className="policy-note">/{taskFilePath}</span>{taskFilePath&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),taskFilePath.split("/").slice(0,-1).join("/"))}>Parent directory</button>}<small>{taskFiles.total} entries{taskFiles.truncated?" · list truncated":""}</small></div>
+              <div className="event-list">{taskFiles.items.map(item=><div className="event-card" key={item.path}><div className="event-head"><strong>{item.kind==="directory"?"Folder":item.kind==="file"?"File":item.kind==="symlink"?"Symlink":"Other"} · {item.name}</strong><small>{item.size_bytes===null?"":item.size_bytes.toLocaleString()+" bytes"}</small></div>{(item.kind==="directory"||item.kind==="file")&&<button className="quiet-button" disabled={taskFileBusy} onClick={()=>item.kind==="directory"?void loadTaskFiles(String(detail.metadata.task_workspace_operation_id),item.path):void openTaskFile(String(detail.metadata.task_workspace_operation_id),item.path)}>{item.kind==="directory"?"Open folder":"Read text file"}</button>}</div>)}{taskFiles.items.length===0&&<div className="empty-state">This directory is empty.</div>}</div>
+            </>}
+            {taskFileContent&&<div className="event-card"><div className="event-head"><strong>{taskFileContent.path}</strong><small>{taskFileContent.size_bytes.toLocaleString()} bytes</small></div><pre>{taskFileContent.content}</pre></div>}
+          </section>}
+          </section>}
           {detail.pending_approval && <div className="approval-card"><div className="approval-title">Approval required · {detail.pending_approval.tool_name}</div><pre>{JSON.stringify(detail.pending_approval.arguments, null, 2)}</pre><div className="inline-actions"><button className="quiet-button danger" onClick={() => void decide(false)}>Deny</button><button onClick={() => void decide(true)}>Approve action</button></div></div>}
           <section className="workspace-panel"><h3>Task lifecycle</h3><div className="event-list">{(detail.background_events || []).map(event => <article className="event-card" key={"task-" + event.id}><div className="event-head"><strong>{event.type.replaceAll("_", " ")}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div><pre>{JSON.stringify(event.payload, null, 2)}</pre></article>)}{!(detail.background_events || []).length && <div className="empty-state">No lifecycle events recorded.</div>}</div></section>
           <div className="event-list">{detail.events.map(event => <article className="event-card" key={event.id}><div className="event-head"><strong>{event.tool_name}</strong><span className={"run-status " + event.status}>{event.status}</span></div><pre>{JSON.stringify(event.input, null, 2)}</pre><p>{event.output}</p><small>{new Date(event.created_at).toLocaleString()}</small></article>)}{detail.events.length === 0 && <div className="empty-state">No tool activity recorded yet.</div>}</div>
