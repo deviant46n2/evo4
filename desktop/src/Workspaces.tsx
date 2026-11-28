@@ -384,7 +384,10 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
     setBusy(true); setError("");
     try {
       if (plan.status === "proposed") await api("/agents/plans/" + encodeURIComponent(plan.id) + "/approve" + scopeSuffix(), json({}));
-      const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute" + scopeSuffix(), json({}));
+      const executeScope = scopeSuffix();
+      const isolateQuery = isolateWorkspace ? (executeScope ? "&" : "?") + "isolate_workspace=true" : "";
+      const result = await api<{plan_id:string;run_id:string}>("/agents/plans/" + encodeURIComponent(plan.id) + "/execute" + executeScope + isolateQuery, json({}));
+      taskReviewGeneration.current += 1; setTaskReview(null); setTaskReviewError(""); setReviewBusy(false);
       setSelected(result.run_id); await loadPlan(plan.id); await refresh(); await refreshPlans(); await refreshDetail(result.run_id);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); await loadPlan(plan.id); }
     finally { setBusy(false); }
@@ -462,7 +465,7 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
           </select>
           <button disabled={busy || !request.trim() || !workspaceId}>{busy ? "Starting…" : "Start agent"}</button>
         </div>
-        <label className="policy-note" style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}><input type="checkbox" checked={isolateWorkspace} onChange={event=>setIsolateWorkspace(event.target.checked)}/> Create a separate, revision-pinned task workspace (requires a clean source checkout)</label>
+        <label className="policy-note" style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}><input type="checkbox" checked={isolateWorkspace} onChange={event=>setIsolateWorkspace(event.target.checked)}/> Use a separate, revision-pinned task workspace for direct runs and plan execution (requires a clean source checkout)</label>
         {executableWorkspaces.length === 0 && <p className="policy-note">No executable registered workspaces are available. Register a project, checkout, configuration, and workspace first.</p>}
       </form>
       <div className="policy-note">Read-only inspection runs automatically. File writes and allowlisted commands require explicit approval. Execution is bounded. Cancellation is cooperative: an active model request or tool action may finish or time out before Evo reaches a safe stop point. Interrupted tasks are recorded, not automatically resumed.</div>
