@@ -37,7 +37,10 @@ from .task_workspaces import (
     TaskWorkspaceProvisioningError,
     TaskWorkspaceValidationError,
 )
-from .task_workspace_files import list_task_workspace_files, read_task_workspace_file
+from .task_workspace_files import (
+    list_task_workspace_files, read_task_workspace_file,
+    apply_task_workspace_file, list_task_workspace_file_changes,
+)
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
 from .config import load_config
@@ -129,6 +132,12 @@ class AgentCreate(BaseModel):
 
 class AgentApproval(BaseModel):
     approved: bool
+
+
+class TaskWorkspaceFileApply(BaseModel):
+    content: str = Field(min_length=1, max_length=1048576)
+    expected_sha256: str | None = None
+    approved: bool = False
 
 
 class AgentPlanCreate(BaseModel):
@@ -342,6 +351,32 @@ def create_app(config_path="config.toml", provider_name=None):
         except Exception as exc:
             import logging
             logging.getLogger("evo.api").exception("task workspace file read failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
+    @app.post("/api/v1/task-workspaces/{operation_id}/file")
+    def apply_task_workspace_file_route(operation_id: str, request: TaskWorkspaceFileApply):
+        try:
+            return apply_task_workspace_file(
+                store, operation_id, request.path if hasattr(request, "path") else "",
+                request.content, expected_sha256=request.expected_sha256,
+                approved=request.approved,
+            )
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace file apply failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
+
+    @app.get("/api/v1/task-workspaces/{operation_id}/changes")
+    def task_workspace_file_changes(operation_id: str, limit: int = 100):
+        try:
+            return list_task_workspace_file_changes(store, operation_id, limit=limit)
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            import logging
+            logging.getLogger("evo.api").exception("task workspace file change listing failed")
             raise HTTPException(status_code=500, detail="internal error") from exc
 
     @app.get("/api/v1/task-workspaces/{operation_id}/review")
