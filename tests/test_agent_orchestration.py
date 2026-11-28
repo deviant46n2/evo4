@@ -95,7 +95,21 @@ class AgentOrchestrationTests(unittest.TestCase):
             "stable_snapshots": 1,
             "changed_or_incomplete_snapshots": 1,
             "unavailable_snapshots": 2,
+            "command_coverage_state": "unmatched",
         })
+        self.assertEqual(orchestration.verification_evidence_summary([])["command_coverage_state"], "not_configured")
+        self.assertEqual(orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [],
+        }])["command_coverage_state"], "incomplete")
+        self.assertEqual(orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "failed"}],
+        }])["command_coverage_state"], "failed")
+        self.assertEqual(orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed"}],
+        }])["command_coverage_state"], "passed")
 
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
