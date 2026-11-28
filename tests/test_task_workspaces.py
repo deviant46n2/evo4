@@ -137,6 +137,29 @@ class TaskWorkspaceTests(unittest.TestCase):
                 self.store, self.workspace["workspace_id"], "untracked-task", self.destinations
             )
 
+    def test_partial_worktree_creation_is_recorded_for_recovery(self):
+        from unittest.mock import patch
+        from evo_core.task_workspaces import TaskWorkspaceProvisioningError, get_task_workspace_operation
+        import evo_core.task_workspaces as task_workspaces
+
+        real_git = task_workspaces._git
+
+        def fail_after_worktree_add(path, *args, **kwargs):
+            result = real_git(path, *args, **kwargs)
+            if args[:2] == ("worktree", "add"):
+                raise TaskWorkspaceProvisioningError("injected post-creation failure")
+            return result
+
+        with patch("evo_core.task_workspaces._git", side_effect=fail_after_worktree_add):
+            with self.assertRaises(TaskWorkspaceProvisioningError) as raised:
+                create_task_workspace(
+                    self.store, self.workspace["workspace_id"],
+                    "partial-worktree-recovery", self.destinations,
+                )
+        operation = get_task_workspace_operation(self.store, raised.exception.operation_id)
+        self.assertEqual(operation["status"], "recovery_required")
+        self.assertTrue(Path(operation["destination_path"]).is_dir())
+
     def test_noncanonical_or_unknown_revision_is_rejected(self):
         with self.assertRaises(TaskWorkspaceValidationError):
             create_task_workspace(
