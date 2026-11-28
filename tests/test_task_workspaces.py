@@ -299,7 +299,6 @@ class TaskWorkspaceTests(unittest.TestCase):
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "overflow",
-            "SHIM_PGID_FILE": str(pgid_file),
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
             "SHIM_PGID_FILE": str(pgid_file),
@@ -310,6 +309,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         metrics = {}
         result_box = {}
         exc_box = {}
+        before_threads = set(threading.enumerate())
         def worker():
             try:
                 result_box["out"] = _git(d, "status", max_output_bytes=100, truncated=truncated, timeout=5, env=env, metrics=metrics)
@@ -322,6 +322,14 @@ class TaskWorkspaceTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertTrue(ready_file.exists())
+        self.assertTrue(pgid_file.exists())
+        pgid = int(pgid_file.read_text())
+        def _cleanup():
+            try:
+                os.killpg(pgid, 9)
+            except (ProcessLookupError, OSError):
+                pass
+        self.addCleanup(_cleanup)
         t.join(timeout=10)
         self.assertFalse(t.is_alive(), "worker thread did not terminate")
         self.assertNotIn("exc", exc_box, f"unexpected worker exception: {exc_box.get('exc')}")
@@ -330,17 +338,9 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertLessEqual(metrics.get("captured_bytes", 0), 100)
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
-        self.assertTrue(pgid_file.exists())
         child_pid = int(child_pid_file.read_text())
         parent_pid = int(parent_pid_file.read_text())
-        pgid = int(pgid_file.read_text())
-        def _cleanup():
-            for p in (pgid,):
-                try:
-                    os.killpg(p, 9)
-                except (ProcessLookupError, OSError):
-                    pass
-        self.addCleanup(_cleanup)
+        self.assertEqual(pgid, parent_pid)
         for _ in range(20):
             if self._pid_gone(child_pid):
                 break
@@ -390,6 +390,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         metrics = {}
         result_box = {}
         exc_box = {}
+        before_threads = set(threading.enumerate())
         def worker():
             try:
                 result_box["out"] = _git(d, "status", max_output_bytes=100, truncated=truncated, timeout=5, env=env, metrics=metrics)
@@ -409,7 +410,6 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(out), 100)
         self.assertFalse(truncated)
         self.assertEqual(metrics.get("captured_bytes"), 100)
-        before_threads = set(threading.enumerate())
         after_threads = set(threading.enumerate())
         new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
         self.assertEqual(new_reader_threads, [])
@@ -491,6 +491,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         child_pid = int(child_pid_file.read_text())
         parent_pid = int(parent_pid_file.read_text())
         pgid = int(pgid_file.read_text())
+        self.assertEqual(pgid, parent_pid)
         def _cleanup():
             try:
                 os.killpg(pgid, 9)
