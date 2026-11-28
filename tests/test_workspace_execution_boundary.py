@@ -554,6 +554,30 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertFalse(record["snapshot"]["dispatch_enabled"])
         self.assertEqual(len(self.store.list_agent_runs(limit=1000)), 0)
 
+    def test_isolated_coding_agent_disabled_gate_does_not_provision_task_workspace(self):
+        before = {row["invocation_id"] for row in self._workspace_snapshots()}
+        status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+            "request": "inspect",
+            "workspace_id": self.workspace["workspace_id"],
+            "isolate_workspace": True,
+        })
+        self.assertEqual(status, 503)
+        created = [row for row in self._workspace_snapshots()
+                   if row["invocation_id"] not in before]
+        self.assertEqual(len(created), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, created[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["workspace_id"], self.workspace["workspace_id"])
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        with self.store.lock:
+            table = self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_workspaces'"
+            ).fetchone()
+            if table is not None:
+                count = self.store.db.execute("SELECT COUNT(*) FROM task_workspaces").fetchone()[0]
+                self.assertEqual(count, 0)
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), 0)
+
     def test_plan_proposal_route_records_typed_attempt_snapshot(self):
         status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
             "request": "plan",

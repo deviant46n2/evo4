@@ -1268,16 +1268,23 @@ def create_app(config_path="config.toml", provider_name=None):
         parent_workspace_id = payload.workspace_id.strip()
         binding = _resolve_workspace_for_execution(parent_workspace_id)
         runtime = _build_workspace_runtime_for_request(parent_workspace_id)
+        # Record the admission attempt against the parent before enforcing the
+        # dispatch gate. A rejected request must not provision a task worktree.
+        parent_invocation = _record_workspace_invocation(runtime, "coding_agent")
+        _require_workspace_dispatch(runtime)
         task_workspace_info = None
         workspace_id = parent_workspace_id
+        invocation = parent_invocation
         if payload.isolate_workspace:
             task_id = str(uuid4())
             task_workspace_info = _create_task_execution_workspace(parent_workspace_id, task_id)
             workspace_id = task_workspace_info["workspace"]["workspace_id"]
             binding = _resolve_workspace_for_execution(workspace_id)
             runtime = _build_workspace_runtime_for_request(workspace_id)
-        invocation = _record_workspace_invocation(runtime, "coding_agent")
-        _require_workspace_dispatch(runtime)
+            # The worker must be pinned to a snapshot of the isolated runtime,
+            # not merely the parent runtime used for admission.
+            invocation = _record_workspace_invocation(runtime, "coding_agent")
+            _require_workspace_dispatch(runtime)
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
         run_metadata = {
             "invocation_id": invocation["invocation_id"],
