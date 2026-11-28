@@ -554,6 +554,30 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertFalse(record["snapshot"]["dispatch_enabled"])
         self.assertEqual(len(self.store.list_agent_runs(limit=1000)), 0)
 
+    def test_isolated_coding_agent_disabled_gate_does_not_provision_task_workspace(self):
+        before = {row["invocation_id"] for row in self._workspace_snapshots()}
+        status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+            "request": "inspect",
+            "workspace_id": self.workspace["workspace_id"],
+            "isolate_workspace": True,
+        })
+        self.assertEqual(status, 503)
+        created = [row for row in self._workspace_snapshots()
+                   if row["invocation_id"] not in before]
+        self.assertEqual(len(created), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, created[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["workspace_id"], self.workspace["workspace_id"])
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        with self.store.lock:
+            table = self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_workspaces'"
+            ).fetchone()
+            if table is not None:
+                count = self.store.db.execute("SELECT COUNT(*) FROM task_workspaces").fetchone()[0]
+                self.assertEqual(count, 0)
+        self.assertEqual(len(self.store.list_agent_runs(limit=1000)), 0)
+
     def test_plan_proposal_route_records_typed_attempt_snapshot(self):
         status, body = asgi_request(self.app, "POST", "/api/v1/agents/plans", {
             "request": "plan",
@@ -600,6 +624,50 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
         self.assertEqual(record["snapshot"]["invocation_kind"], "plan_execution")
         self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
+        self.assertEqual(self.store.list_agent_runs(limit=1000), [])
+
+    def test_isolated_plan_execution_disabled_gate_does_not_provision_task_workspace(self):
+        with self.app.state.lab_db.lock:
+            plan = create_plan(
+                self.app.state.lab_db.connection,
+                "approved isolated plan",
+                self.workspace["workspace_id"],
+                str(self.directory.resolve()),
+                {
+                    "title": "Approved isolated plan",
+                    "summary": "Verify disabled dispatch prevents task workspace provisioning.",
+                    "steps": [{
+                        "title": "Step",
+                        "description": "Do work",
+                        "expected_outcome": "Done",
+                        "verification": "Check",
+                        "verification_commands": [["python", "-c", "print('ok')"]],
+                    }],
+                },
+                project_id=self.project["project_id"],
+                store=self.store,
+            )
+            approve_plan(self.app.state.lab_db.connection, plan["id"])
+        status, body = asgi_request(
+            self.app, "POST",
+            self._scoped_path(f"/api/v1/agents/plans/{plan['id']}/execute?isolate_workspace=true"), {},
+        )
+        self.assertEqual(status, 503)
+        rows = self._workspace_snapshots()
+        self.assertEqual(len(rows), 1)
+        from evo_core.runtime_invocation_snapshots import get_runtime_invocation_snapshot
+        record = get_runtime_invocation_snapshot(self.store, rows[0]["invocation_id"])
+        self.assertEqual(record["snapshot"]["invocation_kind"], "plan_execution")
+        self.assertEqual(record["snapshot"]["workspace_id"], self.workspace["workspace_id"])
+        self.assertFalse(record["snapshot"]["dispatch_enabled"])
+        with self.store.lock:
+            table = self.store.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_workspaces'"
+            ).fetchone()
+            if table is not None:
+                count = self.store.db.execute("SELECT COUNT(*) FROM task_workspaces").fetchone()[0]
+                self.assertEqual(count, 0)
         self.assertEqual(get_plan(self.app.state.lab_db.connection, plan["id"])["status"], "approved")
         self.assertEqual(self.store.list_agent_runs(limit=1000), [])
 
@@ -677,3 +745,99 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertEqual(run["status"], "failed")
         self.assertIn("does not match", run["summary"])
         future.set_result(None)
+
+
+    def test_agent_can_opt_into_task_isolated_workspace(self):
+        import subprocess
+        from evo_core.task_workspaces import get_task_workspace_for_task
+
+        def git(*args):
+            result = subprocess.run(
+                ["git", "-C", str(self.directory), *args],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.rstrip("\n")
+
+        git("init", "--initial-branch=main")
+        git("config", "user.name", "Evo Test")
+        git("config", "user.email", "evo-test@example.invalid")
+        (self.directory / "tracked.txt").write_text("source\n", encoding="utf-8")
+        git("add", "tracked.txt")
+        git("commit", "-m", "source revision")
+        source_revision = git("rev-parse", "HEAD")
+
+        submitted = []
+
+        def capture_submit(fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            from concurrent.futures import Future
+            return Future()
+
+        with patch(
+            "evo_core.runtime_binding.RegistryBoundRuntime.require_dispatch_enabled",
+            return_value=None,
+        ), patch.object(self.app.state.chat_executor, "submit", side_effect=capture_submit):
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+                "request": "inspect the isolated checkout",
+                "workspace_id": self.workspace["workspace_id"],
+                "isolate_workspace": True,
+            })
+
+        self.assertEqual(status, 202)
+        self.assertEqual(len(submitted), 1)
+        task_workspace_id = submitted[0][1][2]
+        run = self.store.get_agent_run(body["run_id"])
+        metadata = json.loads(run["metadata_json"])
+        self.assertEqual(metadata["workspace_id"], task_workspace_id)
+        self.assertEqual(body["workspace_id"], task_workspace_id)
+        self.assertEqual(body["task_workspace_operation_id"], metadata["task_workspace_operation_id"])
+        self.assertEqual(body["source_revision"], source_revision)
+        self.assertEqual(metadata["parent_workspace_id"], self.workspace["workspace_id"])
+        self.assertEqual(metadata["task_workspace_source_revision"], source_revision)
+        operation = get_task_workspace_for_task(
+            self.store, self.project["project_id"], metadata["task_id"],
+        )
+        self.assertIsNotNone(operation)
+        self.assertEqual(operation["operation_id"], metadata["task_workspace_operation_id"])
+        self.assertEqual(operation["status"], "completed")
+        task_binding = resolve_executable_workspace(self.store, task_workspace_id)
+        self.assertEqual(str(task_binding["canonical_path"]), metadata["workspace"])
+        self.assertEqual(git("rev-parse", "HEAD"), source_revision)
+        self.assertEqual(git("status", "--porcelain"), "")
+
+
+    def test_isolated_agent_rejects_dirty_parent_before_dispatch(self):
+        import subprocess
+
+        def git(*args):
+            result = subprocess.run(
+                ["git", "-C", str(self.directory), *args],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.rstrip("\n")
+
+        git("init", "--initial-branch=main")
+        git("config", "user.name", "Evo Test")
+        git("config", "user.email", "evo-test@example.invalid")
+        (self.directory / "tracked.txt").write_text("source\n", encoding="utf-8")
+        git("add", "tracked.txt")
+        git("commit", "-m", "source revision")
+        (self.directory / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
+
+        submitted = []
+        with patch(
+            "evo_core.runtime_binding.RegistryBoundRuntime.require_dispatch_enabled",
+            return_value=None,
+        ), patch.object(self.app.state.chat_executor, "submit", side_effect=lambda *a, **k: submitted.append((a, k))):
+            status, body = asgi_request(self.app, "POST", "/api/v1/agents", {
+                "request": "must not run",
+                "workspace_id": self.workspace["workspace_id"],
+                "isolate_workspace": True,
+            })
+
+        self.assertEqual(status, 409)
+        self.assertIn("dirty", body["detail"])
+        self.assertEqual(submitted, [])
+        self.assertEqual(git("status", "--porcelain").count(" M tracked.txt"), 1)
