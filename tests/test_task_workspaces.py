@@ -280,8 +280,8 @@ class TaskWorkspaceTests(unittest.TestCase):
         self._git(task_path, "add", ".gitattributes", "filtered.txt")
         self._git(task_path, "commit", "-m", "add filter fixture")
         (task_path / "filtered.txt").write_text("changed\n")
-        from evo_core.task_workspaces import _git as safe_git
-        safe_git(task_path, "diff", "HEAD")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertIn("filtered.txt", review["patch"])
         self.assertFalse(marker.exists(), "repository clean filter executed during review")
 
     def test_review_binary_detection_uses_actual_nul_byte(self):
