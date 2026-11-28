@@ -326,14 +326,14 @@ class TaskWorkspaceTests(unittest.TestCase):
             self.store, self.workspace["workspace_id"], "task-patch-fidelity", self.destinations
         )
         task_path = Path(result["canonical_path"])
-        filename = "odd\\nname.sh"
+        filename = "odd\nname.sh"
         candidate = task_path / filename
         candidate.write_bytes(b"#!/bin/sh")
         candidate.chmod(0o755)
         review = get_task_workspace_review(self.store, result["operation_id"])
         self.assertIn('new file mode 100755', review["patch"])
-        self.assertIn(r"odd\\nname.sh", review["patch"])
-        self.assertIn(r"\\ No newline at end of file", review["patch"])
+        self.assertIn(r"odd\nname.sh", review["patch"])
+        self.assertIn(r"\ No newline at end of file", review["patch"])
         self.assertNotIn("odd\nname.sh", review["patch"])
 
     def test_review_preserves_whitespace_only_untracked_filename(self):
