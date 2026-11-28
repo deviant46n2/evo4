@@ -575,6 +575,9 @@ def get_task_workspace_operation_status(store, operation_id):
     return operation
 
 
+MAX_FINGERPRINT_DIRECTORY_ENTRIES = 100_000
+
+
 DEFAULT_REVIEW_MAX_FILES = 100
 DEFAULT_REVIEW_MAX_BYTES = 256 * 1024
 
@@ -1076,20 +1079,32 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
     digest = hashlib.sha256()
     files = 0
     total_bytes = 0
+    entries_seen = 0
 
     def add_record(value):
         digest.update(value.encode("utf-8", errors="surrogateescape"))
         digest.update(bytes([0]))
 
     def visit(directory_fd, relative):
-        nonlocal files, total_bytes
+        nonlocal files, total_bytes, entries_seen
         if time.monotonic() > deadline:
             raise TimeoutError("snapshot deadline exceeded")
         before_dir = os.fstat(directory_fd)
         if not stat.S_ISDIR(before_dir.st_mode):
             raise OSError("workspace directory changed type")
+        # Sorting is required for a stable fingerprint, but materializing an
+        # arbitrarily large directory would defeat the snapshot's other budgets.
+        # Bound the aggregate number of directory entries before sorting.
+        entries = []
         with os.scandir(directory_fd) as iterator:
-            entries = sorted(iterator, key=lambda entry: entry.name)
+            for entry in iterator:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("snapshot deadline exceeded")
+                entries_seen += 1
+                if entries_seen > MAX_FINGERPRINT_DIRECTORY_ENTRIES:
+                    raise OverflowError("snapshot directory-entry budget exceeded")
+                entries.append(entry)
+        entries.sort(key=lambda entry: entry.name)
         for entry in entries:
             info = entry.stat(follow_symlinks=False)
             if not relative.parts and entry.name == ".git":

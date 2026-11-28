@@ -431,6 +431,25 @@ class TaskWorkspaceTests(unittest.TestCase):
 
 
 
+    def test_fingerprint_directory_entry_budget_returns_incomplete(self):
+        from unittest.mock import patch
+        from evo_core.task_workspaces import get_task_workspace_fingerprint
+
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"],
+            "fingerprint-entry-budget", self.destinations,
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "first.txt").write_text("one")
+        (task_path / "second.txt").write_text("two")
+
+        with patch("evo_core.task_workspaces.MAX_FINGERPRINT_DIRECTORY_ENTRIES", 2):
+            snapshot = get_task_workspace_fingerprint(self.store, result["operation_id"])
+
+        self.assertFalse(snapshot["complete"])
+        self.assertIsNone(snapshot["fingerprint"])
+        self.assertIn("directory-entry budget", snapshot["reason"])
+
     def test_review_large_untracked_is_truncated_and_unstable(self):
         result = create_task_workspace(
             self.store, self.workspace["workspace_id"], "task-large", self.destinations
