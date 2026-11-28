@@ -409,7 +409,7 @@ def _collect_artifacts(workspace, expected_artifacts, max_bytes=10 * 1024 * 1024
                 os.close(directory_fd)
                 directory_fd = next_fd
             file_fd = os.open(
-                parts[-1], os.O_RDONLY | nofollow_flag,
+                parts[-1], os.O_RDONLY | nofollow_flag | getattr(os, "O_NONBLOCK", 0),
                 dir_fd=directory_fd,
             )
             before = os.fstat(file_fd)

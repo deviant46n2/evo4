@@ -141,10 +141,20 @@ class ManagedExecutionTests(unittest.TestCase):
         self.assertNotIn("sha256", result[0])
 
     def test_resource_support_requires_every_requested_limit(self):
+        import types
         from evo_experiments.execution import _resource_limits_supported
-        with patch("evo_experiments.execution._resource_limits_supported", wraps=_resource_limits_supported):
-            with patch.dict("sys.modules", {"resource": None}):
-                self.assertFalse(_resource_limits_supported({"cpu_seconds": 1}))
+        fake_resource = types.SimpleNamespace(setrlimit=lambda *args: None, RLIMIT_CPU=1)
+        with patch.dict("sys.modules", {"resource": fake_resource}):
+            self.assertTrue(_resource_limits_supported({"cpu_seconds": 1}))
+            self.assertFalse(_resource_limits_supported({"processes": 1}))
+
+    def test_artifact_collection_does_not_block_on_special_files(self):
+        from evo_experiments.execution import _collect_artifacts
+        root = Path(tempfile.mkdtemp())
+        fifo = root / "pipe"
+        os.mkfifo(fifo)
+        result = _collect_artifacts(str(root), ["pipe"])
+        self.assertEqual(result[0]["status"], "unsafe")
 
     def test_duplicate_execution_and_unapproved_command_are_rejected(self):
         job = self.reserve("duplicate")
