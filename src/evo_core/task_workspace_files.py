@@ -227,7 +227,7 @@ def apply_task_workspace_file(
         raise TaskWorkspaceValidationError("file content is not valid UTF-8") from exc
     if not data or len(data) > MAX_READ_BYTES:
         raise TaskWorkspaceValidationError("file content must be between 1 and 1048576 UTF-8 bytes")
-    if b"\\x00" in data:
+    if b"\x00" in data:
         raise TaskWorkspaceValidationError("NUL bytes are not allowed in text files")
     if expected_sha256 is not None and (
         not isinstance(expected_sha256, str)
