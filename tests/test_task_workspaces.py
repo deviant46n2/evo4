@@ -474,6 +474,39 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertTrue(changed_snapshot["complete"])
         self.assertNotEqual(first_snapshot["fingerprint"], changed_snapshot["fingerprint"])
 
+    def test_fingerprint_rejects_directory_replacement_before_traversal(self):
+        import os
+        from unittest.mock import patch
+        from evo_core.task_workspaces import get_task_workspace_fingerprint
+
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"],
+            "fingerprint-directory-race", self.destinations,
+        )
+        task_path = Path(result["canonical_path"])
+        child = task_path / "sub"
+        child.mkdir()
+        (child / "original.txt").write_text("original", encoding="utf-8")
+
+        real_open = os.open
+        replaced = []
+
+        def replace_before_open(path, flags, *args, **kwargs):
+            if path == "sub" and kwargs.get("dir_fd") is not None and flags & os.O_DIRECTORY and not replaced:
+                os.rename(child, task_path / "sub-original")
+                child.mkdir()
+                (child / "replacement.txt").write_text("replacement", encoding="utf-8")
+                replaced.append(True)
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open):
+            snapshot = get_task_workspace_fingerprint(self.store, result["operation_id"])
+
+        self.assertEqual(replaced, [True])
+        self.assertFalse(snapshot["complete"])
+        self.assertIsNone(snapshot["fingerprint"])
+        self.assertIn("directory changed before traversal", snapshot["reason"])
+
     def test_fingerprint_directory_entry_budget_returns_incomplete(self):
         from unittest.mock import patch
         from evo_core.task_workspaces import get_task_workspace_fingerprint

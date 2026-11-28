@@ -1119,6 +1119,12 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
                     dir_fd=directory_fd,
                 )
                 try:
+                    opened_dir = os.fstat(child_fd)
+                    if (
+                        not stat.S_ISDIR(opened_dir.st_mode)
+                        or (opened_dir.st_dev, opened_dir.st_ino) != (info.st_dev, info.st_ino)
+                    ):
+                        raise OSError("workspace directory changed before traversal")
                     visit(child_fd, rel)
                 finally:
                     os.close(child_fd)
