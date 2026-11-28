@@ -88,6 +88,7 @@ class AgentOrchestrationTests(unittest.TestCase):
             "unrecorded_commands": 1,
             "unmatched_checks": 1,
             "passed_checks": 1,
+            "invalid_checks": 0,
             "failed_checks": 1,
             "denied_checks": 1,
             "error_checks": 1,
@@ -108,8 +109,14 @@ class AgentOrchestrationTests(unittest.TestCase):
         }])["command_coverage_state"], "failed")
         self.assertEqual(orchestration.verification_evidence_summary([{
             "verification_commands": [["pytest", "-q"]],
-            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed"}],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed", "exit_code": 0}],
         }])["command_coverage_state"], "passed")
+        invalid_pass = orchestration.verification_evidence_summary([{
+            "verification_commands": [["pytest", "-q"]],
+            "verification_checks": [{"command": ["pytest", "-q"], "status": "passed", "exit_code": 1}],
+        }])
+        self.assertEqual(invalid_pass["invalid_checks"], 1)
+        self.assertEqual(invalid_pass["command_coverage_state"], "failed")
 
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
