@@ -294,12 +294,15 @@ class TaskWorkspaceTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        pgid_file = d / "pgid"
         ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "overflow",
+            "SHIM_PGID_FILE": str(pgid_file),
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_PGID_FILE": str(pgid_file),
             "SHIM_READY_FILE": str(ready_file),
         }
         before_threads = set(threading.enumerate())
@@ -327,12 +330,21 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertLessEqual(metrics.get("captured_bytes", 0), 100)
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
+        self.assertTrue(pgid_file.exists())
         child_pid = int(child_pid_file.read_text())
         parent_pid = int(parent_pid_file.read_text())
+        pgid = int(pgid_file.read_text())
+        def _cleanup():
+            for p in (pgid,):
+                try:
+                    os.killpg(p, 9)
+                except (ProcessLookupError, OSError):
+                    pass
+        self.addCleanup(_cleanup)
         self.assertTrue(self._pid_gone(child_pid))
         self.assertTrue(self._pid_gone(parent_pid))
         try:
-            os.killpg(parent_pid, 0)
+            os.killpg(pgid, 0)
             group_alive = True
         except ProcessLookupError:
             group_alive = False
@@ -355,6 +367,7 @@ class TaskWorkspaceTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        pgid_file = d / "pgid"
         ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
@@ -362,6 +375,7 @@ class TaskWorkspaceTests(unittest.TestCase):
             "SHIM_BYTES": "100",
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_PGID_FILE": str(pgid_file),
             "SHIM_READY_FILE": str(ready_file),
         }
         truncated = []
@@ -388,10 +402,26 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertFalse(truncated)
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
+        self.assertTrue(pgid_file.exists())
         child_pid = int(child_pid_file.read_text())
         parent_pid = int(parent_pid_file.read_text())
+        pgid = int(pgid_file.read_text())
+        def _cleanup():
+            try:
+                os.killpg(pgid, 9)
+            except (ProcessLookupError, OSError):
+                pass
+        self.addCleanup(_cleanup)
         self.assertTrue(self._pid_gone(child_pid))
         self.assertTrue(self._pid_gone(parent_pid))
+        try:
+            os.killpg(pgid, 0)
+            group_alive = True
+        except ProcessLookupError:
+            group_alive = False
+        except OSError:
+            group_alive = False
+        self.assertFalse(group_alive)
 
     def test_review_subprocess_timeout_terminates(self):
         import os, tempfile, time, threading
@@ -405,12 +435,14 @@ class TaskWorkspaceTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
         child_pid_file = d / "child.pid"
         parent_pid_file = d / "parent.pid"
+        pgid_file = d / "pgid"
         ready_file = d / "ready"
         env = {
             "PATH": str(d) + os.pathsep + os.environ.get("PATH", ""),
             "SHIM_MODE": "timeout",
             "SHIM_CHILD_PID_FILE": str(child_pid_file),
             "SHIM_PARENT_PID_FILE": str(parent_pid_file),
+            "SHIM_PGID_FILE": str(pgid_file),
             "SHIM_READY_FILE": str(ready_file),
         }
         before_threads = set(threading.enumerate())
@@ -434,12 +466,20 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertIsInstance(exc_box.get("exc"), TaskWorkspaceProvisioningError)
         self.assertTrue(child_pid_file.exists())
         self.assertTrue(parent_pid_file.exists())
+        self.assertTrue(pgid_file.exists())
         child_pid = int(child_pid_file.read_text())
         parent_pid = int(parent_pid_file.read_text())
+        pgid = int(pgid_file.read_text())
+        def _cleanup():
+            try:
+                os.killpg(pgid, 9)
+            except (ProcessLookupError, OSError):
+                pass
+        self.addCleanup(_cleanup)
         self.assertTrue(self._pid_gone(child_pid))
         self.assertTrue(self._pid_gone(parent_pid))
         try:
-            os.killpg(parent_pid, 0)
+            os.killpg(pgid, 0)
             group_alive = True
         except ProcessLookupError:
             group_alive = False
@@ -464,6 +504,27 @@ class TaskWorkspaceTests(unittest.TestCase):
         truncated = []
         metrics = {}
         out = _git(d, "show", "HEAD:f.txt", max_output_bytes=1000, truncated=truncated, metrics=metrics)
+        self.assertFalse(truncated)
+        self.assertEqual(out, "hello")
+
+
+    def test_normal_git_command_does_not_invoke_group_cleanup(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from evo_core.task_workspaces import _git
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.name", "T"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@e.com"], check=True, capture_output=True)
+        (d / "f.txt").write_text("hello")
+        subprocess.run(["git", "-C", str(d), "add", "f.txt"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "commit", "-m", "i"], check=True, capture_output=True)
+        truncated = []
+        metrics = {}
+        with patch("evo_core.task_workspaces._cleanup_process_group") as cleanup:
+            out = _git(d, "show", "HEAD:f.txt", max_output_bytes=1000, truncated=truncated, metrics=metrics)
+        cleanup.assert_not_called()
         self.assertFalse(truncated)
         self.assertEqual(out, "hello")
 

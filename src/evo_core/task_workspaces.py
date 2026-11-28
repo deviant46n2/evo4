@@ -87,6 +87,41 @@ def _ensure_table(store):
         db.commit()
 
 
+def _cleanup_process_group(proc):
+    """Terminate and reap a process group. Returns None."""
+    if proc is None:
+        return
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            pid = int(entry)
+            with open(f"/proc/{pid}/stat", "r") as handle:
+                stat = handle.read()
+            if ")" not in stat:
+                continue
+            pgrp = int(stat.rsplit(")", 1)[-1].split()[2])
+            if pgrp == proc.pid and pid != os.getpid():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    pass
+        except (OSError, ValueError):
+            continue
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None):
     # Do not inherit repository-selection or index overrides from the Evo
     # server environment; they could redirect Git away from the validated path.
@@ -205,35 +240,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
                 or t2.is_alive()
             )
             if cleanup_needed:
-                for entry in os.listdir("/proc"):
-                    if not entry.isdigit():
-                        continue
-                    try:
-                        pid = int(entry)
-                        with open(f"/proc/{pid}/stat", "r") as handle:
-                            stat = handle.read()
-                        if ")" not in stat:
-                            continue
-                        pgrp = int(stat.rsplit(")", 1)[-1].split()[2])
-                        if pgrp == proc.pid and pid != os.getpid():
-                            try:
-                                os.kill(pid, signal.SIGKILL)
-                            except (OSError, ProcessLookupError):
-                                pass
-                    except (OSError, ValueError):
-                        continue
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    pass
-                try:
-                    proc.kill()
-                except (OSError, ProcessLookupError):
-                    pass
-                try:
-                    proc.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    pass
+                _cleanup_process_group(proc)
                 t1.join(timeout=1)
                 t2.join(timeout=1)
             if t1.is_alive() or t2.is_alive():
