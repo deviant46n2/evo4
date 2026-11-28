@@ -339,6 +339,39 @@ class WorkspaceApiTests(unittest.TestCase):
             status, body = asgi_request(self.app, "POST", f"/api/v1/workspaces/{wid}/archive", {"expected_version": value})
             self.assertEqual(status, 422)
 
+    def test_task_workspace_review_api_error_mapping_is_safe(self):
+        from unittest.mock import patch
+        from evo_core.task_workspaces import TaskWorkspaceProvisioningError
+
+        status, body = asgi_request(
+            self.app, "GET", "/api/v1/task-workspaces/missing/review"
+        )
+        self.assertEqual(status, 404)
+
+        with patch(
+            "evo_core.api.get_task_workspace_review",
+            side_effect=TaskWorkspaceProvisioningError(
+                "private git stderr and /home/user/private/path"
+            ),
+        ):
+            status, body = asgi_request(
+                self.app, "GET", "/api/v1/task-workspaces/failure/review"
+            )
+        self.assertEqual(status, 503)
+        self.assertNotIn("private", str(body))
+        self.assertNotIn("/home/user", str(body))
+
+        with patch(
+            "evo_core.api.get_task_workspace_review",
+            side_effect=RuntimeError("secret internal path /private/data"),
+        ):
+            status, body = asgi_request(
+                self.app, "GET", "/api/v1/task-workspaces/unexpected/review"
+            )
+        self.assertEqual(status, 500)
+        self.assertNotIn("secret", str(body))
+        self.assertNotIn("/private/data", str(body))
+
 
 def make_configuration(store):
     from evo_core.ai_configurations import create_configuration
