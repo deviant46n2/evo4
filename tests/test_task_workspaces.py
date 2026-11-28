@@ -261,6 +261,51 @@ class TaskWorkspaceTests(unittest.TestCase):
         safe_git(task_path, "diff", "HEAD")
         self.assertFalse(marker.exists(), "repository clean filter executed during review")
 
+    def test_review_binary_detection_uses_actual_nul_byte(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-binary-nul", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "binary-nul.dat").write_bytes(b"header\\x00payload")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        unreadable = {item["path"]: item["reason"] for item in review["unreadable_files"]}
+        self.assertEqual(unreadable.get("binary-nul.dat"), "binary")
+        self.assertNotIn("payload", review["patch"])
+
+    def test_review_metadata_limit_includes_excluded_files(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-metadata-limit", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / ".env").write_text("secret one")
+        (task_path / ".env.local").write_text("secret two")
+        review = get_task_workspace_review(self.store, result["operation_id"], max_files=1)
+        self.assertLessEqual(
+            len(review["changed_files"]) + len(review["excluded_files"]) +
+            len(review["unreadable_files"]), 1,
+        )
+        self.assertGreaterEqual(review["excluded_files_omitted"], 1)
+        self.assertTrue(review["truncated"])
+
+    def test_review_preserves_whitespace_only_untracked_filename(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-whitespace-name", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        filename = "   "
+        (task_path / filename).write_text("valid filename\\n")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertIn(filename, {item["path"] for item in review["changed_files"]})
+        self.assertTrue(review["stable"])
+
+    def test_untracked_signature_stops_at_aggregate_byte_budget(self):
+        from evo_core.task_workspaces import _untracked_signature
+        candidate = self.root / "signature-budget.txt"
+        candidate.write_bytes(b"12345")
+        result = _untracked_signature(self.root, [candidate.name], max_total_bytes=4)
+        self.assertEqual(result[0][0], candidate.name)
+        self.assertEqual(result[0][1], "over_budget")
+
     def test_review_rejects_incomplete_operation(self):
         with self.assertRaises(Exception):
             get_task_workspace_review(self.store, "missing-operation")
