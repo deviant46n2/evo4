@@ -180,8 +180,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                 except OSError:
                     pass
 
-            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks), daemon=True)
-            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks), daemon=True)
+            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks), daemon=True, name="task-workspace-review-stdout")
+            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks), daemon=True, name="task-workspace-review-stderr")
             t1.start()
             t2.start()
             try:
