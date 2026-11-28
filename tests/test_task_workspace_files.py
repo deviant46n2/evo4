@@ -98,9 +98,13 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                 replaced["done"] = True
             return real_open(path, flags, *args, **kwargs)
 
-        with patch("evo_core.task_workspace_files.os.open", side_effect=replace_before_open):
-            with self.assertRaises(ValueError):
-                list_task_workspace_files(self.store, self.operation["operation_id"])
+        with patch("evo_core.task_workspace_files.os.open", side_effect=replace_before_open) as patched_open:
+            # os.supports_dir_fd records the original built-in function. Include
+            # the wrapper so the capability guard still exercises the race seam.
+            with patch("evo_core.task_workspace_files.os.supports_dir_fd",
+                       set(os.supports_dir_fd) | {patched_open}):
+                with self.assertRaises(ValueError):
+                    list_task_workspace_files(self.store, self.operation["operation_id"])
         self.assertTrue(replaced["done"])
 
     def test_file_read_rejects_root_replacement_between_stat_and_open(self):
@@ -123,9 +127,13 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                 replaced["done"] = True
             return real_open(path, flags, *args, **kwargs)
 
-        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open):
-            with self.assertRaises(ValueError):
-                read_task_workspace_file(self.store, self.operation["operation_id"], "secret.txt")
+        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open) as patched_open:
+            # Preserve the descriptor-relative capability check while wrapping
+            # os.open to inject the root replacement race.
+            with patch("evo_core.task_workspaces.os.supports_dir_fd",
+                       set(os.supports_dir_fd) | {patched_open}):
+                with self.assertRaises(ValueError):
+                    read_task_workspace_file(self.store, self.operation["operation_id"], "secret.txt")
         self.assertTrue(replaced["done"])
 
     def test_directory_symlinks_are_not_traversed(self):
