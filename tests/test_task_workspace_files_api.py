@@ -321,6 +321,13 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                         }},
                     }]},
                     {"content": "", "tool_calls": [{
+                        "id": "test-write-1", "type": "function",
+                        "function": {"name": "write_file", "arguments": {
+                            "path": "test_generated.py",
+                            "content": "import unittest\\nfrom generated import VALUE\\n\\nclass GeneratedValueTests(unittest.TestCase):\\n    def test_generated_value(self):\\n        self.assertEqual(VALUE, 42)\\n",
+                        }},
+                    }]},
+                    {"content": "", "tool_calls": [{
                         "id": "check-1", "type": "function",
                         "function": {"name": "run_command", "arguments": {
                             "argv": ["python", "-m", "unittest"],
@@ -357,7 +364,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                 workspace_id=operation["task_workspace_id"],
             )
             result = agent.run(
-                conversation_id, "Create generated.py and run the unit tests.",
+                conversation_id, "Create generated.py, add a unit test, and run the unit tests.",
                 lambda name, args: True,
                 run_id=run_id,
                 project_id=operation["project_id"],
@@ -379,7 +386,8 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(review["status"], "ok")
         self.assertIn("generated.py", {item["path"] for item in review["changed_files"]})
-        self.assertEqual(review["file_change_summary"]["applied"], 1)
+        self.assertIn("test_generated.py", {item["path"] for item in review["changed_files"]})
+        self.assertEqual(review["file_change_summary"]["applied"], 2)
         evidence = [item for item in review["execution_evidence"] if item["run_id"] == run_id]
         self.assertEqual(len(evidence), 1)
         executions = evidence[0]["managed_executions"]
