@@ -334,6 +334,7 @@ def apply_task_workspace_file(
     temp_fd = None
     original_signature = None
     before_sha256 = None
+    filesystem_mutated = False
     mode = 0o644
     try:
         try:
@@ -424,6 +425,7 @@ def apply_task_workspace_file(
                 temp_name, basename, src_dir_fd=directory_fd,
                 dst_dir_fd=directory_fd, follow_symlinks=False,
             )
+            filesystem_mutated = True
             os.unlink(temp_name, dir_fd=directory_fd)
         else:
             if current is None or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
@@ -439,6 +441,7 @@ def apply_task_workspace_file(
                 temp_name, basename, src_dir_fd=directory_fd,
                 dst_dir_fd=directory_fd,
             )
+            filesystem_mutated = True
         os.fsync(directory_fd)
         with store.lock:
             store.db.execute(
@@ -448,7 +451,7 @@ def apply_task_workspace_file(
             )
             store.db.commit()
     except TaskWorkspaceValidationError:
-        if "change_id" in locals():
+        if "change_id" in locals() and not filesystem_mutated:
             with store.lock:
                 store.db.execute(
                     "UPDATE task_workspace_file_changes SET status='failed', "
