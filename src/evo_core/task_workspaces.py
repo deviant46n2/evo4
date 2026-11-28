@@ -150,7 +150,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             stderr_chunks = []
             total = [0]
             budget_lock = threading.Lock()
-            exceeded = {"value": False}
+            output_exceeded = {"value": False}
+            timed_out = {"value": False}
 
             def _reader(stream, chunks):
                 while True:
@@ -163,7 +164,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                             if keep > 0:
                                 chunks.append(chunk[:keep])
                                 total[0] += keep
-                            exceeded["value"] = True
+                            output_exceeded["value"] = True
                             try:
                                 os.killpg(proc.pid, signal.SIGKILL)
                             except (OSError, ProcessLookupError):
@@ -190,7 +191,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
                     os.killpg(proc.pid, signal.SIGKILL)
                 except (OSError, ProcessLookupError):
                     proc.kill()
-                exceeded["value"] = True
+                timed_out["value"] = True
             t1.join(timeout=timeout + 1)
             t2.join(timeout=timeout + 1)
             if t1.is_alive() or t2.is_alive():
@@ -216,7 +217,9 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
             stdout = "".join(stdout_chunks)
             stderr = "".join(stderr_chunks)
             returncode = proc.returncode
-            was_truncated = exceeded["value"]
+            was_truncated = output_exceeded["value"]
+            if timed_out["value"]:
+                raise TaskWorkspaceProvisioningError("git operation timed out")
         if truncated is not None and was_truncated:
             truncated.append(True)
     except (OSError, subprocess.TimeoutExpired) as exc:

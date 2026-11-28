@@ -228,6 +228,7 @@ class TaskWorkspaceTests(unittest.TestCase):
             get_task_workspace_review(self.store, "missing-operation")
 
 
+
     def test_review_large_untracked_is_truncated_and_unstable(self):
         result = create_task_workspace(
             self.store, self.workspace["workspace_id"], "task-large", self.destinations
@@ -239,60 +240,20 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertFalse(review["stable"])
         self.assertEqual(review["truncation_reason"], "output_limit")
 
-    def _fake_proc_factory(self, stdout_text, stderr_text, child=False):
-        import subprocess, os, signal, sys
-
-        class FakeProc:
-            def __init__(self):
-                self.proc = subprocess.Popen(
-                    [sys.executable, "-c",
-                     "import sys,time,subprocess,os; "
-                     "c=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
-                     "stdout=sys.stdout, stderr=sys.stderr); "
-                     f"sys.stdout.write({stdout_text!r}); sys.stderr.write({stderr_text!r}); "
-                     "sys.stdout.flush(); sys.stderr.flush(); time.sleep(60)"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    start_new_session=True,
-                )
-                self.pid = self.proc.pid
-                self.stdout = self.proc.stdout
-                self.stderr = self.proc.stderr
-                self.returncode = None
-                self._killed = False
-                self.args = ["git"]
-
-            def kill(self):
-                self._killed = True
-                try:
-                    os.killpg(self.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    self.proc.kill()
-
-            def wait(self, timeout=None):
-                try:
-                    self.proc.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    raise
-                self.returncode = self.proc.returncode
-                return self.returncode
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                if self.proc.poll() is None:
-                    self.kill()
-                return False
-
-            def communicate(self, input=None, timeout=None):
-                out, err = self.proc.communicate(timeout=timeout)
-                self.returncode = self.proc.returncode
-                return out, err
-
-            def poll(self):
-                return self.proc.poll()
-
-        return FakeProc
+    def test_review_output_overflow_is_truncated(self):
+        import tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "-C", str(d), "init", "--initial-branch=main"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.name", "T"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(d), "config", "user.email", "t@e.com"], check=True, capture_output=True)
+        (d / "big.txt").write_text("x" * 100000)
+        subprocess.run(["git", "-C", str(d), "add", "big.txt"], check=True, capture_output=True)
+        from evo_core.task_workspaces import _git
+        truncated = []
+        out = _git(d, "diff", "--cached", max_output_bytes=100, truncated=truncated)
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(out), 100)
 
 if __name__ == "__main__":
     unittest.main()
