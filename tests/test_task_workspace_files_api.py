@@ -348,6 +348,10 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                         "id": "check-1", "type": "function",
                         "function": {"name": "run_command", "arguments": {
                             "argv": ["python", "-m", "unittest"],
+                            "execution_contract": {
+                                "expected_artifacts": ["generated.py"],
+                                "output_limit_bytes": 4096,
+                            },
                         }},
                     }]},
                     {"content": "Implemented the isolated change and ran its check.",
@@ -380,9 +384,13 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
                 project_id=operation["project_id"],
                 workspace_id=operation["task_workspace_id"],
             )
+            approvals = []
+            def approve(name, args):
+                approvals.append((name, args))
+                return True
             result = agent.run(
                 conversation_id, "Create generated.py, add a unit test, and run the unit tests.",
-                lambda name, args: True,
+                approve,
                 run_id=run_id,
                 project_id=operation["project_id"],
                 workspace_id=operation["task_workspace_id"],
@@ -411,6 +419,17 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["argv"], ["python", "-m", "unittest"])
         self.assertEqual(executions[0]["returncode"], 0)
+        self.assertEqual(approvals[0][0], "run_command")
+        self.assertEqual(
+            executions[0]["execution_specification_sha256"],
+            approvals[0][1]["execution_specification_sha256"],
+        )
+        self.assertEqual(executions[0]["artifacts"][0]["path"], "generated.py")
+        self.assertEqual(executions[0]["artifacts"][0]["status"], "collected")
+        self.assertEqual(
+            executions[0]["artifacts"][0]["sha256"],
+            __import__("hashlib").sha256(b"VALUE = 42\\n").hexdigest(),
+        )
 
 
 if __name__ == "__main__":
