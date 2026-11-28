@@ -699,11 +699,21 @@ class ExecutionRecoveryTests(unittest.TestCase):
                 return proc
             raise RuntimeError("command popen failed")
 
-        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen):
+        import evo_experiments.execution as E
+        original_cleanup = E._cleanup_keeper
+        cleanup_calls = {"n": 0}
+
+        def counting_cleanup(*args, **kwargs):
+            cleanup_calls["n"] += 1
+            return original_cleanup(*args, **kwargs)
+
+        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen), \
+             patch("evo_experiments.execution._cleanup_keeper", side_effect=counting_cleanup):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIn("command popen failed", result["error"])
+        self.assertEqual(cleanup_calls["n"], 1)
         # keeper should be reaped
         if keeper_pid["value"] is not None:
             for _ in range(20):
@@ -1174,6 +1184,27 @@ class ExecutionRecoveryTests(unittest.TestCase):
             err = _bounded_group_cleanup(fake)
         killpg.assert_not_called()
         self.assertEqual(err, "process group ownership not established")
+
+
+    def test_command_popen_failure_reports_keeper_cleanup_failure(self):
+        job = self.reserve("popen-fail-cleanup")
+        record = self.register(job)
+        original_popen = __import__("evo_experiments.execution", fromlist=["subprocess"]).subprocess.Popen
+        calls = {"n": 0}
+
+        def failing_popen(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return original_popen(*args, **kwargs)
+            raise RuntimeError("command popen failed")
+
+        with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen), \
+             patch("evo_experiments.execution._cleanup_keeper", return_value="keeper cleanup failed"):
+            run_execution(self.db, self.lock, record["id"])
+        result = get_execution(self.db, record["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("command popen failed", result["error"])
+        self.assertIn("keeper cleanup failed", result["error"])
 
 if __name__ == "__main__":
     unittest.main()

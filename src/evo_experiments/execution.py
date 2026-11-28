@@ -865,6 +865,7 @@ def run_execution(connection, lock, execution_id):
                 pass
         elif keeper is not None:
             cleanup_error = _cleanup_keeper(keeper=keeper)
+            keeper = None
         elapsed = round(time.monotonic() - begin, 3)
         error_text = f"{type(exc).__name__}: {exc}"[:2000]
         if cleanup_error:
