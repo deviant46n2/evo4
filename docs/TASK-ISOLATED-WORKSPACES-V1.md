@@ -70,3 +70,6 @@ The test suite covers clean creation, detached revision pinning, source
 preservation, dirty and untracked source rejection, invalid revisions,
 duplicate task identity, and unsafe destination placement. Local test/build
 evidence is required before acceptance.
+## Review and execution evidence
+
+The read-only review endpoint also returns matching agent execution evidence. A run is associated with an operation only when its persisted task-workspace operation ID, project ID, task workspace ID, and pinned source revision agree with the operation record. For orchestrated plans, the plan must additionally point to that same run and workspace. Verification checks include their managed execution ID when one exists, so the operator can follow the evidence into the execution history. Missing or mismatched provenance is omitted rather than guessed. Verification success remains evidence about the configured command only; it is not a general correctness guarantee.
