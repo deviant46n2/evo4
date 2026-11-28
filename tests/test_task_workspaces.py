@@ -232,6 +232,9 @@ class TaskWorkspaceTests(unittest.TestCase):
         paths = {item["path"] for item in review["changed_files"]}
         self.assertIn("tracked.txt", paths)
         self.assertIn("new.txt", paths)
+        statuses = {item["path"]: item["status"] for item in review["changed_files"]}
+        self.assertEqual(statuses["new.txt"], "A")
+        self.assertEqual(statuses["tracked.txt"], "M")
         self.assertIn("tracked.txt", review["patch"])
         self.assertIn("new.txt", review["patch"])
 
