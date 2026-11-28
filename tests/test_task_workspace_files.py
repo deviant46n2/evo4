@@ -7,7 +7,10 @@ from evo_core.ai_configurations import create_configuration
 from evo_core.platform_registry import initialize_platform_registry
 from evo_core.project_checkouts import register_checkout, register_project
 from evo_core.store import EvoStore
-from evo_core.task_workspaces import create_task_workspace, _record, get_task_workspace_operation
+from evo_core.task_workspaces import (
+    create_task_workspace, _record, get_task_workspace_operation,
+    get_task_workspace_review,
+)
 from evo_core.task_workspace_files import (
     list_task_workspace_files, read_task_workspace_file,
     apply_task_workspace_file, list_task_workspace_file_changes,
@@ -434,6 +437,34 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         )
         self.assertEqual(opened["content"], "")
         self.assertEqual(opened["sha256"], result["after_sha256"])
+
+    def test_review_artifact_includes_bounded_approved_file_change_history(self):
+        applied = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "reviewed.py",
+            "print('reviewed')\\n", approved=True,
+        )
+
+        review = get_task_workspace_review(self.store, self.operation["operation_id"])
+
+        self.assertEqual(review["file_change_summary"], {
+            "total": 1,
+            "applied": 1,
+            "pending": 0,
+            "failed": 0,
+            "indeterminate": 0,
+            "truncated": False,
+            "limit": 500,
+        })
+        self.assertEqual(len(review["file_change_history"]), 1)
+        change = review["file_change_history"][0]
+        self.assertEqual(change["change_id"], applied["change_id"])
+        self.assertEqual(change["operation_id"], self.operation["operation_id"])
+        self.assertEqual(change["path"], "reviewed.py")
+        self.assertIsNone(change["before_sha256"])
+        self.assertEqual(change["after_sha256"], applied["after_sha256"])
+        self.assertEqual(change["status"], "applied")
+        self.assertIn({"status": "A", "path": "reviewed.py"}, review["changed_files"])
+
 
 if __name__ == "__main__":
     unittest.main()
