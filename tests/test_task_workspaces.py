@@ -431,6 +431,49 @@ class TaskWorkspaceTests(unittest.TestCase):
 
 
 
+    def test_fingerprint_is_stable_across_creation_order_and_tracks_content(self):
+        from evo_core.task_workspaces import get_task_workspace_fingerprint
+
+        first = create_task_workspace(
+            self.store, self.workspace["workspace_id"],
+            "fingerprint-order-a", self.destinations,
+        )
+        second = create_task_workspace(
+            self.store, self.workspace["workspace_id"],
+            "fingerprint-order-b", self.destinations,
+        )
+        first_root = Path(first["canonical_path"])
+        second_root = Path(second["canonical_path"])
+
+        for relative, content in (
+            ("zeta/end.txt", "end"),
+            ("alpha/start.txt", "start"),
+            ("middle.txt", "middle"),
+        ):
+            target = first_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        for relative, content in (
+            ("middle.txt", "middle"),
+            ("alpha/start.txt", "start"),
+            ("zeta/end.txt", "end"),
+        ):
+            target = second_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        first_snapshot = get_task_workspace_fingerprint(self.store, first["operation_id"])
+        second_snapshot = get_task_workspace_fingerprint(self.store, second["operation_id"])
+        self.assertTrue(first_snapshot["complete"])
+        self.assertTrue(second_snapshot["complete"])
+        self.assertEqual(first_snapshot["fingerprint"], second_snapshot["fingerprint"])
+
+        (second_root / "middle.txt").write_text("changed", encoding="utf-8")
+        changed_snapshot = get_task_workspace_fingerprint(self.store, second["operation_id"])
+        self.assertTrue(changed_snapshot["complete"])
+        self.assertNotEqual(first_snapshot["fingerprint"], changed_snapshot["fingerprint"])
+
     def test_fingerprint_directory_entry_budget_returns_incomplete(self):
         from unittest.mock import patch
         from evo_core.task_workspaces import get_task_workspace_fingerprint
