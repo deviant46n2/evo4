@@ -863,6 +863,8 @@ def run_execution(connection, lock, execution_id):
                 process.wait(timeout=3)
             except Exception:
                 pass
+        elif keeper is not None:
+            cleanup_error = _cleanup_keeper(keeper=keeper)
         elapsed = round(time.monotonic() - begin, 3)
         error_text = f"{type(exc).__name__}: {exc}"[:2000]
         if cleanup_error:
@@ -891,6 +893,8 @@ def run_execution(connection, lock, execution_id):
     finally:
         if process is not None:
             _bounded_group_cleanup(process, send_sigterm=True, grace_seconds=1.0)
+        elif keeper is not None:
+            _cleanup_keeper(keeper=keeper)
 
 
 

@@ -684,21 +684,40 @@ class ExecutionRecoveryTests(unittest.TestCase):
         self.assertEqual(err, "process group ownership not established")
 
     def test_command_popen_failure_after_keeper_cleans_keeper(self):
+        import time
         job = self.reserve("popen-fail")
         record = self.register(job)
         original_popen = __import__("evo_experiments.execution", fromlist=["subprocess"]).subprocess.Popen
         calls = {"n": 0}
+        keeper_pid = {"value": None}
 
         def failing_popen(*args, **kwargs):
             calls["n"] += 1
-            if calls["n"] == 2:
-                raise RuntimeError("command popen failed")
-            return original_popen(*args, **kwargs)
+            if calls["n"] == 1:
+                proc = original_popen(*args, **kwargs)
+                keeper_pid["value"] = proc.pid
+                return proc
+            raise RuntimeError("command popen failed")
 
         with patch("evo_experiments.execution.subprocess.Popen", side_effect=failing_popen):
             run_execution(self.db, self.lock, record["id"])
         result = get_execution(self.db, record["id"])
         self.assertEqual(result["status"], "failed")
+        self.assertIn("command popen failed", result["error"])
+        # keeper should be reaped
+        if keeper_pid["value"] is not None:
+            for _ in range(20):
+                try:
+                    os.kill(keeper_pid["value"], 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            try:
+                os.kill(keeper_pid["value"], 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            self.assertFalse(alive)
 
     def test_persistence_failure_cleans_owned_group(self):
         job = self.reserve("persist-fail")
