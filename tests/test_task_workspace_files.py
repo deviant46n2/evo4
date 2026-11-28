@@ -127,10 +127,10 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
                 replaced["done"] = True
             return real_open(path, flags, *args, **kwargs)
 
-        with patch("evo_core.task_workspaces.os.open", side_effect=replace_before_open) as patched_open:
+        with patch("evo_core.task_workspace_files.os.open", side_effect=replace_before_open) as patched_open:
             # Preserve the descriptor-relative capability check while wrapping
             # os.open to inject the root replacement race.
-            with patch("evo_core.task_workspaces.os.supports_dir_fd",
+            with patch("evo_core.task_workspace_files.os.supports_dir_fd",
                        set(os.supports_dir_fd) | {patched_open}):
                 with self.assertRaises(ValueError):
                     read_task_workspace_file(self.store, self.operation["operation_id"], "secret.txt")
