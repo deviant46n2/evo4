@@ -1257,6 +1257,7 @@ def create_app(config_path="config.toml", provider_name=None):
             response.update({
                 "workspace_id": workspace_id,
                 "task_workspace_operation_id": task_workspace_info["operation_id"],
+                "source_revision": task_workspace_info["source_revision"],
             })
         return response
 
@@ -1315,6 +1316,7 @@ def create_app(config_path="config.toml", provider_name=None):
             response.update({
                 "workspace_id": workspace_id,
                 "task_workspace_operation_id": task_workspace_info["operation_id"],
+                "source_revision": task_workspace_info["source_revision"],
             })
         return response
 

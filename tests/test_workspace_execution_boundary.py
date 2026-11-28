@@ -724,6 +724,7 @@ class WorkspaceExecutionApiTests(unittest.TestCase):
         self.assertEqual(metadata["workspace_id"], task_workspace_id)
         self.assertEqual(body["workspace_id"], task_workspace_id)
         self.assertEqual(body["task_workspace_operation_id"], metadata["task_workspace_operation_id"])
+        self.assertEqual(body["source_revision"], source_revision)
         self.assertEqual(metadata["parent_workspace_id"], self.workspace["workspace_id"])
         self.assertEqual(metadata["task_workspace_source_revision"], source_revision)
         operation = get_task_workspace_for_task(
