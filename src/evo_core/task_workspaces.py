@@ -599,18 +599,25 @@ def _stat_signature(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_mode, info.st_nlink)
 
 
-def _untracked_signature(root, paths):
+def _untracked_signature(root, paths, max_total_bytes=64 * 1024 * 1024):
     import hashlib
     result = []
+    consumed = 0
     for path in paths:
         try:
             fd, before = _open_regular_file_at(root, path)
+            if before.st_size > max_total_bytes - consumed:
+                os.close(fd)
+                result.append((path, "over_budget", _stat_signature(before)))
+                consumed = max_total_bytes
+                continue
             digest = hashlib.sha256()
             try:
                 while True:
                     chunk = os.read(fd, 65536)
                     if not chunk:
                         break
+                    consumed += len(chunk)
                     digest.update(chunk)
                 after = os.fstat(fd)
             finally:
@@ -910,13 +917,15 @@ def get_task_workspace_review(
         and diff_before == diff_after
         and untracked_before == untracked_after
         and untracked_before_sig == untracked_after_sig
+        and all(len(item) >= 3 and item[1] not in (None, "unstable", "over_budget")
+                for item in untracked_before_sig + untracked_after_sig)
     )
     if not snapshot_stable:
         unstable = True
         if truncation_reason is None:
             truncation_reason = "snapshot_unstable"
 
-    return {
+    response = {
         "operation_id": operation["operation_id"],
         "status": "ok",
         "stable": snapshot_stable,
@@ -937,6 +946,12 @@ def get_task_workspace_review(
         "max_files": max_files,
         "max_bytes": max_bytes,
     }
+    import json
+    serialized_size = len(json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
+    if serialized_size > max_bytes + 4 * 1024 * 1024:
+        raise TaskWorkspaceProvisioningError("review response exceeded its serialized size budget")
+    return response
+
 
 
 def get_task_workspace_for_task(store, project_id, task_id):
