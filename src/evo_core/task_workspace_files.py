@@ -423,44 +423,51 @@ def apply_task_workspace_file(
         os.close(temp_fd)
         temp_fd = None
 
-        # Recheck the destination immediately before the atomic directory-entry
-        # operation. Creation uses link(2), which cannot replace an existing name.
-        try:
-            current = os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            current = None
-        if before is None:
-            if current is not None:
-                raise TaskWorkspaceValidationError("file appeared during apply; reload before applying")
-            os.link(
-                temp_name, basename, src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd, follow_symlinks=False,
-            )
-            filesystem_mutated = True
-            os.unlink(temp_name, dir_fd=directory_fd)
-        else:
-            if current is None or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-                raise TaskWorkspaceValidationError("target changed during apply; reload before applying")
-            current_signature = (
-                current.st_dev, current.st_ino, current.st_size,
-                current.st_mtime_ns, current.st_ctime_ns, current.st_mode,
-                current.st_nlink,
-            )
-            if current_signature != original_signature:
-                raise TaskWorkspaceValidationError("target changed during apply; reload before applying")
-            os.replace(
-                temp_name, basename, src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-            )
-            filesystem_mutated = True
-        os.fsync(directory_fd)
+        # Serialize the final compare-and-swap across processes using SQLite's
+        # write lock. The pending intent was committed before filesystem mutation.
         with store.lock:
-            store.db.execute(
-                "UPDATE task_workspace_file_changes SET status='applied', finalized_at=? "
-                "WHERE change_id=? AND status='pending'",
-                (utc_now(), change_id),
-            )
-            store.db.commit()
+            store.db.execute("BEGIN IMMEDIATE")
+            try:
+                # Recheck the destination immediately before the atomic directory
+                # entry operation. Creation uses link(2), which cannot replace a name.
+                try:
+                    current = os.stat(basename, dir_fd=directory_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    current = None
+                if before is None:
+                    if current is not None:
+                        raise TaskWorkspaceValidationError("file appeared during apply; reload before applying")
+                    os.link(
+                        temp_name, basename, src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd, follow_symlinks=False,
+                    )
+                    filesystem_mutated = True
+                    os.unlink(temp_name, dir_fd=directory_fd)
+                else:
+                    if current is None or not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
+                        raise TaskWorkspaceValidationError("target changed during apply; reload before applying")
+                    current_signature = (
+                        current.st_dev, current.st_ino, current.st_size,
+                        current.st_mtime_ns, current.st_ctime_ns, current.st_mode,
+                        current.st_nlink,
+                    )
+                    if current_signature != original_signature:
+                        raise TaskWorkspaceValidationError("target changed during apply; reload before applying")
+                    os.replace(
+                        temp_name, basename, src_dir_fd=directory_fd,
+                        dst_dir_fd=directory_fd,
+                    )
+                    filesystem_mutated = True
+                os.fsync(directory_fd)
+                store.db.execute(
+                    "UPDATE task_workspace_file_changes SET status='applied', finalized_at=? "
+                    "WHERE change_id=? AND status='pending'",
+                    (utc_now(), change_id),
+                )
+                store.db.commit()
+            except BaseException:
+                store.db.rollback()
+                raise
     except TaskWorkspaceValidationError:
         if "change_id" in locals() and not filesystem_mutated:
             with store.lock:
