@@ -286,7 +286,7 @@ def create_app(config_path="config.toml", provider_name=None):
             raise HTTPException(
                 status_code=503,
                 detail={
-                    "message": str(exc),
+                    "message": "Task workspace provisioning requires recovery",
                     "operation_id": exc.operation_id,
                     "status": exc.status,
                 },
