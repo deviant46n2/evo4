@@ -49,6 +49,8 @@ Cancellation is cooperative at provider/tool safe boundaries and between steps. 
 
 Plan-level verification summaries preserve five distinct step outcomes: passed, failed, not run, not configured, and not required. A plan is reported as passed only when every step passes; any failed step makes the aggregate failed. Missing checks remain not run. Plans whose steps are all not required or all not configured retain those states. Mixed non-failing outcomes are reported as incomplete rather than being collapsed into not run or success.
 
+Command-level review summaries also report configured versus recorded checks, missing configured commands, unmatched records, result counts (passed, failed, denied, errored, and timed out), and workspace snapshot counts (stable, changed/incomplete, and unavailable). These counts preserve multiplicity when a plan configures the same argv more than once. A recorded check is not silently treated as covering a different configured command, and command success remains distinct from workspace snapshot stability.
+
 ## Important limitations
 
 - Step completion currently means the coding-agent loop returned a completed result for that step. The verification instruction is included in the step prompt and stored for audit, but the instruction text itself is **not** an independent verification oracle. When a step defines explicit `verification_commands`, the worker separately executes each command through the existing approval callback and records its result; denied, failed, or unrun commands prevent the step from completing. These command results provide deterministic evidence for the checks they directly exercise, but do not prove overall correctness or replace independent review.
