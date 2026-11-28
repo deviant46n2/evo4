@@ -277,7 +277,7 @@ class TaskWorkspaceTests(unittest.TestCase):
             self.store, self.workspace["workspace_id"], "task-invalid-utf8", self.destinations
         )
         task_path = Path(result["canonical_path"])
-        (task_path / "invalid-utf8.dat").write_bytes(b"valid-prefix\\xffinvalid")
+        (task_path / "invalid-utf8.dat").write_bytes(b"valid-prefix\xffinvalid")
         review = get_task_workspace_review(self.store, result["operation_id"])
         unreadable = {item["path"]: item["reason"] for item in review["unreadable_files"]}
         self.assertEqual(unreadable.get("invalid-utf8.dat"), "invalid_utf8")
