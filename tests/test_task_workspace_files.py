@@ -10,6 +10,7 @@ from evo_core.store import EvoStore
 from evo_core.task_workspaces import create_task_workspace, _record, get_task_workspace_operation
 from evo_core.task_workspace_files import (
     list_task_workspace_files, read_task_workspace_file,
+    apply_task_workspace_file, list_task_workspace_file_changes,
 )
 from evo_core.workspaces import create_workspace
 
@@ -149,6 +150,60 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", max_bytes=0)
 
+
+
+    def test_approved_apply_creates_file_and_records_audit(self):
+        (self.task_root / "src").mkdir()
+        result = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "src/new.py",
+            "print('created')\\n", approved=True,
+        )
+        self.assertEqual((self.task_root / "src" / "new.py").read_text(), "print('created')\\n")
+        self.assertIsNone(result["before_sha256"])
+        history = list_task_workspace_file_changes(self.store, self.operation["operation_id"])
+        self.assertEqual(history["items"][0]["change_id"], result["change_id"])
+
+    def test_apply_requires_approval_and_expected_hash_for_replacement(self):
+        import hashlib
+        target = self.task_root / "README.txt"
+        original = target.read_bytes()
+        digest = hashlib.sha256(original).hexdigest()
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", "unapproved", expected_sha256=digest)
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", "stale", expected_sha256="0" * 64, approved=True)
+        self.assertEqual(target.read_bytes(), original)
+        result = apply_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", "approved update\\n", expected_sha256=digest, approved=True)
+        self.assertEqual(target.read_text(), "approved update\\n")
+        self.assertEqual(result["before_sha256"], digest)
+
+    def test_apply_does_not_replace_existing_file_without_expected_hash(self):
+        target = self.task_root / "README.txt"
+        original = target.read_bytes()
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", "replacement", approved=True)
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_apply_rejects_symlinks_hardlinks_and_excluded_paths(self):
+        import hashlib
+        import os
+        outside = self.root / "outside.txt"
+        outside.write_text("outside")
+        (self.task_root / "linked.txt").symlink_to(outside)
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "linked.txt", "nope", approved=True)
+        hard = self.task_root / "hard.txt"
+        os.link(outside, hard)
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "hard.txt", "nope", expected_sha256=hashlib.sha256(b"outside").hexdigest(), approved=True)
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], ".git/config", "nope", approved=True)
+
+    def test_apply_rejects_oversized_and_binary_content(self):
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "large.txt", "x" * (1024 * 1024 + 1), approved=True)
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(self.store, self.operation["operation_id"], "binary.txt", "a\\x00b", approved=True)
 
 if __name__ == "__main__":
     unittest.main()
