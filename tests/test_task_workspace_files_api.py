@@ -428,7 +428,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(executions[0]["artifacts"][0]["status"], "collected")
         self.assertEqual(
             executions[0]["artifacts"][0]["sha256"],
-            __import__("hashlib").sha256(b"VALUE = 42\\n").hexdigest(),
+            __import__("hashlib").sha256(b"VALUE = 42\n").hexdigest(),
         )
 
 
