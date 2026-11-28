@@ -689,20 +689,26 @@ def get_task_workspace_review(
     unreadable_omitted = 0
 
     def record_excluded(path):
-        nonlocal metadata_count, excluded_omitted
+        nonlocal metadata_count, excluded_omitted, truncated, truncation_reason
         if metadata_count < max_files:
             excluded.append(path)
             metadata_count += 1
         else:
             excluded_omitted += 1
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "file_limit"
 
     def record_unreadable(path, reason):
-        nonlocal metadata_count, unreadable_omitted
+        nonlocal metadata_count, unreadable_omitted, truncated, truncation_reason
         if metadata_count < max_files:
             unreadable.append({"path": path, "reason": reason})
             metadata_count += 1
         else:
             unreadable_omitted += 1
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "file_limit"
     patch_parts = []
     total_bytes = 0
     truncated = bool(diff_before_truncated)
