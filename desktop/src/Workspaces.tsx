@@ -60,7 +60,7 @@ type TaskWorkspaceOperationDetail = TaskWorkspaceOperation & {filesystem:{path_e
 type TaskWorkspaceFileItem = {name:string;path:string;kind:"directory"|"file"|"symlink"|"other";size_bytes:number|null;modified_at_ns:number};
 type TaskWorkspaceFileListing = {operation_id:string;source_revision:string;path:string;items:TaskWorkspaceFileItem[];total:number;truncated:boolean;limit:number};
 type TaskWorkspaceFileContent = {operation_id:string;source_revision:string;path:string;size_bytes:number;sha256:string;content:string;truncated:boolean;max_bytes:number};
-type TaskWorkspaceFileChange = {change_id:string;operation_id:string;source_revision:string;path:string;before_sha256:string|null;after_sha256:string;size_bytes:number;created_at:string};
+type TaskWorkspaceFileChange = {change_id:string;operation_id:string;source_revision:string;path:string;before_sha256:string|null;after_sha256:string;size_bytes:number;created_at:string;status:"pending"|"applied"|"failed"|"indeterminate";error_code:string|null;finalized_at:string|null};
 type TaskWorkspaceFileChanges = {operation_id:string;source_revision:string;items:TaskWorkspaceFileChange[];total:number;truncated:boolean;limit:number};
 
 export function MemoryWorkspace({ projectId, workspaceId }: { projectId: string | null; workspaceId: string | null }) {
@@ -643,8 +643,9 @@ export function AgentsWorkspace({ projectId, workspaceId: scopeWorkspaceId, onSc
                   <small>{taskFileChanges.total} recorded changes{taskFileChanges.truncated?" · showing latest "+taskFileChanges.limit:""}</small>
                   <div className="event-list">{taskFileChanges.items.map(change=><article className="event-card" key={change.change_id}>
                     <div className="event-head"><strong>{change.path}</strong><small>{new Date(change.created_at).toLocaleString()}</small></div>
-                    <small>{change.before_sha256?"Updated existing file":"Created new file"} · {change.size_bytes.toLocaleString()} bytes</small>
+                    <div className="inline-actions"><small>{change.before_sha256?"Updated existing file":"Created new file"} · {change.size_bytes.toLocaleString()} bytes</small><span className={"run-status "+(change.status==="applied"?"completed":change.status==="failed"?"failed":"interrupted")}>{change.status}</span></div>
                     <small>After SHA-256 {change.after_sha256}</small>
+                    {change.error_code&&<small>Recovery note: {change.error_code.replaceAll("_"," ")}</small>}
                   </article>)}{taskFileChanges.items.length===0&&<div className="empty-state">No file changes recorded yet.</div>}</div>
                 </>}
               </section>
