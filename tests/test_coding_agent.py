@@ -319,9 +319,15 @@ class CodingAgentTests(unittest.TestCase):
                         "elapsed_seconds":0.1,"status":"completed"}
 
             with patch("evo_experiments.execution.run_execution",side_effect=assert_lock_released) as execute:
-                result=agent.run(cid,"Run the unit tests",lambda *_:True)
+                result=agent.run(cid,"Run the unit tests",lambda *_:True,
+                                source_revision="a"*40)
             execute.assert_called_once()
             self.assertEqual(result["verification"],"not_required")
+            row=assistant.store.db.execute(
+                "SELECT source_revision FROM workload_executions WHERE agent_run_id=?",
+                (result["run_id"],),
+            ).fetchone()
+            self.assertEqual(row["source_revision"],"a"*40)
             assistant.close()
 
     def test_file_change_without_post_edit_check_is_explicitly_unverified(self):

@@ -1470,6 +1470,7 @@ def create_app(config_path="config.toml", provider_name=None):
             agent = CodingAgent(runtime.assistant, workspace, effective_allowed_commands)
             if plan_id is None:
                 agent.run(conversation_id, request_text, approval, run_id=run_id,
+                          source_revision=run_metadata.get("task_workspace_source_revision"),
                           stop_event=stop_event, on_progress=progress,
                           project_id=conversation_project_id,
                           workspace_id=conversation_workspace_id)
@@ -1495,6 +1496,7 @@ def create_app(config_path="config.toml", provider_name=None):
                         "\n\nInspect before changing files. Every write and command still requires user approval."
                     )
                     step_result = agent.run(conversation_id, step_request, approval, run_id=run_id,
+                        source_revision=run_metadata.get("task_workspace_source_revision"),
                         stop_event=stop_event, on_progress=progress, finalize_run=False,
                         project_id=conversation_project_id,
                         workspace_id=conversation_workspace_id)
@@ -1536,7 +1538,7 @@ def create_app(config_path="config.toml", provider_name=None):
                                         workspace_id=conversation_workspace_id,
                                         project_id=conversation_project_id,
                                         approval_evidence={"approval": "approved", "approval_source": "plan_verification_approval", "approved_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "source": "plan_verification", "argv_sha256": __import__("hashlib").sha256(__import__("json").dumps(list(command), sort_keys=True).encode("utf-8")).hexdigest(), "policy": [list(p) for p in agent.workspace.allowed_commands]},
-                                        source_revision=None,
+                                        source_revision=run_metadata.get("task_workspace_source_revision"),
                                     )
                                 execution_id = execution["id"]
                                 result = run_execution(lab_db.connection, lab_db.lock, execution_id)
