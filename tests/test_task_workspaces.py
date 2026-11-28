@@ -361,6 +361,48 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertEqual(result[0][0], candidate.name)
         self.assertEqual(result[0][1], "over_budget")
 
+    def test_operation_listing_filters_and_is_read_only(self):
+        from evo_core.task_workspaces import list_task_workspace_operations
+
+        first = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "list-first", self.destinations
+        )
+        second = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "list-second", self.destinations
+        )
+        rows = list_task_workspace_operations(self.store, project_id=self.project["project_id"])
+        self.assertEqual({row["operation_id"] for row in rows},
+                         {first["operation_id"], second["operation_id"]})
+        completed = list_task_workspace_operations(
+            self.store, status="completed", limit=1,
+        )
+        self.assertEqual(len(completed), 1)
+        before = get_task_workspace_operation(self.store, first["operation_id"])
+        self.assertEqual(before["status"], "completed")
+        self.assertTrue(Path(before["destination_path"]).is_dir())
+
+    def test_operation_status_inspection_never_mutates_or_removes_worktree(self):
+        from evo_core.task_workspaces import get_task_workspace_operation_status
+
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "inspect-status", self.destinations
+        )
+        snapshot = get_task_workspace_operation_status(self.store, result["operation_id"])
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertTrue(snapshot["filesystem"]["path_exists"])
+        self.assertTrue(snapshot["filesystem"]["path_is_directory"])
+        self.assertFalse(snapshot["filesystem"]["path_is_symlink"])
+        self.assertIsNone(snapshot["recovery_guidance"])
+        self.assertTrue(Path(result["canonical_path"]).is_dir())
+
+    def test_operation_list_rejects_invalid_filters(self):
+        from evo_core.task_workspaces import list_task_workspace_operations
+        for kwargs in ({"limit": 0}, {"limit": True}, {"limit": 501},
+                       {"status": "unknown"}, {"project_id": " " }):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(TaskWorkspaceValidationError):
+                    list_task_workspace_operations(self.store, **kwargs)
+
     def test_review_rejects_incomplete_operation(self):
         with self.assertRaises(Exception):
             get_task_workspace_review(self.store, "missing-operation")
