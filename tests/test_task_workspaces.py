@@ -109,7 +109,7 @@ class TaskWorkspaceTests(unittest.TestCase):
     def test_repository_post_checkout_hook_is_not_executed(self):
         marker = self.root / "hook-ran"
         hook = self.source / ".git" / "hooks" / "post-checkout"
-        hook.write_text(f"#!/bin/sh\\ntouch '{marker}'\\n", encoding="utf-8")
+        hook.write_text(f"#!/bin/sh\ntouch '{marker}'\n", encoding="utf-8")
         hook.chmod(0o755)
         create_task_workspace(
             self.store, self.workspace["workspace_id"], "hook-test", self.destinations
@@ -164,6 +164,18 @@ class TaskWorkspaceTests(unittest.TestCase):
         with self.assertRaises(TaskWorkspaceConflictError):
             create_task_workspace(
                 self.store, self.workspace["workspace_id"], "nested", self.source
+            )
+
+
+    def test_intermediate_symlink_in_destination_parent_is_rejected(self):
+        real_parent = self.root / "real-parent"
+        real_parent.mkdir()
+        link_parent = self.root / "linked-parent"
+        link_parent.symlink_to(real_parent, target_is_directory=True)
+        with self.assertRaises(TaskWorkspaceValidationError):
+            create_task_workspace(
+                self.store, self.workspace["workspace_id"], "symlink-parent",
+                link_parent,
             )
 
     def test_invalid_destination_parent_and_task_id(self):
