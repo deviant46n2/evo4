@@ -1010,16 +1010,41 @@ class ExecutionRecoveryTests(unittest.TestCase):
         import evo_experiments.execution as E
         import threading, time, signal
 
-        class Fake:
+        class InstrumentedLock:
             def __init__(self):
+                self._lock = threading.Lock()
+                self._count_lock = threading.Lock()
+                self.attempt_count = 0
+                self.all_attempted = threading.Event()
+
+            def acquire(self, blocking=True, timeout=-1):
+                with self._count_lock:
+                    self.attempt_count += 1
+                    if self.attempt_count >= 4:
+                        self.all_attempted.set()
+                return self._lock.acquire(blocking, timeout)
+
+            def release(self):
+                self._lock.release()
+
+            def __enter__(self):
+                self.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                self.release()
+
+        class Fake:
+            def __init__(self, lock):
                 self.pid = 999999
                 self._evo_group_pid = 999999
                 self._evo_keeper = None
-                self._evo_cleanup_lock = threading.Lock()
+                self._evo_cleanup_lock = lock
                 self._evo_cleanup_done = False
                 self._evo_cleanup_error = None
 
-        fake = Fake()
+        instrumented_lock = InstrumentedLock()
+        fake = Fake(instrumented_lock)
 
         keeper_state = {"kill": 0, "wait": 0}
 
@@ -1055,9 +1080,9 @@ class ExecutionRecoveryTests(unittest.TestCase):
 
         original_remaining = E._remaining_descendants
         original_owned = E._owned_group_is_live
+        original_killpg = E.os.killpg
         E._remaining_descendants = blocking_remaining
         E._owned_group_is_live = lambda p: True
-        original_killpg = E.os.killpg
         E.os.killpg = fake_killpg
         try:
             results = []
@@ -1069,12 +1094,15 @@ class ExecutionRecoveryTests(unittest.TestCase):
             for t in threads:
                 t.start()
             entered.wait(timeout=5)
-            time.sleep(0.2)
+            instrumented_lock.all_attempted.wait(timeout=5)
+            # All four callers have attempted acquisition; first still blocked.
+            self.assertEqual(instrumented_lock.attempt_count, 4)
             self.assertEqual(len(results), 0)
             release.set()
             for t in threads:
                 t.join(timeout=5)
             self.assertEqual(len(results), 4)
+            self.assertTrue(all(t is not None and not t.is_alive() for t in threads))
             self.assertEqual(len(set(results)), 1)
             self.assertEqual(len(killpg_calls), 1)
             self.assertEqual(killpg_calls[0], (999999, signal.SIGTERM))
