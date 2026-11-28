@@ -403,21 +403,7 @@ class TaskWorkspaceTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertTrue(ready_file.exists())
-        t.join(timeout=10)
-        self.assertFalse(t.is_alive(), "worker thread did not terminate")
-        self.assertNotIn("exc", exc_box, f"unexpected worker exception: {exc_box.get('exc')}")
-        out = result_box.get("out", "")
-        self.assertEqual(len(out), 100)
-        self.assertFalse(truncated)
-        self.assertEqual(metrics.get("captured_bytes"), 100)
-        after_threads = set(threading.enumerate())
-        new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
-        self.assertEqual(new_reader_threads, [])
-        self.assertTrue(child_pid_file.exists())
-        self.assertTrue(parent_pid_file.exists())
         self.assertTrue(pgid_file.exists())
-        child_pid = int(child_pid_file.read_text())
-        parent_pid = int(parent_pid_file.read_text())
         pgid = int(pgid_file.read_text())
         def _cleanup():
             try:
@@ -425,6 +411,18 @@ class TaskWorkspaceTests(unittest.TestCase):
             except (ProcessLookupError, OSError):
                 pass
         self.addCleanup(_cleanup)
+        t.join(timeout=10)
+        self.assertFalse(t.is_alive(), "worker thread did not terminate")
+        self.assertNotIn("exc", exc_box, f"unexpected worker exception: {exc_box.get('exc')}")
+        out = result_box.get("out", "")
+        self.assertEqual(len(out), 100)
+        self.assertFalse(truncated)
+        self.assertEqual(metrics.get("captured_bytes"), 100)
+        self.assertTrue(child_pid_file.exists())
+        self.assertTrue(parent_pid_file.exists())
+        child_pid = int(child_pid_file.read_text())
+        parent_pid = int(parent_pid_file.read_text())
+        self.assertEqual(pgid, parent_pid)
         for _ in range(20):
             if self._pid_gone(child_pid):
                 break
@@ -443,6 +441,9 @@ class TaskWorkspaceTests(unittest.TestCase):
         except OSError:
             group_alive = False
         self.assertFalse(group_alive)
+        after_threads = set(threading.enumerate())
+        new_reader_threads = [t for t in after_threads if t not in before_threads and t.name.startswith("task-workspace-review-")]
+        self.assertEqual(new_reader_threads, [])
 
     def test_review_subprocess_timeout_terminates(self):
         import os, tempfile, time, threading
@@ -482,22 +483,22 @@ class TaskWorkspaceTests(unittest.TestCase):
                 break
             time.sleep(0.1)
         self.assertTrue(ready_file.exists())
-        t.join(timeout=5)
-        self.assertFalse(t.is_alive(), "worker thread did not terminate")
-        self.assertIsInstance(exc_box.get("exc"), TaskWorkspaceProvisioningError)
-        self.assertTrue(child_pid_file.exists())
-        self.assertTrue(parent_pid_file.exists())
         self.assertTrue(pgid_file.exists())
-        child_pid = int(child_pid_file.read_text())
-        parent_pid = int(parent_pid_file.read_text())
         pgid = int(pgid_file.read_text())
-        self.assertEqual(pgid, parent_pid)
         def _cleanup():
             try:
                 os.killpg(pgid, 9)
             except (ProcessLookupError, OSError):
                 pass
         self.addCleanup(_cleanup)
+        t.join(timeout=5)
+        self.assertFalse(t.is_alive(), "worker thread did not terminate")
+        self.assertIsInstance(exc_box.get("exc"), TaskWorkspaceProvisioningError)
+        self.assertTrue(child_pid_file.exists())
+        self.assertTrue(parent_pid_file.exists())
+        child_pid = int(child_pid_file.read_text())
+        parent_pid = int(parent_pid_file.read_text())
+        self.assertEqual(pgid, parent_pid)
         for _ in range(20):
             if self._pid_gone(child_pid):
                 break
