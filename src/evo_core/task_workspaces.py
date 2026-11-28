@@ -89,9 +89,32 @@ def _git(path, *args, timeout=30):
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_CONFIG_COUNT"] = "0"
+    command = [
+        "git", "-C", str(path),
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "core.fsmonitor=false",
+        "-c", "credential.helper=",
+    ]
+    # A repository-local filter process/smudge command can execute during
+    # worktree checkout. Discover configured filter keys as data, then blank
+    # both execution mechanisms for each driver in this operation.
+    if args[:2] == ("worktree", "add"):
+        config = subprocess.run(
+            ["git", "-C", str(path), "config", "--local", "--name-only", "--get-regexp",
+             r"^filter\\..*\\.(smudge|process)$"],
+            text=True, encoding="utf-8", errors="replace",
+            capture_output=True, check=False, timeout=10, shell=False, env=env,
+        )
+        if config.returncode not in (0, 1):
+            raise TaskWorkspaceProvisioningError("could not inspect repository filter configuration")
+        for key in sorted(set(config.stdout.splitlines())):
+            if re.fullmatch(r"filter\\.[A-Za-z0-9._-]+\\.(smudge|process)", key):
+                command.extend(["-c", f"{key}="])
+    command.extend(args)
     try:
         result = subprocess.run(
-            ["git", "-C", str(path), *args],
+            command,
             text=True,
             encoding="utf-8",
             errors="replace",
