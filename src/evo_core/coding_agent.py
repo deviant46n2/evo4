@@ -70,11 +70,12 @@ class WorkspaceBindingInvalidatedError(RuntimeError):
 
 class CodingAgent:
     """Bounded tool-using coding assistant. Writes and commands require per-action approval."""
-    def __init__(self, assistant, workspace_root=None, allowed_commands=(), max_tool_rounds=8):
+    def __init__(self, assistant, workspace_root=None, allowed_commands=(), max_tool_rounds=8, task_workspace_operation_id=None):
         self.assistant=assistant
         root=workspace_root if workspace_root is not None else "."
         self.workspace=Workspace(root,allowed_commands=allowed_commands)
         self.max_tool_rounds=max(1,min(int(max_tool_rounds),20))
+        self.task_workspace_operation_id = task_workspace_operation_id
         self._workspace_binding_id = None
         self._workspace_binding_snapshot = None
         original_workspace_run = self.workspace.run
@@ -147,6 +148,19 @@ class CodingAgent:
         if name=="search_text":
             return self.workspace.search_text(args["query"],args.get("path","."),include_status=True)
         if name=="write_file":
+            if self.task_workspace_operation_id:
+                if is_test_path(args["path"]):
+                    approved = self.workspace._test_write_approvals.pop(id(test_approval), None) if test_approval is not None else None
+                    expected = self.workspace.resolve(args["path"])
+                    if not approved or approved[0] is not test_approval or approved[1] != expected:
+                        raise WorkspaceError("Test/spec files are protected. A fresh, path-specific user approval is required.")
+                from .task_workspace_files import apply_task_workspace_file
+                result = apply_task_workspace_file(
+                    self.assistant.store, self.task_workspace_operation_id,
+                    args["path"], args["content"],
+                    overwrite=bool(args.get("overwrite", False)), approved=True,
+                )
+                return {"written": result["path"], "file_change": result}
             return {"written":self.workspace.write_file(args["path"],args["content"],bool(args.get("overwrite",False)),test_approval=test_approval)}
         if name == "run_command":
             import hashlib

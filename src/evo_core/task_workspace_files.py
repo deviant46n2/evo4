@@ -304,13 +304,15 @@ def _reconcile_pending_file_changes(store, operation, root):
 
 
 def apply_task_workspace_file(
-    store, operation_id, path, content, *, expected_sha256=None, approved=False,
+    store, operation_id, path, content, *, expected_sha256=None, overwrite=False, approved=False,
 ):
     """Atomically create or replace one bounded UTF-8 file after explicit approval.
 
-    Existing files require the SHA-256 observed by the caller, preventing stale
-    editor contents from silently overwriting a newer version. New files require
-    expected_sha256=None and are created without replacing an existing entry.
+    Existing editor updates require the SHA-256 observed by the caller,
+    preventing stale contents from silently overwriting a newer version. A fresh
+    approved agent overwrite may set overwrite=True; the current file signature
+    is still checked immediately before atomic replacement. New files are created
+    without replacing an existing entry.
     """
     if approved is not True:
         raise TaskWorkspaceValidationError("explicit approval is required to apply a file")
@@ -360,7 +362,7 @@ def apply_task_workspace_file(
             if expected_sha256 is not None:
                 raise TaskWorkspaceValidationError("file no longer exists; reload before applying")
         else:
-            if expected_sha256 is None:
+            if expected_sha256 is None and overwrite is not True:
                 os.close(existing_fd)
                 raise TaskWorkspaceValidationError("file already exists; reload before applying")
             try:

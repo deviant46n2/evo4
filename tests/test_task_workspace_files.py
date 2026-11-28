@@ -166,6 +166,60 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         history = list_task_workspace_file_changes(self.store, self.operation["operation_id"])
         self.assertEqual(history["items"][0]["change_id"], result["change_id"])
 
+    def test_coding_agent_task_workspace_writes_use_approval_journal(self):
+        from evo_core.coding_agent import CodingAgent
+
+        assistant = type("Assistant", (), {"store": self.store})()
+        agent = CodingAgent(
+            assistant, self.task_root,
+            task_workspace_operation_id=self.operation["operation_id"],
+        )
+        created = agent._execute("write_file", {
+            "path": "agent-created.py", "content": "print('created')\n",
+        })
+        self.assertEqual(created["written"], "agent-created.py")
+        self.assertEqual(created["file_change"]["status"], "applied")
+
+        (self.task_root / "existing.py").write_text("old\n", encoding="utf-8")
+        replaced = agent._execute("write_file", {
+            "path": "existing.py", "content": "new\n", "overwrite": True,
+        })
+        self.assertEqual(replaced["written"], "existing.py")
+        self.assertIsNotNone(replaced["file_change"]["before_sha256"])
+        self.assertEqual((self.task_root / "existing.py").read_text(), "new\n")
+
+        test_approval = agent.workspace.approve_test_write("test_guard.py")
+        guarded = agent._execute(
+            "write_file", {"path": "test_guard.py", "content": "assert True\n"},
+            test_approval=test_approval,
+        )
+        self.assertEqual(guarded["file_change"]["status"], "applied")
+        history = list_task_workspace_file_changes(self.store, self.operation["operation_id"])
+        self.assertEqual(history["total"], 3)
+        self.assertEqual({item["path"] for item in history["items"]},
+                         {"agent-created.py", "existing.py", "test_guard.py"})
+
+    def test_approved_overwrite_without_stale_editor_hash_records_before_and_after(self):
+        target = self.task_root / "README.txt"
+        before = target.read_bytes()
+        result = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "README.txt",
+            "agent approved replacement\n", overwrite=True, approved=True,
+        )
+        self.assertEqual(target.read_text(), "agent approved replacement\n")
+        self.assertEqual(result["before_sha256"], __import__("hashlib").sha256(before).hexdigest())
+        history = list_task_workspace_file_changes(self.store, self.operation["operation_id"])
+        self.assertEqual(history["items"][0]["change_id"], result["change_id"])
+        self.assertEqual(history["items"][0]["status"], "applied")
+
+    def test_existing_file_still_requires_overwrite_or_expected_hash(self):
+        with self.assertRaises(ValueError):
+            apply_task_workspace_file(
+                self.store, self.operation["operation_id"], "README.txt",
+                "must not replace", approved=True,
+            )
+        self.assertEqual((self.task_root / "README.txt").read_text(), "baseline\n")
+
     def test_change_history_is_bounded_and_reports_total(self):
         first = apply_task_workspace_file(
             self.store, self.operation["operation_id"], "first.txt",
