@@ -482,7 +482,7 @@ export default function App() {
           </div>
           <div className="composer-footer"><span>Enter to send <b>·</b> Shift + Enter for a new line</span><span>Generation cannot yet be stopped from the desktop client</span></div>
         </div>
-      </section> : view === "agents" ? <AgentsWorkspace projectId={scopeProjectId} workspaceId={scopeWorkspaceId} onScopeChange={switchScope}/> : view === "memory" ? <MemoryWorkspace projectId={scopeProjectId} workspaceId={scopeWorkspaceId}/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace/> : view === "configurations" ? <ConfigurationsWorkspace/> : view === "workspaces" ? <WorkspaceRegistryWorkspace/> : <ExperimentsWorkspace/>}
+      </section> : view === "agents" ? <AgentsWorkspace projectId={scopeProjectId} workspaceId={scopeWorkspaceId} onScopeChange={switchScope}/> : view === "memory" ? <MemoryWorkspace projectId={scopeProjectId} workspaceId={scopeWorkspaceId}/> : view === "hardware" ? <HardwareWorkspace/> : view === "projects" ? <ProjectsWorkspace onStartTask={(projectId) => { switchScope(projectId, null); setView("agents"); }}/> : view === "configurations" ? <ConfigurationsWorkspace/> : view === "workspaces" ? <WorkspaceRegistryWorkspace/> : <ExperimentsWorkspace/>}
     </main>
   </div>;
 }

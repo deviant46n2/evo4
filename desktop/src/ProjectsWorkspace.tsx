@@ -76,7 +76,7 @@ function nullable(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
-export function ProjectsWorkspace() {
+export function ProjectsWorkspace({ onStartTask }: { onStartTask?: (projectId: string) => void } = {}) {
   const [filter, setFilter] = useState<"active" | "archived">("active");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
