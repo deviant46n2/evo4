@@ -3,6 +3,7 @@ import hashlib
 import os
 import stat
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 from .store import utc_now
@@ -24,6 +25,7 @@ DEFAULT_LIST_LIMIT = 200
 MAX_LIST_LIMIT = 500
 DEFAULT_READ_BYTES = 256 * 1024
 MAX_READ_BYTES = 1024 * 1024
+PENDING_WRITE_RECOVERY_AGE_SECONDS = 30
 
 
 def _task_root(store, operation_id):
@@ -272,7 +274,16 @@ def _reconcile_pending_file_changes(store, operation, root):
                ORDER BY created_at, change_id LIMIT 500""",
             (operation["operation_id"],),
         ).fetchall()
+    recovery_cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=PENDING_WRITE_RECOVERY_AGE_SECONDS
+    )
     for row in pending:
+        try:
+            created_at = datetime.fromisoformat(row["created_at"])
+        except (TypeError, ValueError):
+            created_at = recovery_cutoff - timedelta(seconds=1)
+        if created_at > recovery_cutoff:
+            continue
         current = _current_file_sha256(root, row["path"])
         if current == row["after_sha256"]:
             status, error_code = "applied", None
