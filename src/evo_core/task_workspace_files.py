@@ -268,7 +268,7 @@ def _reconcile_pending_file_changes(store, operation, root):
     """Resolve interrupted write intents from the current file state when possible."""
     with store.lock:
         pending = store.db.execute(
-            """SELECT change_id, path, before_sha256, after_sha256
+            """SELECT change_id, path, before_sha256, after_sha256, created_at
                FROM task_workspace_file_changes
                WHERE operation_id=? AND status='pending'
                ORDER BY created_at, change_id LIMIT 500""",
@@ -488,7 +488,7 @@ def apply_task_workspace_file(
                 store.db.commit()
         raise
     except OSError as exc:
-        if "change_id" in locals():
+        if "change_id" in locals() and not filesystem_mutated:
             with store.lock:
                 store.db.execute(
                     "UPDATE task_workspace_file_changes SET status='failed', "
