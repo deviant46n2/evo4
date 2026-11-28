@@ -307,5 +307,86 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(history["total"], 1)
         self.assertFalse(history["truncated"])
 
+    def test_isolated_coding_agent_write_execution_and_review_pipeline(self):
+        """Exercise the real task-workspace write, managed command, and review join."""
+        from evo_core.coding_agent import CodingAgent
+
+        class ToolProvider:
+            def __init__(self):
+                self.responses = [
+                    {"content": "", "tool_calls": [{
+                        "id": "write-1", "type": "function",
+                        "function": {"name": "write_file", "arguments": {
+                            "path": "generated.py", "content": "VALUE = 42\\n",
+                        }},
+                    }]},
+                    {"content": "", "tool_calls": [{
+                        "id": "check-1", "type": "function",
+                        "function": {"name": "run_command", "arguments": {
+                            "argv": ["python", "-m", "unittest"],
+                        }},
+                    }]},
+                    {"content": "Implemented the isolated change and ran its check.",
+                     "tool_calls": []},
+                ]
+
+            def chat(self, messages, max_tokens, temperature, on_token=None, tools=None):
+                return self.responses.pop(0)
+
+        operation = self.operation
+        source_head = self._git(self.source, "rev-parse", "HEAD")
+        source_status = self._git(self.source, "status", "--porcelain")
+        run_id = self.app.state.store.start_agent_run("coding", {
+            "project_id": operation["project_id"],
+            "workspace_id": operation["task_workspace_id"],
+            "parent_workspace_id": operation["parent_workspace_id"],
+            "task_workspace_operation_id": operation["operation_id"],
+            "task_workspace_source_revision": operation["source_revision"],
+        })
+        assistant = self.app.state.assistant
+        previous_provider = assistant.provider
+        assistant.provider = ToolProvider()
+        try:
+            agent = CodingAgent(
+                assistant, self.task_root,
+                allowed_commands=[["python", "-m", "unittest"]],
+                task_workspace_operation_id=operation["operation_id"],
+            )
+            conversation_id = assistant.new_conversation(
+                project_id=operation["project_id"],
+                workspace_id=operation["task_workspace_id"],
+            )
+            result = agent.run(
+                conversation_id, "Create generated.py and run the unit tests.",
+                lambda name, args: True,
+                run_id=run_id,
+                project_id=operation["project_id"],
+                workspace_id=operation["task_workspace_id"],
+                source_revision=operation["source_revision"],
+            )
+        finally:
+            assistant.provider = previous_provider
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["verification"], "passed")
+        self.assertEqual((self.task_root / "generated.py").read_text(), "VALUE = 42\\n")
+        self.assertEqual(self._git(self.source, "rev-parse", "HEAD"), source_head)
+        self.assertEqual(self._git(self.source, "status", "--porcelain"), source_status)
+
+        status, review = request(
+            self.app, "/api/v1/task-workspaces/" + operation["operation_id"] + "/review",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(review["status"], "ok")
+        self.assertIn("generated.py", {item["path"] for item in review["changed_files"]})
+        self.assertEqual(review["file_change_history"]["summary"]["applied"], 1)
+        evidence = [item for item in review["execution_evidence"] if item["run_id"] == run_id]
+        self.assertEqual(len(evidence), 1)
+        executions = evidence[0]["managed_executions"]
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(executions[0]["argv"], ["python", "-m", "unittest"])
+        self.assertEqual(executions[0]["returncode"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
