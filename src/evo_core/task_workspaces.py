@@ -126,7 +126,7 @@ _GIT_HELPER_CACHE = {}
 _DEFAULT_GIT_OUTPUT_BYTES = 8 * 1024 * 1024
 
 
-def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None, discover_helpers=True):
+def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None, discover_helpers=True, strip_output=True):
     """Run Git without inherited Git overrides, external helpers, or unbounded output."""
     safe_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     if env is not None:
@@ -297,7 +297,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
             )
             exc.exit_code = proc.returncode
             raise exc
-        return stdout
+        return stdout.strip() if strip_output else stdout
     except TaskWorkspaceProvisioningError:
         raise
     except (OSError, subprocess.SubprocessError) as exc:
@@ -669,13 +669,13 @@ def get_task_workspace_review(
         return _git(root, *git_args, **kwargs)
 
     head_before_truncated = []
-    head_before = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated)
+    head_before = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated, strip_output=True)
     status_before_truncated = []
-    status_before = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_before_truncated)
+    status_before = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_before_truncated, strip_output=False)
     diff_before_truncated = []
-    diff_before = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
+    diff_before = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated, strip_output=False)
     untracked_before_truncated = []
-    untracked_before = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
+    untracked_before = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated, strip_output=False)
     if head_before_truncated or status_before_truncated or diff_before_truncated or untracked_before_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     untracked_before_sig = _untracked_signature(root, [p for p in untracked_before.split("\x00") if p])
@@ -729,7 +729,7 @@ def get_task_workspace_review(
 
     # Tracked changes relative to the immutable baseline (NUL-delimited).
     name_status_truncated = []
-    name_status = _review_git( "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated)
+    name_status = _review_git( "diff", "-z", "--name-status", "--no-renames", baseline, max_output_bytes=max_bytes + 1024, truncated=name_status_truncated, strip_output=False)
     if name_status_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     for path in name_status.split("\x00"):
@@ -778,7 +778,7 @@ def get_task_workspace_review(
 
     # Untracked files.
     untracked_truncated = []
-    untracked_output = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated)
+    untracked_output = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated, strip_output=False)
     if untracked_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
     untracked_paths = [p for p in untracked_output.split("\x00") if p]
@@ -818,7 +818,7 @@ def get_task_workspace_review(
         file_diff_truncated = []
         file_diff = _review_git(
             "diff", baseline, "--", *tracked_paths,
-            max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated,
+            max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated, strip_output=False,
         )
         if file_diff_truncated:
             truncated = True
@@ -902,13 +902,13 @@ def get_task_workspace_review(
             break
 
     head_after_truncated = []
-    head_after = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_after_truncated)
+    head_after = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_after_truncated, strip_output=True)
     status_after_truncated = []
-    status_after = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_after_truncated)
+    status_after = _review_git( "status", "--porcelain", "--untracked-files=all", max_output_bytes=max_bytes + 1024, truncated=status_after_truncated, strip_output=False)
     diff_after_truncated = []
-    diff_after = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated)
+    diff_after = _review_git( "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated, strip_output=False)
     untracked_after_truncated = []
-    untracked_after = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated)
+    untracked_after = _review_git( "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated, strip_output=False)
     untracked_after_sig = _untracked_signature(root, [p for p in untracked_after.split("\x00") if p.strip()])
     metadata_truncated = bool(head_after_truncated or status_after_truncated or diff_after_truncated or untracked_after_truncated)
     if metadata_truncated:
