@@ -487,6 +487,7 @@ def apply_task_workspace_file(
         "after_sha256": after_sha256,
         "size_bytes": len(data),
         "created_at": created_at,
+        "status": "applied",
     }
 
 
