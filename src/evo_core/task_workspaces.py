@@ -122,156 +122,148 @@ def _cleanup_process_group(proc):
         pass
 
 
+_GIT_HELPER_CACHE = {}
+_DEFAULT_GIT_OUTPUT_BYTES = 8 * 1024 * 1024
+
+
 def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=None, metrics=None, discover_helpers=True):
-    # Do not inherit repository-selection or index overrides from the Evo
-    # server environment; they could redirect Git away from the validated path.
-    if env is None:
-        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    else:
-        env = dict(env)
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["GIT_CONFIG_COUNT"] = "0"
-    env["PAGER"] = "cat"
-    env["GIT_PAGER"] = "cat"
+    """Run Git without inherited Git overrides, external helpers, or unbounded output."""
+    safe_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    if env is not None:
+        safe_env.update({key: value for key, value in env.items() if not key.startswith("GIT_")})
+    safe_env.update({
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "0",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "PAGER": "cat",
+        "GIT_PAGER": "cat",
+    })
+    root = str(Path(path).resolve())
+    overrides = []
+    if discover_helpers:
+        config_path = Path(root) / ".git" / "config"
+        try:
+            st = config_path.stat()
+            cache_key = (root, st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            cache_key = (root, None)
+        cached = _GIT_HELPER_CACHE.get(cache_key)
+        if cached is None:
+            helper_keys = []
+            for pattern in (
+                r"^filter\..*\.(clean|smudge|process)$",
+                r"^diff\..*\.(command|textconv)$",
+            ):
+                discovery = _git(
+                    root, "config", "--local", "--name-only", "--get-regexp", pattern,
+                    timeout=min(timeout, 10), max_output_bytes=65536,
+                    truncated=[], env=safe_env, discover_helpers=False,
+                )
+                # Discovery output must be complete; a truncated list is never safe.
+                if isinstance(discovery, tuple):
+                    raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
+                helper_keys.extend(line for line in discovery.splitlines() if line)
+            for key in sorted(set(helper_keys)):
+                if re.fullmatch(r'filter\..+\.(clean|smudge|process)', key) or re.fullmatch(r'diff\..+\.(command|textconv)', key):
+                    overrides.extend(["-c", f"{key}="])
+            _GIT_HELPER_CACHE.clear()
+            _GIT_HELPER_CACHE[cache_key] = tuple(overrides)
+        else:
+            overrides = list(cached)
+
     command = [
-        "git", "-C", str(path),
+        "git", "--literal-pathspecs", "-C", root,
         "-c", "core.hooksPath=/dev/null",
         "-c", "core.fsmonitor=false",
+        "-c", "core.attributesFile=/dev/null",
         "-c", "credential.helper=",
+        *overrides,
+        *args,
     ]
-    if discover_helpers:
-        for pattern in (r"^filter\..*\.(clean|smudge|process)$", r"^diff\..*\.(command|textconv)$"):
-            try:
-                config_stdout = _git(
-                    path, "config", "--local", "--name-only", "--get-regexp", pattern,
-                    timeout=10, max_output_bytes=65536, discover_helpers=False,
-                )
-            except TaskWorkspaceProvisioningError as exc:
-                if getattr(exc, "exit_code", None) == 1:
-                    config_stdout = ""
-                else:
-                    raise
-            for key in sorted(set(config_stdout.splitlines())):
-                if (re.fullmatch(r"filter\..+\.(clean|smudge|process)", key) or
-                        re.fullmatch(r"diff\..+\.(command|textconv)", key)):
-                    command.extend(["-c", f"{key}="])
-    command.extend(args)
     if args and args[0] == "diff":
-        command.append("--no-ext-diff")
+        command.extend(["--no-ext-diff", "--no-textconv"])
+    limit = _DEFAULT_GIT_OUTPUT_BYTES if max_output_bytes is None else max_output_bytes
+    proc = None
+    stdout_chunks, stderr_chunks = [], []
+    total = [0]
+    exceeded = [False]
+    lock = threading.Lock()
+
     try:
-        if max_output_bytes is None:
-            result = subprocess.run(
-                command,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                check=False,
-                timeout=timeout,
-                shell=False,
-                env=env,
-            )
-            stdout = result.stdout
-            stderr = result.stderr
-            returncode = result.returncode
-            was_truncated = False
-            if metrics is not None:
-                metrics["captured_bytes"] = len((stdout or "").encode("utf-8", errors="replace")) + len((stderr or "").encode("utf-8", errors="replace"))
-        else:
-            proc = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=False,
-                shell=False,
-                env=env,
-                start_new_session=True,
-            )
-            stdout_chunks = []
-            stderr_chunks = []
-            total = [0]
-            budget_lock = threading.Lock()
-            output_exceeded = {"value": False}
-            timed_out = {"value": False}
-
-            def _reader(stream, chunks):
-                fd = stream.fileno()
-                while True:
-                    try:
-                        chunk = os.read(fd, 8192)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    with budget_lock:
-                        if total[0] + len(chunk) > max_output_bytes:
-                            keep = max_output_bytes - total[0]
-                            if keep > 0:
-                                chunks.append(chunk[:keep])
-                                total[0] += keep
-                            output_exceeded["value"] = True
-                            try:
-                                os.killpg(proc.pid, signal.SIGKILL)
-                            except (OSError, ProcessLookupError):
-                                try:
-                                    proc.kill()
-                                except (OSError, ProcessLookupError):
-                                    pass
-                            break
-                        chunks.append(chunk)
-                        total[0] += len(chunk)
-                try:
-                    stream.close()
-                except OSError:
-                    pass
-
-            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks), daemon=True, name="task-workspace-review-stdout")
-            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks), daemon=True, name="task-workspace-review-stderr")
-            t1.start()
-            t2.start()
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out["value"] = True
-            # Join readers briefly; cleanup only on overflow, timeout, or stuck reader.
-            t1.join(timeout=0.5)
-            t2.join(timeout=0.5)
-            cleanup_needed = (
-                timed_out["value"]
-                or output_exceeded["value"]
-                or t1.is_alive()
-                or t2.is_alive()
-            )
-            if cleanup_needed:
-                _cleanup_process_group(proc)
-                t1.join(timeout=1)
-                t2.join(timeout=1)
-            if t1.is_alive() or t2.is_alive():
-                raise TaskWorkspaceProvisioningError("git output collection did not terminate")
-            was_truncated = output_exceeded["value"]
-            if metrics is not None:
-                metrics["captured_bytes"] = total[0]
-            if timed_out["value"]:
-                exc = TaskWorkspaceProvisioningError("git operation timed out")
-                exc.exit_code = None
-                raise exc
-            stdout = b"".join(stdout_chunks).decode("utf-8", errors="replace")
-            stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
-            returncode = proc.returncode
-        if truncated is not None and was_truncated:
-            truncated.append(True)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise TaskWorkspaceProvisioningError(f"git operation could not complete: {exc}") from exc
-    if returncode and not was_truncated:
-        detail = (stderr or stdout).strip()[-2000:]
-        exc = TaskWorkspaceProvisioningError(
-            f"git {args[0] if args else 'command'} failed (exit {returncode}): {detail}"
+        proc = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            shell=False, env=safe_env, start_new_session=True,
         )
-        exc.exit_code = returncode
-        raise exc
-    return stdout.strip()
+
+        def reader(stream, chunks):
+            while True:
+                chunk = os.read(stream.fileno(), 8192)
+                if not chunk:
+                    break
+                with lock:
+                    available = max(0, limit - total[0])
+                    if available:
+                        kept = chunk[:available]
+                        chunks.append(kept)
+                        total[0] += len(kept)
+                    if len(chunk) > available:
+                        exceeded[0] = True
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        except OSError:
+                            try:
+                                proc.kill()
+                            except OSError:
+                                pass
+                        break
+            stream.close()
+
+        out_thread = threading.Thread(target=reader, args=(proc.stdout, stdout_chunks), daemon=True)
+        err_thread = threading.Thread(target=reader, args=(proc.stderr, stderr_chunks), daemon=True)
+        out_thread.start()
+        err_thread.start()
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            _cleanup_process_group(proc)
+            out_thread.join(timeout=2)
+            err_thread.join(timeout=2)
+            raise TaskWorkspaceProvisioningError("git operation timed out") from exc
+        out_thread.join(timeout=2)
+        err_thread.join(timeout=2)
+        if out_thread.is_alive() or err_thread.is_alive():
+            _cleanup_process_group(proc)
+            out_thread.join(timeout=2)
+            err_thread.join(timeout=2)
+            raise TaskWorkspaceProvisioningError("git output collection did not terminate")
+        if proc.returncode is None:
+            raise TaskWorkspaceProvisioningError("git process was not reaped")
+        stdout = b"".join(stdout_chunks).decode("utf-8", errors="surrogateescape")
+        stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+        if metrics is not None:
+            metrics["captured_bytes"] = total[0]
+        if exceeded[0]:
+            if truncated is not None:
+                truncated.append(True)
+            else:
+                raise TaskWorkspaceProvisioningError("git output exceeded its safety limit")
+        if proc.returncode and not exceeded[0]:
+            exc = TaskWorkspaceProvisioningError(
+                f"git {args[0] if args else 'command'} failed (exit {proc.returncode}): {(stderr or stdout).strip()[-1000:]}"
+            )
+            exc.exit_code = proc.returncode
+            raise exc
+        return stdout
+    except TaskWorkspaceProvisioningError:
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        if proc is not None and proc.poll() is None:
+            _cleanup_process_group(proc)
+        raise TaskWorkspaceProvisioningError("git operation could not complete") from exc
 
 
 def _record(store, operation_id, **fields):
@@ -533,9 +525,9 @@ def get_task_workspace_review(
     max_bytes=DEFAULT_REVIEW_MAX_BYTES,
 ):
     """Return a bounded, read-only review artifact for a completed task workspace."""
-    if not isinstance(max_files, int) or max_files < 1 or max_files > 10000:
+    if isinstance(max_files, bool) or not isinstance(max_files, int) or max_files < 1 or max_files > 10000:
         raise TaskWorkspaceValidationError("max_files must be a positive integer")
-    if not isinstance(max_bytes, int) or max_bytes < 1024:
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1024 or max_bytes > 64 * 1024 * 1024:
         raise TaskWorkspaceValidationError("max_bytes must be at least 1024")
     _ensure_table(store)
     operation = get_task_workspace_operation(store, operation_id)
@@ -566,7 +558,7 @@ def get_task_workspace_review(
     untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
     if head_before_truncated or status_before_truncated or diff_before_truncated or untracked_before_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
-    untracked_before_sig = _untracked_signature(root, [p for p in untracked_before.split("\x00") if p.strip()])
+    untracked_before_sig = _untracked_signature(root, [p for p in untracked_before.split("\x00") if p])
 
     changed = []  # list of (status, path, old_path)
     excluded = []
@@ -641,7 +633,7 @@ def get_task_workspace_review(
     untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_truncated)
     if untracked_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
-    untracked_paths = [p for p in untracked_output.split("\x00") if p.strip()]
+    untracked_paths = [p for p in untracked_output.split("\x00") if p]
     for path in untracked_paths:
         rel = _safe_relative_path(path)
         if rel is None:
@@ -694,7 +686,11 @@ def get_task_workspace_review(
             continue
         if truncated and truncation_reason == "output_limit":
             break
-        candidate = root / Path(path)
+        rel = _safe_relative_path(path)
+        if rel is None:
+            unreadable.append({"path": path, "reason": "unsafe_path"})
+            continue
+        candidate = root / rel
         # Read incrementally with strict byte budget.
         remaining = max_bytes - total_bytes
         if remaining <= 0:
@@ -718,7 +714,7 @@ def get_task_workspace_review(
             unreadable.append({"path": path, "reason": "symlink"})
             continue
         try:
-            fd = os.open(str(candidate), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(str(candidate), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
