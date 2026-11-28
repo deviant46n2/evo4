@@ -804,11 +804,14 @@ def get_task_workspace_review(
             if truncation_reason is None:
                 truncation_reason = "file_limit"
             continue
-        changed.append(("?", str(rel), None))
+        # Expose untracked files as additions in the review contract while
+        # retaining an internal marker so their contents are read directly
+        # rather than passed to `git diff` (which cannot see untracked files).
+        changed.append(("A", str(rel), "untracked"))
         metadata_count += 1
 
     # One literal-pathspec-scoped diff avoids per-file process overhead and pathspec magic.
-    tracked_paths = [path for status, path, _ in changed if status != "?"]
+    tracked_paths = [path for status, path, source_kind in changed if source_kind != "untracked"]
     if tracked_paths and not truncated:
         file_diff_truncated = []
         file_diff = _review_git(
@@ -825,8 +828,8 @@ def get_task_workspace_review(
                 truncation_reason = "output_limit"
 
     # Include readable untracked file contents.
-    for status, path, _ in changed:
-        if status != "?":
+    for status, path, source_kind in changed:
+        if source_kind != "untracked":
             continue
         if truncated and truncation_reason == "output_limit":
             break
