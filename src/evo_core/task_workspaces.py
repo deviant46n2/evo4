@@ -592,7 +592,11 @@ def _open_regular_file_at(root, relative_path):
         fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
     finally:
         os.close(directory_fd)
-    info = os.fstat(fd)
+    try:
+        info = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise
     if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
         os.close(fd)
         raise OSError("file is not a private regular file")
