@@ -174,12 +174,13 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         with self.app.state.lab_db.lock:
             plan = orchestration.create_plan(
                 self.app.state.lab_db.connection, "Implement and verify", workspace=str(self.task_root),
-                workspace_id=task_workspace_id, project_id=project_id, proposal=proposal,
+                workspace_id=self.operation["parent_workspace_id"], project_id=project_id, proposal=proposal,
                 allowed_commands=None, store=self.app.state.store,
             )
             orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
             run_metadata = {
                 "project_id": project_id, "workspace_id": task_workspace_id,
+                "parent_workspace_id": self.operation["parent_workspace_id"],
                 "task_workspace_operation_id": operation_id,
                 "task_workspace_source_revision": self.operation["source_revision"],
                 "plan_id": plan["id"], "verification_state": "passed",

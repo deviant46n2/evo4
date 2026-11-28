@@ -506,7 +506,8 @@ def create_app(config_path="config.toml", provider_name=None):
                 if (
                     plan is not None and plan.get("run_id") == row["id"]
                     and plan.get("project_id") == operation["project_id"]
-                    and plan.get("workspace_id") == operation.get("task_workspace_id")
+                    and plan.get("workspace_id") == operation.get("parent_workspace_id")
+                    and metadata.get("parent_workspace_id") == operation.get("parent_workspace_id")
                 ):
                     item["plan_id"] = plan_id
                     item["plan_status"] = plan["status"]
