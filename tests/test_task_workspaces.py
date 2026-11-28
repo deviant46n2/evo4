@@ -87,6 +87,25 @@ class TaskWorkspaceTests(unittest.TestCase):
         )
 
 
+
+    def test_inherited_git_repository_overrides_are_ignored(self):
+        import os
+        previous = os.environ.get("GIT_DIR")
+        os.environ["GIT_DIR"] = str(self.root / "not-the-source")
+        try:
+            result = create_task_workspace(
+                self.store, self.workspace["workspace_id"], "git-env-test", self.destinations
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("GIT_DIR", None)
+            else:
+                os.environ["GIT_DIR"] = previous
+        self.assertEqual(
+            self._git(Path(result["canonical_path"]), "rev-parse", "HEAD"),
+            self.revision,
+        )
+
     def test_repository_post_checkout_hook_is_not_executed(self):
         marker = self.root / "hook-ran"
         hook = self.source / ".git" / "hooks" / "post-checkout"

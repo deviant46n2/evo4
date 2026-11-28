@@ -85,7 +85,9 @@ def _ensure_table(store):
 
 
 def _git(path, *args, timeout=30):
-    env = os.environ.copy()
+    # Do not inherit repository-selection or index overrides from the Evo
+    # server environment; they could redirect Git away from the validated path.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_TERMINAL_PROMPT"] = "0"
