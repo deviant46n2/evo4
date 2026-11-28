@@ -470,6 +470,18 @@ def verification_evidence_summary(steps):
             else:
                 summary["unavailable_snapshots"] += 1
         summary["unrecorded_commands"] += len(remaining)
+    if summary["configured_commands"] == 0:
+        summary["command_coverage_state"] = "not_configured"
+    elif summary["unmatched_checks"]:
+        summary["command_coverage_state"] = "unmatched"
+    elif summary["failed_checks"] or summary["denied_checks"] or summary["error_checks"] or summary["timed_out_checks"]:
+        summary["command_coverage_state"] = "failed"
+    elif summary["unrecorded_commands"]:
+        summary["command_coverage_state"] = "incomplete"
+    elif summary["passed_checks"] == summary["configured_commands"] and summary["recorded_checks"] == summary["configured_commands"]:
+        summary["command_coverage_state"] = "passed"
+    else:
+        summary["command_coverage_state"] = "incomplete"
     return summary
 
 
