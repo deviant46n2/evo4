@@ -428,6 +428,14 @@ def apply_task_workspace_file(
         with store.lock:
             store.db.execute("BEGIN IMMEDIATE")
             try:
+                journal = store.db.execute(
+                    "SELECT status FROM task_workspace_file_changes WHERE change_id=?",
+                    (change_id,),
+                ).fetchone()
+                if journal is None or journal["status"] != "pending":
+                    raise TaskWorkspaceValidationError(
+                        "file write intent is no longer pending; reload before applying"
+                    )
                 # Recheck the destination immediately before the atomic directory
                 # entry operation. Creation uses link(2), which cannot replace a name.
                 try:
