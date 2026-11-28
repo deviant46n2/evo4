@@ -155,7 +155,7 @@ The API is versioned under `/api/v1`. Current routes:
 - `POST /chat` as a server-sent event stream
 - `GET/POST /memories`, `POST /memories/{id}/archive`, `POST /memories/{id}/supersede`, `GET /memory-candidates`, and `POST /memory-candidates/{id}/review`
 - `GET /agents`, `GET /agents/{run_id}`, `POST /agents`, and `POST /agents/{run_id}/approval`
-- `GET /api/v1/task-workspaces/{operation_id}/review` for bounded review artifacts from completed isolated task workspaces
+- `GET /api/v1/task-workspaces?project_id=...&status=...&limit=...` to list isolated task-workspace operation records; `GET /api/v1/task-workspaces/{operation_id}` to inspect one operation and its conservative filesystem observations; and `GET /api/v1/task-workspaces/{operation_id}/review` for bounded review artifacts from completed isolated task workspaces. Lifecycle inspection is read-only: it does not infer that a provisioning record is abandoned, mutate operation status, invoke Git, or remove worktrees. Provisioning/recovery-required records include guidance to inspect the recorded destination and Git metadata manually.
 
 The capabilities endpoint is the source of truth for which future workspace areas the running backend actually supports. The browser is a presentation/client layer; conversation persistence, prompts, memory retrieval, provider calls, and assistant orchestration remain in Python/SQLite.
 
