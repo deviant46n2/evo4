@@ -224,6 +224,43 @@ class TaskWorkspaceTests(unittest.TestCase):
         reasons = {item["reason"] for item in review["unreadable_files"]}
         self.assertIn("binary", reasons)
 
+    def test_review_literal_pathspec_cannot_disclose_excluded_env(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-pathspec", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        magic_name = ":(top,glob)**"
+        (task_path / magic_name).write_text("baseline special\\n")
+        (task_path / ".env").write_text("baseline secret\\n")
+        self._git(task_path, "add", "--", magic_name, ".env")
+        self._git(task_path, "commit", "-m", "add review regression fixtures")
+        (task_path / magic_name).write_text("changed special\\n")
+        (task_path / ".env").write_text("TOP_SECRET_REVIEW_SENTINEL\\n")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertIn(magic_name, review["patch"])
+        self.assertNotIn("TOP_SECRET_REVIEW_SENTINEL", review["patch"])
+        self.assertIn(".env", review["excluded_files"])
+
+    def test_review_disables_repository_clean_filter_helpers(self):
+        import os
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-filter", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        marker = task_path / "filter-executed"
+        helper = task_path / "evil-filter.sh"
+        helper.write_text("#!/bin/sh\\ntouch \"%s\"\\ncat\\n" % marker)
+        helper.chmod(0o755)
+        self._git(task_path, "config", "filter.evil.clean", str(helper))
+        (task_path / ".gitattributes").write_text("filtered.txt filter=evil\\n")
+        (task_path / "filtered.txt").write_text("baseline\\n")
+        self._git(task_path, "add", ".gitattributes", "filtered.txt")
+        self._git(task_path, "commit", "-m", "add filter fixture")
+        (task_path / "filtered.txt").write_text("changed\\n")
+        from evo_core.task_workspaces import _git as safe_git
+        safe_git(task_path, "diff", "HEAD")
+        self.assertFalse(marker.exists(), "repository clean filter executed during review")
+
     def test_review_rejects_incomplete_operation(self):
         with self.assertRaises(Exception):
             get_task_workspace_review(self.store, "missing-operation")
