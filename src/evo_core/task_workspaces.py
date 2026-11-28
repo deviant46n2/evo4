@@ -665,7 +665,7 @@ def get_task_workspace_review(
     def record_excluded(path):
         nonlocal metadata_count, excluded_omitted
         if metadata_count < max_files:
-            record_excluded(path)
+            excluded.append(path)
             metadata_count += 1
         else:
             excluded_omitted += 1
