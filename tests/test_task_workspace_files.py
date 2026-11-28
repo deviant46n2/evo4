@@ -189,6 +189,41 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             {first["change_id"], second["change_id"]},
         )
 
+    def test_post_mutation_failure_remains_pending_for_recovery(self):
+        import os
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import patch
+
+        real_unlink = os.unlink
+        calls = {"count": 0}
+
+        def fail_first_unlink(path, *args, **kwargs):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise PermissionError("simulated cleanup failure after link")
+            return real_unlink(path, *args, **kwargs)
+
+        with patch("evo_core.task_workspace_files.os.unlink", side_effect=fail_first_unlink):
+            with self.assertRaises(ValueError):
+                apply_task_workspace_file(
+                    self.store, self.operation["operation_id"], "post-mutation.txt",
+                    "persisted", approved=True,
+                )
+        target = self.task_root / "post-mutation.txt"
+        self.assertEqual(target.read_text(), "persisted")
+        with self.store.lock:
+            self.store.db.execute(
+                "UPDATE task_workspace_file_changes SET created_at=? WHERE path=?",
+                ((datetime.now(timezone.utc)-timedelta(minutes=2)).isoformat(),
+                 "post-mutation.txt"),
+            )
+            self.store.db.commit()
+        history = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"],
+        )
+        item = next(row for row in history["items"] if row["path"] == "post-mutation.txt")
+        self.assertEqual(item["status"], "applied")
+
     def test_recent_pending_write_is_not_reconciled_while_active(self):
         result = apply_task_workspace_file(
             self.store, self.operation["operation_id"], "active.txt",
