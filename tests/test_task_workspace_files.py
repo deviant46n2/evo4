@@ -102,7 +102,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             read_task_workspace_file(self.store, self.operation["operation_id"], "escape.txt")
 
     def test_rejects_binary_oversized_and_excluded_files(self):
-        (self.task_root / "binary.dat").write_bytes(b"abc\\x00def")
+        (self.task_root / "binary.dat").write_bytes(b"abc\x00def")
         (self.task_root / "large.txt").write_text("x" * 20)
         with self.assertRaises(ValueError):
             read_task_workspace_file(self.store, self.operation["operation_id"], "binary.dat")
