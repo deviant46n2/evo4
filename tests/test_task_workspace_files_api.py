@@ -189,6 +189,10 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(evidence["run_id"], run_id)
         self.assertEqual(evidence["plan_id"], plan["id"])
         self.assertEqual(evidence["verification_summary"]["passed"], 1)
+        self.assertEqual(evidence["verification_evidence_summary"]["command_coverage_state"], "passed")
+        self.assertEqual(evidence["verification_evidence_summary"]["configured_commands"], 1)
+        self.assertEqual(evidence["verification_evidence_summary"]["recorded_checks"], 1)
+        self.assertEqual(evidence["verification_evidence_summary"]["unrecorded_commands"], 0)
         check = evidence["steps"][0]["verification_checks"][0]
         self.assertEqual(check["execution_id"], "execution-123")
         managed = check["managed_execution"]
