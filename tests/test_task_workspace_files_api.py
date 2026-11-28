@@ -206,7 +206,7 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
             self.app.state.lab_db.connection.commit()
             orchestration.record_verification(
                 self.app.state.lab_db.connection, plan["id"], step_id,
-                ["python", "-m", "unittest"], "passed", 0, "OK", "",
+                ["python", "-m", "unittest"], "passed", 0, "S" * 9000, "E" * 9000,
                 execution_id=execution_id,
                 workspace_fingerprint_before="a" * 64,
                 workspace_fingerprint_after="a" * 64,
@@ -247,6 +247,12 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(managed["timeout_seconds"], 120)
         self.assertEqual(managed["returncode"], 0)
         self.assertEqual(check["status"], "passed")
+        self.assertEqual(len(check["stdout"]), 8192)
+        self.assertTrue(check["stdout_truncated"])
+        self.assertEqual(check["stdout"][-20:], "S" * 20)
+        self.assertEqual(len(check["stderr"]), 8192)
+        self.assertTrue(check["stderr_truncated"])
+        self.assertEqual(check["stderr"][-20:], "E" * 20)
         self.assertEqual(check["workspace_fingerprint_before"], "a" * 64)
         self.assertEqual(check["workspace_fingerprint_after"], "a" * 64)
         self.assertTrue(check["workspace_snapshot_stable"])

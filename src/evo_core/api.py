@@ -528,7 +528,10 @@ def create_app(config_path="config.toml", provider_name=None):
                             "workspace_fingerprint_before": check.get("workspace_fingerprint_before"),
                             "workspace_fingerprint_after": check.get("workspace_fingerprint_after"),
                             "workspace_snapshot_stable": (None if check.get("workspace_snapshot_stable") is None else bool(check.get("workspace_snapshot_stable"))),
-                            "stdout": check["stdout"], "stderr": check["stderr"],
+                            "stdout": bounded_execution_output(check.get("stdout", ""))[0],
+                            "stdout_truncated": bounded_execution_output(check.get("stdout", ""))[1],
+                            "stderr": bounded_execution_output(check.get("stderr", ""))[0],
+                            "stderr_truncated": bounded_execution_output(check.get("stderr", ""))[1],
                         } for check in step.get("verification_checks", [])],
                     } for step in plan["steps"]]
             evidence.append(item)
