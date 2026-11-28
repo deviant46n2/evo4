@@ -13,6 +13,7 @@ from evo_core.task_workspaces import (
     TaskWorkspaceValidationError,
     create_task_workspace,
     get_task_workspace_for_task,
+    get_task_workspace_review,
     get_task_workspace_operation,
 )
 
@@ -188,6 +189,39 @@ class TaskWorkspaceTests(unittest.TestCase):
                 self.store, self.workspace["workspace_id"], " ", self.destinations
             )
 
+
+
+    def test_review_reports_tracked_and_untracked(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-review", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / "tracked.txt").write_text("changed\n")
+        (task_path / "new.txt").write_text("new file\n")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertEqual(review["status"], "ok")
+        self.assertTrue(review["stable"])
+        paths = {item["path"] for item in review["changed_files"]}
+        self.assertIn("tracked.txt", paths)
+        self.assertIn("new.txt", paths)
+        self.assertIn("tracked.txt", review["patch"])
+        self.assertIn("new.txt", review["patch"])
+
+    def test_review_excludes_sensitive_and_reports_unreadable(self):
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "task-review-2", self.destinations
+        )
+        task_path = Path(result["canonical_path"])
+        (task_path / ".env").write_text("secret")
+        (task_path / "binary.dat").write_bytes(b"\x00\x01")
+        review = get_task_workspace_review(self.store, result["operation_id"])
+        self.assertIn(".env", review["excluded_files"])
+        reasons = {item["reason"] for item in review["unreadable_files"]}
+        self.assertIn("binary", reasons)
+
+    def test_review_rejects_incomplete_operation(self):
+        with self.assertRaises(Exception):
+            get_task_workspace_review(self.store, "missing-operation")
 
 if __name__ == "__main__":
     unittest.main()

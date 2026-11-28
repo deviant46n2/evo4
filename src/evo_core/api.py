@@ -30,6 +30,7 @@ from .runtime_invocation_snapshots import (
 from .coding_agent import CodingAgent
 from .task_workspaces import (
     create_task_workspace,
+    get_task_workspace_review,
     TaskWorkspaceConflictError,
     TaskWorkspaceProvisioningError,
     TaskWorkspaceValidationError,
@@ -290,6 +291,17 @@ def create_app(config_path="config.toml", provider_name=None):
                     "status": exc.status,
                 },
             ) from exc
+
+    @app.get("/api/v1/task-workspaces/{operation_id}/review")
+    def task_workspace_review(operation_id: str):
+        try:
+            return get_task_workspace_review(store, operation_id)
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TaskWorkspaceProvisioningError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/api/v1/workspaces/{workspace_id}/runtime-binding")
     def workspace_runtime_binding_info(workspace_id: str):

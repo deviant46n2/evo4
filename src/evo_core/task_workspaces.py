@@ -19,6 +19,7 @@ from .project_checkouts import (
     register_checkout,
 )
 from .store import utc_now
+from .workspace import _is_excluded
 from .workspaces import (
     WorkspaceConflictError,
     WorkspaceRelationshipError,
@@ -348,6 +349,179 @@ def get_task_workspace_operation(store, operation_id):
     if row is None:
         raise TaskWorkspaceValidationError("task workspace operation not found")
     return dict(row)
+
+
+DEFAULT_REVIEW_MAX_FILES = 100
+DEFAULT_REVIEW_MAX_BYTES = 256 * 1024
+
+
+def get_task_workspace_review(
+    store,
+    operation_id,
+    *,
+    max_files=DEFAULT_REVIEW_MAX_FILES,
+    max_bytes=DEFAULT_REVIEW_MAX_BYTES,
+):
+    """Return a bounded, read-only review artifact for a completed task workspace."""
+    _ensure_table(store)
+    operation = get_task_workspace_operation(store, operation_id)
+    if operation["status"] != "completed":
+        raise TaskWorkspaceValidationError(
+            "task workspace operation is not completed and cannot be reviewed"
+        )
+    if not operation.get("task_workspace_id") or not operation.get("checkout_id"):
+        raise TaskWorkspaceValidationError("task workspace operation is incomplete")
+    binding = resolve_executable_workspace(store, operation["task_workspace_id"])
+    if binding["checkout_id"] != operation["checkout_id"]:
+        raise TaskWorkspaceValidationError("task workspace checkout does not match the operation")
+    if str(binding.path) != str(operation["destination_path"]):
+        raise TaskWorkspaceValidationError("task workspace path does not match the recorded destination")
+
+    root = binding.path
+    baseline = operation["source_revision"]
+    max_files = max(1, int(max_files))
+    max_bytes = max(1024, int(max_bytes))
+
+    head_before = _git(root, "rev-parse", "--verify", "HEAD")
+    status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
+
+    changed = []  # list of (status, path)
+    excluded = []
+    unreadable = []
+    patch_parts = []
+    total_bytes = 0
+    truncated = False
+    truncation_reason = None
+    unstable = False
+
+    def add_text(text):
+        nonlocal total_bytes, truncated, truncation_reason
+        data = text.encode("utf-8", errors="replace")
+        if total_bytes + len(data) > max_bytes:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "output_limit"
+            return False
+        patch_parts.append(text)
+        total_bytes += len(data)
+        return True
+
+    # Tracked changes relative to the immutable baseline.
+    try:
+        name_status = _git(root, "diff", "--name-status", baseline)
+    except TaskWorkspaceProvisioningError:
+        name_status = ""
+    tracked_lines = [line for line in name_status.splitlines() if line.strip()]
+    for line in tracked_lines:
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0].strip()
+        path = parts[-1].strip()
+        if not path:
+            continue
+        rel = Path(path)
+        if _is_excluded(rel):
+            excluded.append(path)
+            continue
+        if (root / rel).is_symlink():
+            unreadable.append({"path": path, "reason": "symlink"})
+            continue
+        if len(changed) >= max_files:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "file_limit"
+            continue
+        changed.append((status, path))
+
+    # Untracked files.
+    try:
+        untracked_output = _git(root, "ls-files", "--others", "--exclude-standard")
+    except TaskWorkspaceProvisioningError:
+        untracked_output = ""
+    untracked_paths = [p for p in untracked_output.splitlines() if p.strip()]
+    for path in untracked_paths:
+        rel = Path(path)
+        if _is_excluded(rel):
+            excluded.append(path)
+            continue
+        candidate = root / rel
+        if candidate.is_symlink():
+            unreadable.append({"path": path, "reason": "symlink"})
+            continue
+        if not candidate.is_file():
+            continue
+        if len(changed) >= max_files:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "file_limit"
+            continue
+        changed.append(("?", path))
+
+    # Build patch for tracked changes.
+    if not truncated:
+        try:
+            tracked_patch = _git(root, "diff", baseline)
+        except TaskWorkspaceProvisioningError:
+            tracked_patch = ""
+        if tracked_patch:
+            if not add_text(tracked_patch + "\n"):
+                truncated = True
+                if truncation_reason is None:
+                    truncation_reason = "output_limit"
+
+    # Include readable untracked file contents.
+    for status, path in changed:
+        if status != "?":
+            continue
+        if truncated and truncation_reason == "output_limit":
+            break
+        candidate = root / Path(path)
+        try:
+            data = candidate.read_bytes()
+        except OSError:
+            unreadable.append({"path": path, "reason": "unreadable"})
+            continue
+        if b"\x00" in data[:4096]:
+            unreadable.append({"path": path, "reason": "binary"})
+            continue
+        text = data.decode("utf-8", errors="replace")
+        entry = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,1 @@\n"
+        # Keep it simple: include full content as an added file.
+        content_lines = text.splitlines()
+        entry += "".join(f"+{line}\n" for line in content_lines)
+        if not add_text(entry):
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "output_limit"
+            break
+
+    head_after = _git(root, "rev-parse", "--verify", "HEAD")
+    status_after = _git(root, "status", "--porcelain", "--untracked-files=all")
+    snapshot_stable = (head_before == head_after and status_before == status_after)
+    if not snapshot_stable:
+        unstable = True
+        if truncation_reason is None:
+            truncation_reason = "snapshot_unstable"
+
+    return {
+        "operation_id": operation["operation_id"],
+        "status": "ok",
+        "stable": snapshot_stable,
+        "unstable": unstable,
+        "source_revision": baseline,
+        "current_head": head_after,
+        "changed_files": [{"status": s, "path": p} for s, p in changed],
+        "changed_file_count": len(changed),
+        "excluded_files": sorted(set(excluded)),
+        "unreadable_files": unreadable,
+        "patch": "".join(patch_parts),
+        "patch_bytes": total_bytes,
+        "truncated": truncated,
+        "truncation_reason": truncation_reason,
+        "max_files": max_files,
+        "max_bytes": max_bytes,
+    }
 
 
 def get_task_workspace_for_task(store, project_id, task_id):
