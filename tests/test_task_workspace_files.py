@@ -189,6 +189,50 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             {first["change_id"], second["change_id"]},
         )
 
+    def test_legacy_change_history_schema_is_migrated(self):
+        with self.store.lock:
+            self.store.db.execute(
+                """CREATE TABLE task_workspace_file_changes (
+                    change_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL REFERENCES task_workspaces(operation_id)
+                        ON DELETE RESTRICT,
+                    path TEXT NOT NULL,
+                    before_sha256 TEXT,
+                    after_sha256 TEXT NOT NULL,
+                    size_bytes INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )"""
+            )
+            self.store.db.commit()
+        result = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "migrated.txt",
+            "migration", approved=True,
+        )
+        history = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"],
+        )
+        self.assertEqual(history["items"][0]["change_id"], result["change_id"])
+        self.assertEqual(history["items"][0]["status"], "applied")
+        self.assertIn("error_code", history["items"][0])
+        self.assertIn("finalized_at", history["items"][0])
+
+    def test_filesystem_failure_is_recorded_as_failed_attempt(self):
+        from unittest.mock import patch
+
+        with patch("evo_core.task_workspace_files.os.link", side_effect=FileExistsError):
+            with self.assertRaises(ValueError):
+                apply_task_workspace_file(
+                    self.store, self.operation["operation_id"], "raced.txt",
+                    "content", approved=True,
+                )
+        history = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"],
+        )
+        self.assertEqual(history["total"], 1)
+        self.assertEqual(history["items"][0]["path"], "raced.txt")
+        self.assertEqual(history["items"][0]["status"], "failed")
+        self.assertEqual(history["items"][0]["error_code"], "filesystem_error")
+
     def test_interrupted_file_change_journal_is_reconciled(self):
         import hashlib
         import uuid
