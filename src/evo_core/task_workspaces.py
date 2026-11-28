@@ -625,7 +625,7 @@ def get_task_workspace_review(
         if remaining <= 0:
             raise TaskWorkspaceProvisioningError("task workspace review deadline exceeded")
         kwargs["timeout"] = min(kwargs.get("timeout", 30), remaining)
-        return _review_git( *git_args, **kwargs)
+        return _git(root, *git_args, **kwargs)
 
     head_before_truncated = []
     head_before = _review_git( "rev-parse", "--verify", "HEAD", max_output_bytes=4096, truncated=head_before_truncated)
