@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import uuid
+import threading
 from pathlib import Path
 
 from .project_checkouts import (
@@ -85,7 +86,7 @@ def _ensure_table(store):
         db.commit()
 
 
-def _git(path, *args, timeout=30, max_output_bytes=None):
+def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None):
     # Do not inherit repository-selection or index overrides from the Evo
     # server environment; they could redirect Git away from the validated path.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -131,6 +132,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None):
             stdout = result.stdout
             stderr = result.stderr
             returncode = result.returncode
+            was_truncated = False
         else:
             proc = subprocess.Popen(
                 command,
@@ -142,17 +144,49 @@ def _git(path, *args, timeout=30, max_output_bytes=None):
                 shell=False,
                 env=env,
             )
+            stdout_chunks = []
+            stderr_chunks = []
+            stdout_len = [0]
+            stderr_len = [0]
+            exceeded = {"value": False}
+
+            def _reader(stream, chunks, counter):
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    if counter[0] + len(chunk) > max_output_bytes:
+                        keep = max_output_bytes - counter[0]
+                        if keep > 0:
+                            chunks.append(chunk[:keep])
+                            counter[0] += keep
+                        exceeded["value"] = True
+                        try:
+                            proc.kill()
+                        except (OSError, ProcessLookupError):
+                            pass
+                        break
+                    chunks.append(chunk)
+                    counter[0] += len(chunk)
+                stream.close()
+
+            t1 = threading.Thread(target=_reader, args=(proc.stdout, stdout_chunks, stdout_len), daemon=True)
+            t2 = threading.Thread(target=_reader, args=(proc.stderr, stderr_chunks, stderr_len), daemon=True)
+            t1.start()
+            t2.start()
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
+                proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                stdout, stderr = proc.communicate()
-                raise TaskWorkspaceProvisioningError(f"git operation timed out")
+                exceeded["value"] = True
+            t1.join(timeout=timeout)
+            t2.join(timeout=timeout)
+            stdout = "".join(stdout_chunks)
+            stderr = "".join(stderr_chunks)
             returncode = proc.returncode
-            if len(stdout) > max_output_bytes:
-                stdout = stdout[:max_output_bytes]
-            if len(stderr) > max_output_bytes:
-                stderr = stderr[:max_output_bytes]
+            was_truncated = exceeded["value"] or len(stdout) >= max_output_bytes
+        if truncated is not None and was_truncated:
+            truncated.append(True)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise TaskWorkspaceProvisioningError(f"git operation could not complete: {exc}") from exc
     if returncode:
@@ -428,7 +462,8 @@ def get_task_workspace_review(
 
     head_before = _git(root, "rev-parse", "--verify", "HEAD")
     status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
-    diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024)
+    diff_before_truncated = []
+    diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
     untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
 
     changed = []  # list of (status, path)
@@ -528,13 +563,16 @@ def get_task_workspace_review(
 
     # Build patch from individually approved tracked paths.
     if not truncated:
-        for status, path in [(s, p) for (s, p, _) in []]:
-            pass
         for status, path, old_path in [c for c in changed if c[0] != "?"]:
             if truncated and truncation_reason == "output_limit":
                 break
             try:
-                file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024)
+                file_diff_truncated = []
+                file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated)
+                if file_diff_truncated:
+                    truncated = True
+                    if truncation_reason is None:
+                        truncation_reason = "output_limit"
             except TaskWorkspaceProvisioningError:
                 file_diff = ""
             if file_diff:
