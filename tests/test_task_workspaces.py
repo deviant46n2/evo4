@@ -395,6 +395,26 @@ class TaskWorkspaceTests(unittest.TestCase):
         self.assertIsNone(snapshot["recovery_guidance"])
         self.assertTrue(Path(result["canonical_path"]).is_dir())
 
+    def test_interrupted_operation_is_reported_without_automatic_recovery(self):
+        from evo_core.task_workspaces import (
+            get_task_workspace_operation_status, _record,
+        )
+
+        result = create_task_workspace(
+            self.store, self.workspace["workspace_id"], "interrupted-inspection",
+            self.destinations,
+        )
+        _record(self.store, result["operation_id"], status="recovery_required",
+                error="injected interrupted state")
+        before = get_task_workspace_operation(self.store, result["operation_id"])
+        snapshot = get_task_workspace_operation_status(self.store, result["operation_id"])
+        after = get_task_workspace_operation(self.store, result["operation_id"])
+        self.assertEqual(snapshot["status"], "recovery_required")
+        self.assertIn("Inspect the recorded destination", snapshot["recovery_guidance"])
+        self.assertTrue(snapshot["filesystem"]["path_is_directory"])
+        self.assertEqual(after["status"], before["status"])
+        self.assertTrue(Path(result["canonical_path"]).is_dir())
+
     def test_operation_list_rejects_invalid_filters(self):
         from evo_core.task_workspaces import list_task_workspace_operations
         for kwargs in ({"limit": 0}, {"limit": True}, {"limit": 501},
