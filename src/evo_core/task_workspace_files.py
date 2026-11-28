@@ -388,7 +388,7 @@ def apply_task_workspace_file(
                 if original_signature != after_signature:
                     raise TaskWorkspaceValidationError("file changed during update check; reload before applying")
                 before_sha256 = digest.hexdigest()
-                if before_sha256 != expected_sha256:
+                if expected_sha256 is not None and before_sha256 != expected_sha256:
                     raise TaskWorkspaceValidationError("file changed since it was opened; reload before applying")
                 mode = stat.S_IMODE(before.st_mode)
             finally:
