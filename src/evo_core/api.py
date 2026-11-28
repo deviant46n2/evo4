@@ -393,6 +393,41 @@ def create_app(config_path="config.toml", provider_name=None):
                    ORDER BY started_at DESC LIMIT 20""",
                 (operation["operation_id"],),
             ).fetchall()
+        from evo_experiments.execution import get_execution
+
+        def matching_managed_execution(execution_id, command, run_id):
+            if not isinstance(execution_id, str) or not execution_id:
+                return None
+            with lab_db.lock:
+                record = get_execution(lab_db.connection, execution_id)
+            if record is None or (
+                record.get("agent_run_id") != run_id
+                or record.get("workspace_id") != operation.get("task_workspace_id")
+                or record.get("project_id") != operation.get("project_id")
+                or record.get("source_revision") != operation.get("source_revision")
+                or record.get("workspace") != operation.get("destination_path")
+                or record.get("argv") != command
+            ):
+                return None
+            approval = record.get("approval_evidence") or {}
+            return {
+                "id": record["id"],
+                "status": record.get("status"),
+                "argv": record.get("argv"),
+                "effective_command_policy": record.get("allowed_commands"),
+                "working_directory": record.get("workspace"),
+                "source_revision": record.get("source_revision"),
+                "timeout_seconds": record.get("timeout_seconds"),
+                "requested_at": record.get("requested_at"),
+                "started_at": record.get("started_at"),
+                "finished_at": record.get("finished_at"),
+                "returncode": record.get("returncode"),
+                "elapsed_seconds": record.get("elapsed_seconds"),
+                "approval_source": approval.get("approval_source"),
+                "approved_at": approval.get("approved_at"),
+                "argv_sha256": approval.get("argv_sha256"),
+            }
+
         evidence = []
         for row in rows:
             try:
@@ -443,6 +478,8 @@ def create_app(config_path="config.toml", provider_name=None):
                             "status": check["status"], "exit_code": check["exit_code"],
                             "created_at": check["created_at"],
                             "execution_id": check.get("execution_id"),
+                            "managed_execution": matching_managed_execution(
+                                check.get("execution_id"), check["command"], row["id"]),
                             "workspace_fingerprint_before": check.get("workspace_fingerprint_before"),
                             "workspace_fingerprint_after": check.get("workspace_fingerprint_after"),
                             "workspace_snapshot_stable": (None if check.get("workspace_snapshot_stable") is None else bool(check.get("workspace_snapshot_stable"))),
