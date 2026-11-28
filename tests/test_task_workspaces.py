@@ -86,6 +86,17 @@ class TaskWorkspaceTests(unittest.TestCase):
             result["operation_id"],
         )
 
+
+    def test_repository_post_checkout_hook_is_not_executed(self):
+        marker = self.root / "hook-ran"
+        hook = self.source / ".git" / "hooks" / "post-checkout"
+        hook.write_text(f"#!/bin/sh\\ntouch '{marker}'\\n", encoding="utf-8")
+        hook.chmod(0o755)
+        create_task_workspace(
+            self.store, self.workspace["workspace_id"], "hook-test", self.destinations
+        )
+        self.assertFalse(marker.exists())
+
     def test_dirty_source_is_rejected_without_creating_worktree(self):
         (self.source / "tracked.txt").write_text("modified\n", encoding="utf-8")
         with self.assertRaises(TaskWorkspaceConflictError):

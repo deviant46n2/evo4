@@ -102,14 +102,14 @@ def _git(path, *args, timeout=30):
     if args[:2] == ("worktree", "add"):
         config = subprocess.run(
             ["git", "-C", str(path), "config", "--local", "--name-only", "--get-regexp",
-             r"^filter\\..*\\.(smudge|process)$"],
+             r"^filter\..*\.(smudge|process)$"],
             text=True, encoding="utf-8", errors="replace",
             capture_output=True, check=False, timeout=10, shell=False, env=env,
         )
         if config.returncode not in (0, 1):
             raise TaskWorkspaceProvisioningError("could not inspect repository filter configuration")
         for key in sorted(set(config.stdout.splitlines())):
-            if re.fullmatch(r"filter\\.[A-Za-z0-9._-]+\\.(smudge|process)", key):
+            if re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key):
                 command.extend(["-c", f"{key}="])
     command.extend(args)
     try:
