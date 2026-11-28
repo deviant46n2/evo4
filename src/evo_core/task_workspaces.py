@@ -212,6 +212,7 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
     stdout_chunks, stderr_chunks = [], []
     total = [0]
     exceeded = [False]
+    reader_errors = []
     lock = threading.Lock()
 
     try:
@@ -221,29 +222,43 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         )
 
         def reader(stream, chunks):
-            while True:
-                chunk = os.read(stream.fileno(), 8192)
-                if not chunk:
-                    break
-                with lock:
-                    available = max(0, limit - total[0])
-                    if available:
-                        kept = chunk[:available]
-                        chunks.append(kept)
-                        total[0] += len(kept)
-                    if len(chunk) > available:
-                        exceeded[0] = True
-                        try:
-                            os.killpg(proc.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        except OSError:
-                            try:
-                                proc.kill()
-                            except OSError:
-                                pass
+            try:
+                while True:
+                    chunk = os.read(stream.fileno(), 8192)
+                    if not chunk:
                         break
-            stream.close()
+                    with lock:
+                        available = max(0, limit - total[0])
+                        if available:
+                            kept = chunk[:available]
+                            chunks.append(kept)
+                            total[0] += len(kept)
+                        if len(chunk) > available:
+                            exceeded[0] = True
+                            try:
+                                os.killpg(proc.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            except OSError:
+                                try:
+                                    proc.kill()
+                                except OSError:
+                                    pass
+                            break
+            except OSError as exc:
+                reader_errors.append(exc)
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+            finally:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
         out_thread = threading.Thread(target=reader, args=(proc.stdout, stdout_chunks), daemon=True)
         err_thread = threading.Thread(target=reader, args=(proc.stderr, stderr_chunks), daemon=True)
@@ -265,6 +280,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
             raise TaskWorkspaceProvisioningError("git output collection did not terminate")
         if proc.returncode is None:
             raise TaskWorkspaceProvisioningError("git process was not reaped")
+        if reader_errors:
+            raise TaskWorkspaceProvisioningError("git output collection failed") from reader_errors[0]
         stdout = b"".join(stdout_chunks).decode("utf-8", errors="surrogateescape")
         stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
         if metrics is not None:
