@@ -908,7 +908,11 @@ def get_task_workspace_review(
         if binary:
             record_unreadable(path, "binary")
             continue
-        text = data.decode("utf-8", errors="replace")
+        try:
+            text = data.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            record_unreadable(path, "invalid_utf8")
+            continue
         quoted_path = _quote_patch_path(path)
         entry = f"diff --git a/{quoted_path} b/{quoted_path}\nnew file mode {100755 if (st_before.st_mode & 0o111) else 100644}\n--- /dev/null\n+++ b/{quoted_path}\n"
         content_lines = text.splitlines()
