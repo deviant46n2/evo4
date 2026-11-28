@@ -419,10 +419,10 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(len(executions), 1)
         self.assertEqual(executions[0]["argv"], ["python", "-m", "unittest"])
         self.assertEqual(executions[0]["returncode"], 0)
-        self.assertEqual(approvals[0][0], "run_command")
+        command_approval = next(args for name, args in approvals if name == "run_command")
         self.assertEqual(
             executions[0]["execution_specification_sha256"],
-            approvals[0][1]["execution_specification_sha256"],
+            command_approval["execution_specification_sha256"],
         )
         self.assertEqual(executions[0]["artifacts"][0]["path"], "generated.py")
         self.assertEqual(executions[0]["artifacts"][0]["status"], "collected")
