@@ -189,6 +189,52 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             {first["change_id"], second["change_id"]},
         )
 
+    def test_interrupted_file_change_journal_is_reconciled(self):
+        import hashlib
+        import uuid
+        from evo_core.store import utc_now
+
+        applied = apply_task_workspace_file(
+            self.store, self.operation["operation_id"], "reconcile.txt",
+            "current", approved=True,
+        )
+        with self.store.lock:
+            self.store.db.execute(
+                "UPDATE task_workspace_file_changes SET status='pending' WHERE change_id=?",
+                (applied["change_id"],),
+            )
+            failed_id = str(uuid.uuid4())
+            self.store.db.execute(
+                """INSERT INTO task_workspace_file_changes
+                   (change_id, operation_id, path, before_sha256, after_sha256,
+                    size_bytes, created_at, status)
+                   VALUES (?, ?, ?, NULL, ?, ?, ?, 'pending')""",
+                (failed_id, self.operation["operation_id"], "not-created.txt",
+                 hashlib.sha256(b"future").hexdigest(), 6, utc_now()),
+            )
+            uncertain_id = str(uuid.uuid4())
+            self.store.db.execute(
+                """INSERT INTO task_workspace_file_changes
+                   (change_id, operation_id, path, before_sha256, after_sha256,
+                    size_bytes, created_at, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')""",
+                (uncertain_id, self.operation["operation_id"], "reconcile.txt",
+                 hashlib.sha256(b"old").hexdigest(), hashlib.sha256(b"new").hexdigest(),
+                 3, utc_now()),
+            )
+            self.store.db.commit()
+
+        history = list_task_workspace_file_changes(
+            self.store, self.operation["operation_id"], limit=10,
+        )
+        statuses = {item["change_id"]: item for item in history["items"]}
+        self.assertEqual(statuses[applied["change_id"]]["status"], "applied")
+        self.assertEqual(statuses[failed_id]["status"], "failed")
+        self.assertEqual(statuses[uncertain_id]["status"], "indeterminate")
+        self.assertEqual(
+            statuses[failed_id]["error_code"], "interrupted_before_create",
+        )
+
     def test_apply_requires_approval_and_expected_hash_for_replacement(self):
         import hashlib
         target = self.task_root / "README.txt"
