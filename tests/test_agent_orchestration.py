@@ -145,6 +145,37 @@ class AgentOrchestrationTests(unittest.TestCase):
         self.assertEqual(missing_exit_code["passed_checks"], 0)
         self.assertEqual(missing_exit_code["command_coverage_state"], "failed")
 
+    def test_verification_output_truncation_provenance_is_persisted(self):
+        plan = orchestration.create_plan(self.db, "Capture output", "/workspace", {
+            "title": "Capture output", "summary": "Preserve bounded verification output.",
+            "steps": [{
+                "title": "Verify", "description": "Run the configured check.",
+                "expected_outcome": "The check completes.", "verification": "Inspect its output.",
+                "verification_commands": [["pytest", "-q"]],
+            }],
+        })
+        step_id = plan["steps"][0]["id"]
+        orchestration.record_verification(
+            self.db, plan["id"], step_id, ["pytest", "-q"], "passed", 0,
+            "X" * 8192, "Y" * 8192,
+        )
+        orchestration.record_verification(
+            self.db, plan["id"], step_id, ["pytest", "-q"], "passed", 0,
+            "S" * 9000, "E" * 9000,
+        )
+        checks = orchestration.get_plan(self.db, plan["id"])["steps"][0]["verification_checks"]
+        exact, oversized = checks
+        self.assertEqual(len(exact["stdout"]), 8192)
+        self.assertEqual(len(exact["stderr"]), 8192)
+        self.assertFalse(exact["stdout_truncated"])
+        self.assertFalse(exact["stderr_truncated"])
+        self.assertEqual(len(oversized["stdout"]), 8192)
+        self.assertEqual(len(oversized["stderr"]), 8192)
+        self.assertTrue(oversized["stdout_truncated"])
+        self.assertTrue(oversized["stderr_truncated"])
+        self.assertEqual(oversized["stdout"][-20:], "S" * 20)
+        self.assertEqual(oversized["stderr"][-20:], "E" * 20)
+
     def test_plan_is_proposed_and_steps_are_ordered(self):
         self.assertEqual(self.plan["status"], "proposed")
         self.assertEqual([s["position"] for s in self.plan["steps"]], [0, 1])
