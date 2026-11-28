@@ -34,14 +34,14 @@ class TaskWorkspaceCliTests(unittest.TestCase):
     @patch("evo_core.task_workspaces.get_task_workspace_operation_status")
     def test_show_is_read_only_status_lookup(self, get_status):
         get_status.return_value = {"operation_id": "operation-1", "status": "recovery_required"}
-        args = unittest.mock.Namespace(task_workspace_command="show", operation_id="operation-1")
+        args = argparse.Namespace(task_workspace_command="show", operation_id="operation-1")
         self.assertEqual(_task_workspace_command(object(), args), get_status.return_value)
         get_status.assert_called_once_with(ANY, "operation-1")
 
     @patch("evo_core.task_workspaces.get_task_workspace_review")
     def test_review_returns_bounded_review_artifact(self, get_review):
         get_review.return_value = {"stable": True, "patch": "diff"}
-        args = unittest.mock.Namespace(task_workspace_command="review", operation_id="operation-1")
+        args = argparse.Namespace(task_workspace_command="review", operation_id="operation-1")
         self.assertEqual(_task_workspace_command(object(), args), get_review.return_value)
         get_review.assert_called_once_with(ANY, "operation-1")
 
