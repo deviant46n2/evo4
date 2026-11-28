@@ -1,3 +1,4 @@
+import argparse
 import unittest
 from unittest.mock import ANY, patch
 
@@ -20,7 +21,7 @@ class TaskWorkspaceCliTests(unittest.TestCase):
     @patch("evo_core.task_workspaces.list_task_workspace_operations")
     def test_list_passes_filters_and_limit(self, list_operations):
         list_operations.return_value = [{"operation_id": "operation-1"}]
-        args = unittest.mock.Namespace(
+        args = argparse.Namespace(
             task_workspace_command="list", project_id="project-1",
             status="recovery_required", limit=25,
         )
