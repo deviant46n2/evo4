@@ -102,6 +102,28 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         self.assertGreater(result["total"], 2)
         self.assertTrue(result["truncated"])
 
+    def test_directory_scan_budget_bounds_work_and_marks_total_inexact(self):
+        from unittest.mock import patch
+
+        for name in ("a.txt", "b.txt", "c.txt", "d.txt", "e.txt"):
+            (self.task_root / name).write_text(name)
+        with patch("evo_core.task_workspace_files.MAX_DIRECTORY_SCAN_ENTRIES", 3):
+            result = list_task_workspace_files(
+                self.store, self.operation["operation_id"], limit=2,
+            )
+        self.assertEqual(result["scan_limit"], 3)
+        self.assertEqual(result["total"], 3)
+        self.assertFalse(result["total_exact"])
+        self.assertTrue(result["scan_truncated"])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["items"]), 2)
+
+    def test_directory_scan_reports_exact_total_when_under_budget(self):
+        (self.task_root / "one.txt").write_text("one")
+        result = list_task_workspace_files(self.store, self.operation["operation_id"])
+        self.assertTrue(result["total_exact"])
+        self.assertFalse(result["scan_truncated"])
+
     def test_reads_utf8_file_with_size_and_revision_metadata(self):
         (self.task_root / "notes.txt").write_text("Evo workspace ✓\n", encoding="utf-8")
         result = read_task_workspace_file(

@@ -23,6 +23,7 @@ from .workspaces import (
 
 DEFAULT_LIST_LIMIT = 200
 MAX_LIST_LIMIT = 500
+MAX_DIRECTORY_SCAN_ENTRIES = 10_000
 DEFAULT_READ_BYTES = 256 * 1024
 MAX_READ_BYTES = 1024 * 1024
 PENDING_WRITE_RECOVERY_AGE_SECONDS = 30
@@ -95,45 +96,58 @@ def list_task_workspace_files(store, operation_id, *, path="", limit=DEFAULT_LIS
     except (OSError, ValueError) as exc:
         raise TaskWorkspaceValidationError("directory is unavailable or contains a symlink") from exc
     try:
-        names = os.listdir(directory_fd)
         entries = []
         omitted = 0
-        for name in names:
-            if name == ".git":
-                continue
-            child = relative / name if str(relative) != "." else PurePosixPath(name)
-            if _is_excluded(Path(str(child))):
-                continue
-            try:
-                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-            except OSError:
-                omitted += 1
-                continue
-            if stat.S_ISLNK(info.st_mode):
-                kind = "symlink"
-            elif stat.S_ISDIR(info.st_mode):
-                kind = "directory"
-            elif stat.S_ISREG(info.st_mode):
-                kind = "file"
-            else:
-                kind = "other"
-            entries.append({
-                "name": name,
-                "path": str(child),
-                "kind": kind,
-                "size_bytes": info.st_size if kind == "file" else None,
-                "modified_at_ns": info.st_mtime_ns,
-            })
+        total = 0
+        scanned = 0
+        scan_truncated = False
+        # os.listdir() materializes every name before the response limit can be
+        # applied. Stream the directory and stop at a hard scan budget instead.
+        with os.scandir(directory_fd) as directory_entries:
+            for entry in directory_entries:
+                if scanned >= MAX_DIRECTORY_SCAN_ENTRIES:
+                    scan_truncated = True
+                    break
+                scanned += 1
+                name = entry.name
+                if name == ".git":
+                    continue
+                child = relative / name if str(relative) != "." else PurePosixPath(name)
+                if _is_excluded(Path(str(child))):
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    omitted += 1
+                    continue
+                if stat.S_ISLNK(info.st_mode):
+                    kind = "symlink"
+                elif stat.S_ISDIR(info.st_mode):
+                    kind = "directory"
+                elif stat.S_ISREG(info.st_mode):
+                    kind = "file"
+                else:
+                    kind = "other"
+                entries.append({
+                    "name": name,
+                    "path": str(child),
+                    "kind": kind,
+                    "size_bytes": info.st_size if kind == "file" else None,
+                    "modified_at_ns": info.st_mtime_ns,
+                })
+                total += 1
         entries.sort(key=lambda item: (item["kind"] != "directory", item["name"].casefold(), item["name"]))
-        total = len(entries)
         return {
             "operation_id": operation["operation_id"],
             "source_revision": operation["source_revision"],
             "path": "" if str(relative) == "." else str(relative),
             "items": entries[:limit],
             "total": total,
+            "total_exact": not scan_truncated,
+            "scan_truncated": scan_truncated,
+            "scan_limit": MAX_DIRECTORY_SCAN_ENTRIES,
             "omitted_unreadable": omitted,
-            "truncated": total > limit,
+            "truncated": total > limit or scan_truncated,
             "limit": limit,
         }
     finally:
