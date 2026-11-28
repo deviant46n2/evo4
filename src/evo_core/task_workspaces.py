@@ -122,7 +122,6 @@ def _cleanup_process_group(proc):
         pass
 
 
-_GIT_HELPER_CACHE = {}
 _DEFAULT_GIT_OUTPUT_BYTES = 8 * 1024 * 1024
 
 
@@ -144,59 +143,35 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
     root = str(Path(path).resolve())
     overrides = []
     if discover_helpers:
-        git_marker = Path(root) / ".git"
-        try:
-            if git_marker.is_dir():
-                git_dir = git_marker
-            else:
-                marker_text = git_marker.read_text(encoding="utf-8").strip()
-                git_dir = Path(marker_text.split(":", 1)[1].strip())
-                if not git_dir.is_absolute():
-                    git_dir = (Path(root) / git_dir).resolve()
-            common_file = git_dir / "commondir"
-            common_dir = git_dir
-            if common_file.exists():
-                common_text = common_file.read_text(encoding="utf-8").strip()
-                common_dir = Path(common_text)
-                if not common_dir.is_absolute():
-                    common_dir = (git_dir / common_dir).resolve()
-            config_path = common_dir / "config"
-            st = config_path.stat()
-            cache_key = (root, st.st_mtime_ns, st.st_size, st.st_ino)
-        except OSError:
-            cache_key = (root, None)
-        cached = _GIT_HELPER_CACHE.get(cache_key)
-        if cached is None:
-            helper_keys = []
-            for pattern in (
-                r"^filter\..*\.(clean|smudge|process)$",
-                r"^diff\..*\.(command|textconv)$",
-            ):
-                discovery_truncated = []
-                try:
-                    discovery_remaining = operation_deadline - __import__("time").monotonic()
-                    if discovery_remaining <= 0:
-                        raise TaskWorkspaceProvisioningError("git helper discovery timed out")
-                    discovery = _git(
-                        root, "config", "--local", "--name-only", "--get-regexp", pattern,
-                        timeout=min(discovery_remaining, 10), max_output_bytes=65536,
-                        truncated=discovery_truncated, env=safe_env, discover_helpers=False,
-                    )
-                except TaskWorkspaceProvisioningError as exc:
-                    if getattr(exc, "exit_code", None) == 1:
-                        discovery = ""
-                    else:
-                        raise
-                if discovery_truncated:
-                    raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
-                helper_keys.extend(line for line in discovery.splitlines() if line)
-            for key in sorted(set(helper_keys)):
-                if re.fullmatch(r'filter\..+\.(clean|smudge|process)', key) or re.fullmatch(r'diff\..+\.(command|textconv)', key):
-                    overrides.extend(["-c", f"{key}="])
-            _GIT_HELPER_CACHE.clear()
-            _GIT_HELPER_CACHE[cache_key] = tuple(overrides)
-        else:
-            overrides = list(cached)
+        # Repository configuration is mutable independently of this process.
+        # Never cache helper discovery: a stale empty cache can allow a newly
+        # configured clean/smudge/process filter or diff helper to execute.
+        helper_keys = []
+        for pattern in (
+            r"^filter\\..*\\.(clean|smudge|process)$",
+            r"^diff\\..*\\.(command|textconv)$",
+        ):
+            discovery_truncated = []
+            discovery_remaining = operation_deadline - __import__("time").monotonic()
+            if discovery_remaining <= 0:
+                raise TaskWorkspaceProvisioningError("git helper discovery timed out")
+            try:
+                discovery = _git(
+                    root, "config", "--local", "--name-only", "--get-regexp", pattern,
+                    timeout=min(discovery_remaining, 10), max_output_bytes=65536,
+                    truncated=discovery_truncated, env=safe_env, discover_helpers=False,
+                )
+            except TaskWorkspaceProvisioningError as exc:
+                if getattr(exc, "exit_code", None) == 1:
+                    discovery = ""
+                else:
+                    raise
+            if discovery_truncated:
+                raise TaskWorkspaceProvisioningError("Git helper discovery was incomplete")
+            helper_keys.extend(line for line in discovery.splitlines() if line)
+        for key in sorted(set(helper_keys)):
+            if re.fullmatch(r'filter\\..+\\.(clean|smudge|process)', key) or re.fullmatch(r'diff\\..+\\.(command|textconv)', key):
+                overrides.extend(["-c", f"{key}="])
 
     command = [
         "git", "--literal-pathspecs", "-C", root,
