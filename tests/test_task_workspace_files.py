@@ -111,12 +111,12 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         import os
         from unittest.mock import patch
 
-        (self.task_root / "secret.txt").write_text("bound workspace")
+        (self.task_root / "notes.txt").write_text("bound workspace")
         original = self.task_root
         displaced = self.root / "displaced-task-root"
         replacement = self.root / "replacement-task-root"
         replacement.mkdir()
-        (replacement / "secret.txt").write_text("replacement workspace")
+        (replacement / "notes.txt").write_text("replacement workspace")
         real_open = os.open
         replaced = {"done": False}
 
@@ -133,7 +133,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
             with patch("evo_core.task_workspace_files.os.supports_dir_fd",
                        set(os.supports_dir_fd) | {patched_open}):
                 with self.assertRaises(ValueError):
-                    read_task_workspace_file(self.store, self.operation["operation_id"], "secret.txt")
+                    read_task_workspace_file(self.store, self.operation["operation_id"], "notes.txt")
         self.assertTrue(replaced["done"])
 
     def test_directory_symlinks_are_not_traversed(self):
