@@ -466,13 +466,13 @@ def get_task_workspace_review(
     diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_before_truncated)
     untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
 
-    changed = []  # list of (status, path)
+    changed = []  # list of (status, path, old_path)
     excluded = []
     unreadable = []
     patch_parts = []
     total_bytes = 0
-    truncated = False
-    truncation_reason = None
+    truncated = bool(diff_before_truncated)
+    truncation_reason = "output_limit" if diff_before_truncated else None
     unstable = False
 
     def add_text(text):
@@ -488,10 +488,7 @@ def get_task_workspace_review(
         return True
 
     # Tracked changes relative to the immutable baseline (NUL-delimited).
-    try:
-        name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline)
-    except TaskWorkspaceProvisioningError:
-        name_status = ""
+    name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline)
     for path in name_status.split("\x00"):
         if not path:
             continue
@@ -535,10 +532,7 @@ def get_task_workspace_review(
         changed.append((token, str(rel), None))
 
     # Untracked files.
-    try:
-        untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
-    except TaskWorkspaceProvisioningError:
-        untracked_output = ""
+    untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
     untracked_paths = [p for p in untracked_output.split("\x00") if p.strip()]
     for path in untracked_paths:
         rel = _safe_relative_path(path)
@@ -566,15 +560,12 @@ def get_task_workspace_review(
         for status, path, old_path in [c for c in changed if c[0] != "?"]:
             if truncated and truncation_reason == "output_limit":
                 break
-            try:
-                file_diff_truncated = []
-                file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated)
-                if file_diff_truncated:
-                    truncated = True
-                    if truncation_reason is None:
-                        truncation_reason = "output_limit"
-            except TaskWorkspaceProvisioningError:
-                file_diff = ""
+            file_diff_truncated = []
+            file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024, truncated=file_diff_truncated)
+            if file_diff_truncated:
+                truncated = True
+                if truncation_reason is None:
+                    truncation_reason = "output_limit"
             if file_diff:
                 if not add_text(file_diff + "\n"):
                     truncated = True
@@ -589,19 +580,44 @@ def get_task_workspace_review(
         if truncated and truncation_reason == "output_limit":
             break
         candidate = root / Path(path)
+        # Read incrementally with strict byte budget.
+        remaining = max_bytes - total_bytes
+        if remaining <= 0:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = "output_limit"
+            break
+        per_file_cap = min(remaining, 65536)
+        chunks = []
+        read_total = 0
+        binary = False
         try:
-            data = candidate.read_bytes()
+            with candidate.open("rb") as handle:
+                while read_total < per_file_cap:
+                    chunk = handle.read(min(8192, per_file_cap - read_total))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    read_total += len(chunk)
+                    if b"\x00" in chunk:
+                        binary = True
+                        break
+                # Check if more data remains.
+                extra = handle.read(1)
+                file_truncated = bool(extra)
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
-        if b"\x00" in data[:4096]:
+        data = b"".join(chunks)
+        if binary:
             unreadable.append({"path": path, "reason": "binary"})
             continue
         text = data.decode("utf-8", errors="replace")
-        entry = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,1 @@\n"
-        # Keep it simple: include full content as an added file.
+        entry = f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
         content_lines = text.splitlines()
         entry += "".join(f"+{line}\n" for line in content_lines)
+        if file_truncated:
+            entry += "\n[truncated]\n"
         if not add_text(entry):
             truncated = True
             if truncation_reason is None:
@@ -610,7 +626,15 @@ def get_task_workspace_review(
 
     head_after = _git(root, "rev-parse", "--verify", "HEAD")
     status_after = _git(root, "status", "--porcelain", "--untracked-files=all")
-    snapshot_stable = (head_before == head_after and status_before == status_after)
+    diff_after = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024)
+    untracked_after = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    snapshot_stable = (
+        not truncated
+        and head_before == head_after
+        and status_before == status_after
+        and diff_before == diff_after
+        and untracked_before == untracked_after
+    )
     if not snapshot_stable:
         unstable = True
         if truncation_reason is None:
