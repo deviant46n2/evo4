@@ -347,7 +347,7 @@ class WorkspaceApiTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(directory), "init", "--initial-branch=main"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(directory), "config", "user.name", "Evo Test"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(directory), "config", "user.email", "evo-test@example.invalid"], check=True, capture_output=True)
-        (directory / "README.md").write_text("baseline\\n", encoding="utf-8")
+        (directory / "README.md").write_text("baseline\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(directory), "add", "README.md"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(directory), "commit", "-m", "baseline"], check=True, capture_output=True)
         workspace = create_workspace(
@@ -359,7 +359,7 @@ class WorkspaceApiTests(unittest.TestCase):
             self.store, workspace["workspace_id"], "api-review-task", self.root,
         )
         task_path = Path(task["canonical_path"])
-        (task_path / "result.txt").write_text("isolated result\\n", encoding="utf-8")
+        (task_path / "result.txt").write_text("isolated result\n", encoding="utf-8")
 
         status, body = asgi_request(
             self.app, "GET",
