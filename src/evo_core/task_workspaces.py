@@ -1072,10 +1072,12 @@ def get_task_workspace_fingerprint(store, operation_id, *, max_files=25000, max_
         with os.scandir(directory_fd) as iterator:
             entries = sorted(iterator, key=lambda entry: entry.name)
         for entry in entries:
+            info = entry.stat(follow_symlinks=False)
             if not relative.parts and entry.name == ".git":
+                if not stat.S_ISREG(info.st_mode):
+                    raise OSError("task worktree Git metadata pointer is not a regular file")
                 continue
             rel = (relative / entry.name) if relative else Path(entry.name)
-            info = entry.stat(follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
                 add_record("D:" + rel.as_posix() + ":" + str(stat.S_IMODE(info.st_mode)))
                 child_fd = os.open(
