@@ -180,7 +180,7 @@ class CodingAgent:
                     workspace_id=getattr(self, "_workspace_id", None),
                     project_id=getattr(self, "_project_id", None),
                     approval_evidence=approval_evidence,
-                    source_revision=None,
+                    source_revision=self._source_revision,
                 )
             # Do not hold the application store lock while the managed worker
             # supervises a process. The worker must be able to persist lifecycle
@@ -281,12 +281,13 @@ class CodingAgent:
 
     def run(self, conversation_id, request, approval, on_token=None, run_id=None,
             stop_event=None, on_progress=None, finalize_run=True,
-            project_id=None, workspace_id=None,
+            project_id=None, workspace_id=None, source_revision=None,
             instruction_target=None, target_path=None, target=None, path=None):
         if not isinstance(request, str) or not request.strip():
             raise ValueError("Coding request cannot be empty")
         if workspace_id is not None:
             self._initialize_workspace_binding(workspace_id)
+        self._source_revision = source_revision
         if not callable(approval):
             raise ValueError("An approval callback is required")
 
