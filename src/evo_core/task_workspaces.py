@@ -1004,6 +1004,23 @@ def get_task_workspace_review(
         if truncation_reason is None:
             truncation_reason = "snapshot_unstable"
 
+    # Include the bounded write journal so reviewers can distinguish edits
+    # made through Evo's approval-gated editor from other workspace changes.
+    from .task_workspace_files import list_task_workspace_file_changes
+    file_change_history = list_task_workspace_file_changes(
+        store, operation["operation_id"], limit=500,
+    )
+    file_change_status_counts = {
+        status: sum(1 for item in file_change_history["items"] if item["status"] == status)
+        for status in ("applied", "pending", "failed", "indeterminate")
+    }
+    file_change_summary = {
+        "total": file_change_history["total"],
+        **file_change_status_counts,
+        "truncated": file_change_history["truncated"],
+        "limit": file_change_history["limit"],
+    }
+
     response = {
         "operation_id": operation["operation_id"],
         "status": "ok",
@@ -1013,6 +1030,8 @@ def get_task_workspace_review(
         "current_head": head_after,
         "changed_files": [{"status": s, "path": p} for s, p, _ in changed],
         "changed_file_count": len(changed),
+        "file_change_summary": file_change_summary,
+        "file_change_history": file_change_history["items"],
         "excluded_files": sorted(set(excluded)),
         "excluded_files_omitted": excluded_omitted,
         "unreadable_files": unreadable,
