@@ -182,7 +182,10 @@ class CodingAgent:
                     approval_evidence=approval_evidence,
                     source_revision=None,
                 )
-                result = run_execution(store.db, store.lock, execution["id"])
+            # Do not hold the application store lock while the managed worker
+            # supervises a process. The worker must be able to persist lifecycle
+            # updates and other threads must be able to request cancellation.
+            result = run_execution(store.db, store.lock, execution["id"])
             return {
                 "execution_id": result.get("id"),
                 "argv": result.get("argv", argv),
