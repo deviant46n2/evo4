@@ -202,9 +202,11 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         "-c", "credential.helper=",
         *overrides,
     ]
-    if args and args[0] == "diff":
-        command.extend(["--no-ext-diff", "--no-textconv"])
-    command.extend(args)
+    if args:
+        command.extend(args[:1])
+        if args[0] == "diff":
+            command.extend(["--no-ext-diff", "--no-textconv"])
+        command.extend(args[1:])
     limit = _DEFAULT_GIT_OUTPUT_BYTES if max_output_bytes is None else max_output_bytes
     proc = None
     stdout_chunks, stderr_chunks = [], []
