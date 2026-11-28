@@ -462,6 +462,7 @@ def create_app(config_path="config.toml", provider_name=None):
                     item["plan_id"] = plan_id
                     item["plan_status"] = plan["status"]
                     item["verification_summary"] = plan["verification_summary"]
+                    item["verification_evidence_summary"] = plan["verification_evidence_summary"]
                     item["verification_state"] = orchestration.plan_verification_state(plan["steps"])
                     item["steps"] = [{
                         "step_id": step["id"], "position": step["position"],
