@@ -239,6 +239,8 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
             if t1.is_alive() or t2.is_alive():
                 raise TaskWorkspaceProvisioningError("git output collection did not terminate")
             was_truncated = output_exceeded["value"]
+            if metrics is not None:
+                metrics["captured_bytes"] = total[0]
             if timed_out["value"]:
                 raise TaskWorkspaceProvisioningError("git operation timed out")
             stdout = b"".join(stdout_chunks).decode("utf-8", errors="replace")
