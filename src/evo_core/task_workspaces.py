@@ -6,7 +6,6 @@ implicit error recovery: incomplete provisioning remains recorded for review.
 """
 import os
 import re
-import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -173,6 +172,7 @@ def create_task_workspace(
     immutable AI configuration revision from the parent workspace.
     """
     task_id = _validate_task_id(task_id)
+    _ensure_table(store)
     parent = resolve_executable_workspace(store, parent_workspace_id)
     source = Path(parent["canonical_path"])
     destination_root = _safe_parent(destination_parent)
