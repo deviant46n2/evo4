@@ -28,6 +28,12 @@ from .runtime_invocation_snapshots import (
     create_runtime_invocation_snapshot,
 )
 from .coding_agent import CodingAgent
+from .task_workspaces import (
+    create_task_workspace,
+    TaskWorkspaceConflictError,
+    TaskWorkspaceProvisioningError,
+    TaskWorkspaceValidationError,
+)
 from . import background_agent, lifecycle, orchestration
 from . import workspaces as workspace_registry
 from .config import load_config
@@ -114,6 +120,7 @@ class MemorySupersede(BaseModel):
 class AgentCreate(BaseModel):
     request: str = Field(min_length=1, max_length=20000)
     workspace_id: str = Field(min_length=1, max_length=128)
+    isolate_workspace: bool = False
 
 
 class AgentApproval(BaseModel):
@@ -264,6 +271,25 @@ def create_app(config_path="config.toml", provider_name=None):
             runtime.require_dispatch_enabled()
         except RegistryDispatchDisabledError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def _create_task_execution_workspace(parent_workspace_id, task_id):
+        try:
+            return create_task_workspace(
+                store, parent_workspace_id, task_id, config.workspace_root,
+            )
+        except TaskWorkspaceValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except TaskWorkspaceConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TaskWorkspaceProvisioningError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": str(exc),
+                    "operation_id": exc.operation_id,
+                    "status": exc.status,
+                },
+            ) from exc
 
     @app.get("/api/v1/workspaces/{workspace_id}/runtime-binding")
     def workspace_runtime_binding_info(workspace_id: str):
@@ -1115,7 +1141,10 @@ def create_app(config_path="config.toml", provider_name=None):
         return decision
 
     @app.post("/api/v1/agents/plans/{plan_id}/execute", status_code=202)
-    def execute_agent_plan(plan_id: str, project_id: str | None = None, workspace_id: str | None = None):
+    def execute_agent_plan(
+        plan_id: str, project_id: str | None = None,
+        workspace_id: str | None = None, isolate_workspace: bool = False,
+    ):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
         project_id, workspace_id = _validated_api_scope(project_id, workspace_id)
@@ -1158,17 +1187,43 @@ def create_app(config_path="config.toml", provider_name=None):
                         status_code=409,
                         detail=f"Plan step '{step['title']}' contains a verification command outside the current effective allowlist.",
                     )
-            invocation = _record_workspace_invocation(runtime, "plan_execution")
-            _require_workspace_dispatch(runtime)
             request_text = plan["request"]
-            run_id = store.start_agent_run("orchestrated", {
-                "invocation_id": invocation["invocation_id"],
-                "proposal_invocation_id": plan.get("proposal_invocation_id"),
-                "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
-                "workspace": str(workspace_path), "model": runtime.assistant.config.model,
-                "base_url": runtime.assistant.config.base_url,
-                "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
+
+        parent_workspace_id = workspace_id
+        task_workspace_info = None
+        if isolate_workspace:
+            task_id = str(uuid4())
+            task_workspace_info = _create_task_execution_workspace(parent_workspace_id, task_id)
+            workspace_id = task_workspace_info["workspace"]["workspace_id"]
+            binding = _resolve_workspace_for_execution(workspace_id)
+            runtime = _build_workspace_runtime_for_request(workspace_id)
+            workspace_path = binding["path"] if isinstance(binding, dict) else binding.path
+            effective_allowed_commands = runtime.effective_allowed_commands
+        invocation = _record_workspace_invocation(runtime, "plan_execution")
+        _require_workspace_dispatch(runtime)
+        run_metadata = {
+            "invocation_id": invocation["invocation_id"],
+            "proposal_invocation_id": plan.get("proposal_invocation_id"),
+            "workspace_id": workspace_id,
+            "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+            "workspace": str(workspace_path), "model": runtime.assistant.config.model,
+            "base_url": runtime.assistant.config.base_url,
+            "request": request_text[:2000], "source": "approved-plan", "plan_id": plan_id,
+        }
+        if task_workspace_info is not None:
+            run_metadata.update({
+                "parent_workspace_id": parent_workspace_id,
+                "task_id": task_workspace_info["task_id"],
+                "task_workspace_operation_id": task_workspace_info["operation_id"],
+                "task_workspace_source_revision": task_workspace_info["source_revision"],
             })
+        with lab_db.lock:
+            plan = orchestration.get_plan(lab_db.connection, plan_id)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="Agent plan not found")
+            if plan["status"] != "approved":
+                raise HTTPException(status_code=409, detail="Approve the plan before execution")
+            run_id = store.start_agent_run("orchestrated", run_metadata)
             background_agent.create(lab_db.connection, run_id)
             try:
                 orchestration.attach_run(lab_db.connection, plan_id, run_id)
@@ -1200,19 +1255,37 @@ def create_app(config_path="config.toml", provider_name=None):
     def start_agent(payload: AgentCreate):
         if shutting_down.is_set():
             raise HTTPException(status_code=503, detail="Evo is shutting down")
-        binding = _resolve_workspace_for_execution(payload.workspace_id)
-        workspace_id = payload.workspace_id.strip()
-        runtime = _build_workspace_runtime_for_request(workspace_id)
-        invocation = _record_workspace_invocation(runtime, "coding_agent")
+        parent_workspace_id = payload.workspace_id.strip()
+        binding = _resolve_workspace_for_execution(parent_workspace_id)
+        runtime = _build_workspace_runtime_for_request(parent_workspace_id)
         _require_workspace_dispatch(runtime)
+        task_workspace_info = None
+        workspace_id = parent_workspace_id
+        if payload.isolate_workspace:
+            task_id = str(uuid4())
+            task_workspace_info = _create_task_execution_workspace(parent_workspace_id, task_id)
+            workspace_id = task_workspace_info["workspace"]["workspace_id"]
+            binding = _resolve_workspace_for_execution(workspace_id)
+            runtime = _build_workspace_runtime_for_request(workspace_id)
+            _require_workspace_dispatch(runtime)
+        invocation = _record_workspace_invocation(runtime, "coding_agent")
         workspace = binding["path"] if isinstance(binding, dict) else binding.path
-        run_id = store.start_agent_run("coding", {
+        run_metadata = {
             "invocation_id": invocation["invocation_id"],
-            "workspace_id": workspace_id, "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
+            "workspace_id": workspace_id,
+            "project_id": binding.get("project_id") if isinstance(binding, dict) else getattr(binding, "project_id", None),
             "workspace": str(workspace), "model": runtime.assistant.config.model,
             "base_url": runtime.assistant.config.base_url,
             "request": payload.request[:2000], "source": "desktop",
-        })
+        }
+        if task_workspace_info is not None:
+            run_metadata.update({
+                "parent_workspace_id": parent_workspace_id,
+                "task_id": task_workspace_info["task_id"],
+                "task_workspace_operation_id": task_workspace_info["operation_id"],
+                "task_workspace_source_revision": task_workspace_info["source_revision"],
+            })
+        run_id = store.start_agent_run("coding", run_metadata)
         stop_event = threading.Event()
         with agent_registry_guard:
             agent_stop_events[run_id] = stop_event
