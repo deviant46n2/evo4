@@ -104,6 +104,65 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
 
 
 
+    def test_review_joins_only_matching_run_plan_and_execution_verification_evidence(self):
+        from evo_core import orchestration
+
+        operation_id = self.operation["operation_id"]
+        project_id = self.operation["project_id"]
+        task_workspace_id = self.operation["task_workspace_id"]
+        proposal = {
+            "title": "Reviewable task", "summary": "A task with deterministic checks.",
+            "steps": [{
+                "title": "Implement", "description": "Make the change.",
+                "expected_outcome": "The change is ready.", "verification": "Run tests.",
+                "verification_commands": [["python", "-m", "unittest"]],
+            }],
+        }
+        with self.app.state.lab_db.lock:
+            plan = orchestration.create_plan(
+                self.app.state.lab_db.connection, "Implement and verify", workspace=str(self.task_root),
+                workspace_id=task_workspace_id, project_id=project_id, proposal=proposal,
+                allowed_commands=None, store=self.app.state.store,
+            )
+            orchestration.approve_plan(self.app.state.lab_db.connection, plan["id"])
+            run_metadata = {
+                "project_id": project_id, "workspace_id": task_workspace_id,
+                "task_workspace_operation_id": operation_id,
+                "task_workspace_source_revision": self.operation["source_revision"],
+                "plan_id": plan["id"], "verification_state": "passed",
+            }
+            run_id = self.app.state.store.start_agent_run("orchestrated", run_metadata)
+            orchestration.attach_run(self.app.state.lab_db.connection, plan["id"], run_id)
+            step_id = plan["steps"][0]["id"]
+            orchestration.record_verification(
+                self.app.state.lab_db.connection, plan["id"], step_id,
+                ["python", "-m", "unittest"], "passed", 0, "OK", "",
+                execution_id="execution-123",
+            )
+
+        status, review = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/review")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(review["execution_evidence"]), 1)
+        evidence = review["execution_evidence"][0]
+        self.assertEqual(evidence["run_id"], run_id)
+        self.assertEqual(evidence["plan_id"], plan["id"])
+        self.assertEqual(evidence["verification_summary"]["passed"], 1)
+        check = evidence["steps"][0]["verification_checks"][0]
+        self.assertEqual(check["execution_id"], "execution-123")
+        self.assertEqual(check["status"], "passed")
+
+    def test_review_does_not_join_runs_with_mismatched_task_provenance(self):
+        operation_id = self.operation["operation_id"]
+        run_id = self.app.state.store.start_agent_run("coding", {
+            "project_id": self.operation["project_id"],
+            "workspace_id": self.operation["task_workspace_id"],
+            "task_workspace_operation_id": operation_id,
+            "task_workspace_source_revision": "0" * 40,
+        })
+        status, review = request(self.app, "/api/v1/task-workspaces/" + operation_id + "/review")
+        self.assertEqual(status, 200)
+        self.assertEqual(review["execution_evidence"], [])
+
     def test_apply_route_requires_approval_and_records_change(self):
         operation_id = self.operation["operation_id"]
         path = "/api/v1/task-workspaces/" + operation_id + "/file"
