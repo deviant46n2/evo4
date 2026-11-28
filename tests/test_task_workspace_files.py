@@ -175,6 +175,7 @@ class TaskWorkspaceFilesTests(unittest.TestCase):
         self.assertEqual(target.read_bytes(), original)
         result = apply_task_workspace_file(self.store, self.operation["operation_id"], "README.txt", "approved update\\n", expected_sha256=digest, approved=True)
         self.assertEqual(target.read_text(), "approved update\\n")
+        self.assertEqual((self.source / "README.txt").read_text(), "baseline\\n")
         self.assertEqual(result["before_sha256"], digest)
 
     def test_apply_does_not_replace_existing_file_without_expected_hash(self):
