@@ -410,6 +410,8 @@ class TaskWorkspaceTests(unittest.TestCase):
         snapshot = get_task_workspace_operation_status(self.store, result["operation_id"])
         after = get_task_workspace_operation(self.store, result["operation_id"])
         self.assertEqual(snapshot["status"], "recovery_required")
+        self.assertTrue(snapshot["error_recorded"])
+        self.assertNotIn("error", snapshot)
         self.assertIn("Inspect the recorded destination", snapshot["recovery_guidance"])
         self.assertTrue(snapshot["filesystem"]["path_is_directory"])
         self.assertEqual(after["status"], before["status"])
