@@ -85,7 +85,7 @@ def _ensure_table(store):
         db.commit()
 
 
-def _git(path, *args, timeout=30):
+def _git(path, *args, timeout=30, max_output_bytes=None):
     # Do not inherit repository-selection or index overrides from the Evo
     # server environment; they could redirect Git away from the validated path.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -93,48 +93,74 @@ def _git(path, *args, timeout=30):
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_COUNT"] = "0"
+    env["PAGER"] = "cat"
+    env["GIT_PAGER"] = "cat"
     command = [
         "git", "-C", str(path),
         "-c", "core.hooksPath=/dev/null",
         "-c", "core.fsmonitor=false",
         "-c", "credential.helper=",
     ]
-    # A repository-local filter process/smudge command can execute during
-    # worktree checkout. Discover configured filter keys as data, then blank
-    # both execution mechanisms for each driver in this operation.
-    if args[:2] == ("worktree", "add"):
+    # Discover and blank executable helper configuration.
+    for pattern in (r"^filter\..*\.(smudge|process)$", r"^diff\..*\.(command|textconv)$"):
         config = subprocess.run(
-            ["git", "-C", str(path), "config", "--local", "--name-only", "--get-regexp",
-             r"^filter\..*\.(smudge|process)$"],
+            ["git", "-C", str(path), "config", "--local", "--name-only", "--get-regexp", pattern],
             text=True, encoding="utf-8", errors="replace",
             capture_output=True, check=False, timeout=10, shell=False, env=env,
         )
         if config.returncode not in (0, 1):
-            raise TaskWorkspaceProvisioningError("could not inspect repository filter configuration")
+            raise TaskWorkspaceProvisioningError("could not inspect repository configuration")
         for key in sorted(set(config.stdout.splitlines())):
-            if re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key):
+            if (re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key) or
+                    re.fullmatch(r"diff\.[A-Za-z0-9._-]+\.(command|textconv)", key)):
                 command.extend(["-c", f"{key}="])
     command.extend(args)
     try:
-        result = subprocess.run(
-            command,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-            shell=False,
-            env=env,
-        )
+        if max_output_bytes is None:
+            result = subprocess.run(
+                command,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+                shell=False,
+                env=env,
+            )
+            stdout = result.stdout
+            stderr = result.stderr
+            returncode = result.returncode
+        else:
+            proc = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=False,
+                env=env,
+            )
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                raise TaskWorkspaceProvisioningError(f"git operation timed out")
+            returncode = proc.returncode
+            if len(stdout) > max_output_bytes:
+                stdout = stdout[:max_output_bytes]
+            if len(stderr) > max_output_bytes:
+                stderr = stderr[:max_output_bytes]
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise TaskWorkspaceProvisioningError(f"git operation could not complete: {exc}") from exc
-    if result.returncode:
-        detail = (result.stderr or result.stdout).strip()[-2000:]
+    if returncode:
+        detail = (stderr or stdout).strip()[-2000:]
         raise TaskWorkspaceProvisioningError(
-            f"git {args[0] if args else 'command'} failed (exit {result.returncode}): {detail}"
+            f"git {args[0] if args else 'command'} failed (exit {returncode}): {detail}"
         )
-    return result.stdout.strip()
+    return stdout.strip()
 
 
 def _record(store, operation_id, **fields):
@@ -355,6 +381,20 @@ DEFAULT_REVIEW_MAX_FILES = 100
 DEFAULT_REVIEW_MAX_BYTES = 256 * 1024
 
 
+def _safe_relative_path(path_text):
+    if not isinstance(path_text, str) or not path_text or "\x00" in path_text:
+        return None
+    if path_text.startswith("/") or path_text.startswith("\\"):
+        return None
+    parts = Path(path_text).parts
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    candidate = Path(*parts)
+    if candidate.is_absolute():
+        return None
+    return candidate
+
+
 def get_task_workspace_review(
     store,
     operation_id,
@@ -363,6 +403,10 @@ def get_task_workspace_review(
     max_bytes=DEFAULT_REVIEW_MAX_BYTES,
 ):
     """Return a bounded, read-only review artifact for a completed task workspace."""
+    if not isinstance(max_files, int) or max_files < 1 or max_files > 10000:
+        raise TaskWorkspaceValidationError("max_files must be a positive integer")
+    if not isinstance(max_bytes, int) or max_bytes < 1024:
+        raise TaskWorkspaceValidationError("max_bytes must be at least 1024")
     _ensure_table(store)
     operation = get_task_workspace_operation(store, operation_id)
     if operation["status"] != "completed":
@@ -384,6 +428,8 @@ def get_task_workspace_review(
 
     head_before = _git(root, "rev-parse", "--verify", "HEAD")
     status_before = _git(root, "status", "--porcelain", "--untracked-files=all")
+    diff_before = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024)
+    untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
 
     changed = []  # list of (status, path)
     excluded = []
@@ -406,25 +452,44 @@ def get_task_workspace_review(
         total_bytes += len(data)
         return True
 
-    # Tracked changes relative to the immutable baseline.
+    # Tracked changes relative to the immutable baseline (NUL-delimited).
     try:
-        name_status = _git(root, "diff", "--name-status", baseline)
+        name_status = _git(root, "diff", "-z", "--name-status", "--no-renames", baseline)
     except TaskWorkspaceProvisioningError:
         name_status = ""
-    tracked_lines = [line for line in name_status.splitlines() if line.strip()]
-    for line in tracked_lines:
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        status = parts[0].strip()
-        path = parts[-1].strip()
+    for path in name_status.split("\x00"):
         if not path:
             continue
-        rel = Path(path)
+        # Each record is "STATUS\0path"; _git strips trailing newline only, NULs remain.
+        pass
+    # Parse pairs: status token then path
+    tokens = name_status.split("\x00")
+    i = 0
+    while i < len(tokens):
+        token = tokens[i].strip()
+        i += 1
+        if not token:
+            continue
+        if i >= len(tokens):
+            break
+        path = tokens[i]
+        i += 1
+        rel = _safe_relative_path(path)
+        if rel is None:
+            unreadable.append({"path": path, "reason": "unsafe_path"})
+            continue
         if _is_excluded(rel):
             excluded.append(path)
             continue
-        if (root / rel).is_symlink():
+        candidate = root / rel
+        cursor = root
+        symlink = False
+        for part in rel.parts:
+            cursor = cursor / part
+            if cursor.exists() and cursor.is_symlink():
+                symlink = True
+                break
+        if symlink or candidate.is_symlink():
             unreadable.append({"path": path, "reason": "symlink"})
             continue
         if len(changed) >= max_files:
@@ -432,16 +497,19 @@ def get_task_workspace_review(
             if truncation_reason is None:
                 truncation_reason = "file_limit"
             continue
-        changed.append((status, path))
+        changed.append((token, str(rel), None))
 
     # Untracked files.
     try:
-        untracked_output = _git(root, "ls-files", "--others", "--exclude-standard")
+        untracked_output = _git(root, "ls-files", "--others", "--exclude-standard", "-z")
     except TaskWorkspaceProvisioningError:
         untracked_output = ""
-    untracked_paths = [p for p in untracked_output.splitlines() if p.strip()]
+    untracked_paths = [p for p in untracked_output.split("\x00") if p.strip()]
     for path in untracked_paths:
-        rel = Path(path)
+        rel = _safe_relative_path(path)
+        if rel is None:
+            unreadable.append({"path": path, "reason": "unsafe_path"})
+            continue
         if _is_excluded(rel):
             excluded.append(path)
             continue
@@ -456,22 +524,28 @@ def get_task_workspace_review(
             if truncation_reason is None:
                 truncation_reason = "file_limit"
             continue
-        changed.append(("?", path))
+        changed.append(("?", str(rel), None))
 
-    # Build patch for tracked changes.
+    # Build patch from individually approved tracked paths.
     if not truncated:
-        try:
-            tracked_patch = _git(root, "diff", baseline)
-        except TaskWorkspaceProvisioningError:
-            tracked_patch = ""
-        if tracked_patch:
-            if not add_text(tracked_patch + "\n"):
-                truncated = True
-                if truncation_reason is None:
-                    truncation_reason = "output_limit"
+        for status, path in [(s, p) for (s, p, _) in []]:
+            pass
+        for status, path, old_path in [c for c in changed if c[0] != "?"]:
+            if truncated and truncation_reason == "output_limit":
+                break
+            try:
+                file_diff = _git(root, "diff", baseline, "--", path, max_output_bytes=max_bytes + 1024)
+            except TaskWorkspaceProvisioningError:
+                file_diff = ""
+            if file_diff:
+                if not add_text(file_diff + "\n"):
+                    truncated = True
+                    if truncation_reason is None:
+                        truncation_reason = "output_limit"
+                    break
 
     # Include readable untracked file contents.
-    for status, path in changed:
+    for status, path, _ in changed:
         if status != "?":
             continue
         if truncated and truncation_reason == "output_limit":
@@ -511,7 +585,7 @@ def get_task_workspace_review(
         "unstable": unstable,
         "source_revision": baseline,
         "current_head": head_after,
-        "changed_files": [{"status": s, "path": p} for s, p in changed],
+        "changed_files": [{"status": s, "path": p} for s, p, _ in changed],
         "changed_file_count": len(changed),
         "excluded_files": sorted(set(excluded)),
         "unreadable_files": unreadable,

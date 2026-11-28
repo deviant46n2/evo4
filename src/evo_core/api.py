@@ -301,7 +301,9 @@ def create_app(config_path="config.toml", provider_name=None):
         except TaskWorkspaceProvisioningError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            import logging
+            logging.getLogger("evo.api").exception("task workspace review failed")
+            raise HTTPException(status_code=500, detail="internal error") from exc
 
     @app.get("/api/v1/workspaces/{workspace_id}/runtime-binding")
     def workspace_runtime_binding_info(workspace_id: str):
