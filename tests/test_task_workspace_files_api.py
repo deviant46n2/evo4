@@ -204,6 +204,19 @@ class TaskWorkspaceFilesApiTests(unittest.TestCase):
         self.assertEqual(check["workspace_fingerprint_after"], "a" * 64)
         self.assertTrue(check["workspace_snapshot_stable"])
 
+        with self.app.state.lab_db.lock:
+            self.app.state.lab_db.connection.execute(
+                "UPDATE workload_executions SET workspace=? WHERE id=?",
+                (str(self.root), "execution-123"),
+            )
+            self.app.state.lab_db.connection.commit()
+        status, mismatched_review = request(
+            self.app, "/api/v1/task-workspaces/" + operation_id + "/review")
+        self.assertEqual(status, 200)
+        mismatched_check = mismatched_review["execution_evidence"][0]["steps"][0]["verification_checks"][0]
+        self.assertEqual(mismatched_check["execution_id"], "execution-123")
+        self.assertIsNone(mismatched_check["managed_execution"])
+
     def test_review_does_not_join_runs_with_mismatched_task_provenance(self):
         operation_id = self.operation["operation_id"]
         run_id = self.app.state.store.start_agent_run("coding", {
