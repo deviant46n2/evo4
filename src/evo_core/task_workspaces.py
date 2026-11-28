@@ -142,22 +142,24 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         "-c", "credential.helper=",
     ]
     if discover_helpers:
-        for pattern in (r"^filter\..*\.(smudge|process)$", r"^diff\..*\.(command|textconv)$"):
+        for pattern in (r"^filter\..*\.(clean|smudge|process)$", r"^diff\..*\.(command|textconv)$"):
             try:
                 config_stdout = _git(
                     path, "config", "--local", "--name-only", "--get-regexp", pattern,
                     timeout=10, max_output_bytes=65536, discover_helpers=False,
                 )
             except TaskWorkspaceProvisioningError as exc:
-                if "exit 1" in str(exc):
+                if getattr(exc, "exit_code", None) == 1:
                     config_stdout = ""
                 else:
                     raise
             for key in sorted(set(config_stdout.splitlines())):
-                if (re.fullmatch(r"filter\.[A-Za-z0-9._-]+\.(smudge|process)", key) or
-                        re.fullmatch(r"diff\.[A-Za-z0-9._-]+\.(command|textconv)", key)):
+                if (re.fullmatch(r"filter\..+\.(clean|smudge|process)", key) or
+                        re.fullmatch(r"diff\..+\.(command|textconv)", key)):
                     command.extend(["-c", f"{key}="])
     command.extend(args)
+    if args and args[0] == "diff":
+        command.append("--no-ext-diff")
     try:
         if max_output_bytes is None:
             result = subprocess.run(
@@ -252,7 +254,9 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
             if metrics is not None:
                 metrics["captured_bytes"] = total[0]
             if timed_out["value"]:
-                raise TaskWorkspaceProvisioningError("git operation timed out")
+                exc = TaskWorkspaceProvisioningError("git operation timed out")
+                exc.exit_code = None
+                raise exc
             stdout = b"".join(stdout_chunks).decode("utf-8", errors="replace")
             stderr = b"".join(stderr_chunks).decode("utf-8", errors="replace")
             returncode = proc.returncode
@@ -262,9 +266,11 @@ def _git(path, *args, timeout=30, max_output_bytes=None, truncated=None, env=Non
         raise TaskWorkspaceProvisioningError(f"git operation could not complete: {exc}") from exc
     if returncode and not was_truncated:
         detail = (stderr or stdout).strip()[-2000:]
-        raise TaskWorkspaceProvisioningError(
+        exc = TaskWorkspaceProvisioningError(
             f"git {args[0] if args else 'command'} failed (exit {returncode}): {detail}"
         )
+        exc.exit_code = returncode
+        raise exc
     return stdout.strip()
 
 
@@ -390,6 +396,7 @@ def create_task_workspace(
             raise
 
     worktree_created = False
+    worktree_creation_attempted = False
     try:
         if destination.exists() or destination.is_symlink():
             raise TaskWorkspaceConflictError("generated task worktree destination already exists")
@@ -397,6 +404,7 @@ def create_task_workspace(
         for checkout in list_all_checkouts(store):
             if _paths_overlap(canonical_destination, checkout["canonical_path"]):
                 raise TaskWorkspaceConflictError("task worktree path overlaps a registered checkout")
+        worktree_creation_attempted = True
         _git(source, "worktree", "add", "--detach", str(destination), resolved_revision, timeout=120)
         worktree_created = True
 
@@ -445,7 +453,7 @@ def create_task_workspace(
             "worktree_created": True,
         }
     except Exception as exc:
-        status_value = "recovery_required" if worktree_created else "failed"
+        status_value = "recovery_required" if (worktree_created or worktree_creation_attempted) else "failed"
         try:
             _record(
                 store,
@@ -500,6 +508,23 @@ def _safe_relative_path(path_text):
     return candidate
 
 
+def _untracked_signature(root, paths):
+    import hashlib
+    result = []
+    for path in paths:
+        candidate = root / Path(path)
+        try:
+            st = os.stat(str(candidate), follow_symlinks=False)
+            digest = hashlib.sha256()
+            with candidate.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(65536), b""):
+                    digest.update(chunk)
+            result.append((path, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_mode, digest.hexdigest()))
+        except OSError:
+            result.append((path, None))
+    return tuple(result)
+
+
 def get_task_workspace_review(
     store,
     operation_id,
@@ -541,6 +566,7 @@ def get_task_workspace_review(
     untracked_before = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_before_truncated)
     if head_before_truncated or status_before_truncated or diff_before_truncated or untracked_before_truncated:
         raise TaskWorkspaceProvisioningError("review metadata exceeded output budget")
+    untracked_before_sig = _untracked_signature(root, [p for p in untracked_before.split("\x00") if p.strip()])
 
     changed = []  # list of (status, path, old_path)
     excluded = []
@@ -680,12 +706,33 @@ def get_task_workspace_review(
         chunks = []
         read_total = 0
         binary = False
+        # Validate parent components are not symlinks.
+        cursor = root
+        parent_symlink = False
+        for part in rel.parts[:-1]:
+            cursor = cursor / part
+            if cursor.exists() and cursor.is_symlink():
+                parent_symlink = True
+                break
+        if parent_symlink:
+            unreadable.append({"path": path, "reason": "symlink"})
+            continue
         try:
             fd = os.open(str(candidate), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         except OSError:
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
         try:
+            st = os.fstat(fd)
+            import stat as stat_mod
+            if not stat_mod.S_ISREG(st.st_mode):
+                os.close(fd)
+                unreadable.append({"path": path, "reason": "not_regular"})
+                continue
+            if st.st_nlink > 1:
+                os.close(fd)
+                unreadable.append({"path": path, "reason": "hard_link"})
+                continue
             with os.fdopen(fd, "rb", closefd=True) as handle:
                 while read_total < per_file_cap:
                     chunk = handle.read(min(8192, per_file_cap - read_total))
@@ -698,6 +745,10 @@ def get_task_workspace_review(
                         break
                 file_truncated = (read_total == per_file_cap)
         except OSError:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
             unreadable.append({"path": path, "reason": "unreadable"})
             continue
         data = b"".join(chunks)
@@ -727,6 +778,7 @@ def get_task_workspace_review(
     diff_after = _git(root, "diff", baseline, max_output_bytes=max_bytes + 1024, truncated=diff_after_truncated)
     untracked_after_truncated = []
     untracked_after = _git(root, "ls-files", "--others", "--exclude-standard", "-z", max_output_bytes=max_bytes + 1024, truncated=untracked_after_truncated)
+    untracked_after_sig = _untracked_signature(root, [p for p in untracked_after.split("\x00") if p.strip()])
     metadata_truncated = bool(head_after_truncated or status_after_truncated or diff_after_truncated or untracked_after_truncated)
     if metadata_truncated:
         truncated = True
@@ -739,6 +791,7 @@ def get_task_workspace_review(
         and status_before == status_after
         and diff_before == diff_after
         and untracked_before == untracked_after
+        and untracked_before_sig == untracked_after_sig
     )
     if not snapshot_stable:
         unstable = True
