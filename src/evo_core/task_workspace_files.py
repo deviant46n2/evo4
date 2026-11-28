@@ -5,11 +5,15 @@ from pathlib import Path, PurePosixPath
 
 from .task_workspaces import (
     TaskWorkspaceValidationError,
-    _is_excluded,
     _open_regular_file_at,
     get_task_workspace_operation,
 )
-from .workspaces import resolve_executable_workspace
+from .workspace import _is_excluded
+from .workspaces import (
+    WorkspaceNotFoundError,
+    WorkspaceRelationshipError,
+    resolve_executable_workspace,
+)
 
 
 DEFAULT_LIST_LIMIT = 200
@@ -26,7 +30,10 @@ def _task_root(store, operation_id):
         )
     if not operation.get("task_workspace_id") or not operation.get("checkout_id"):
         raise TaskWorkspaceValidationError("task workspace operation is incomplete")
-    binding = resolve_executable_workspace(store, operation["task_workspace_id"])
+    try:
+        binding = resolve_executable_workspace(store, operation["task_workspace_id"])
+    except (WorkspaceNotFoundError, WorkspaceRelationshipError) as exc:
+        raise TaskWorkspaceValidationError("task workspace binding is unavailable") from exc
     if binding["checkout_id"] != operation["checkout_id"]:
         raise TaskWorkspaceValidationError("task workspace checkout does not match the operation")
     root = Path(binding.path)
